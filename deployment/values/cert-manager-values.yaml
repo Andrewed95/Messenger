@@ -1,0 +1,286 @@
+# cert-manager Helm Values
+# Matrix/Synapse Production Deployment - 20K CCU
+# Version: 2.0
+
+# ============================================================================
+# CRITICAL: cert-manager automates TLS certificate management
+# - Automatic certificate issuance and renewal
+# - Supports Let's Encrypt, self-signed, and custom CAs
+# - Integration with Ingress for automatic HTTPS
+# ============================================================================
+
+# ============================================================================
+# INSTALLATION
+# ============================================================================
+# helm repo add jetstack https://charts.jetstack.io
+# helm install cert-manager jetstack/cert-manager \
+#   --namespace cert-manager \
+#   --create-namespace \
+#   --set installCRDs=true \
+#   --values cert-manager-values.yaml
+
+# ============================================================================
+# GLOBAL CONFIGURATION
+# ============================================================================
+
+global:
+  # Pod security policy
+  podSecurityPolicy:
+    enabled: false  # PSP deprecated in K8s 1.25+
+
+  # Leader election namespace
+  leaderElection:
+    namespace: cert-manager
+
+# ============================================================================
+# INSTALL CRDs
+# ============================================================================
+
+installCRDs: true  # Install CustomResourceDefinitions
+
+# ============================================================================
+# REPLICA COUNT
+# ============================================================================
+
+replicaCount: 2  # HA deployment
+
+# ============================================================================
+# RESOURCES
+# ============================================================================
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+# ============================================================================
+# WEBHOOK CONFIGURATION
+# ============================================================================
+
+webhook:
+  enabled: true
+
+  replicaCount: 2
+
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+
+# ============================================================================
+# CAINJECTOR CONFIGURATION
+# ============================================================================
+
+cainjector:
+  enabled: true
+
+  replicaCount: 2
+
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+
+# ============================================================================
+# STARTUPAPICHECK
+# ============================================================================
+
+startupapicheck:
+  enabled: true
+
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+
+# ============================================================================
+# POD ANTI-AFFINITY
+# ============================================================================
+
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values:
+                  - cert-manager
+          topologyKey: kubernetes.io/hostname
+
+# ============================================================================
+# PROMETHEUS MONITORING
+# ============================================================================
+
+prometheus:
+  enabled: true
+
+  servicemonitor:
+    enabled: true
+    namespace: monitoring
+    interval: 60s
+
+# ============================================================================
+# CLUSTER ISSUER CONFIGURATION
+# ============================================================================
+# After cert-manager installation, create ClusterIssuers:
+#
+# For Let's Encrypt (if servers have internet access):
+# kubectl apply -f - <<EOF
+# apiVersion: cert-manager.io/v1
+# kind: ClusterIssuer
+# metadata:
+#   name: letsencrypt-prod
+# spec:
+#   acme:
+#     server: https://acme-v02.api.letsencrypt.org/directory
+#     email: admin@CHANGE_TO_YOUR_DOMAIN
+#     privateKeySecretRef:
+#       name: letsencrypt-prod
+#     solvers:
+#     - http01:
+#         ingress:
+#           class: nginx
+# ---
+# apiVersion: cert-manager.io/v1
+# kind: ClusterIssuer
+# metadata:
+#   name: letsencrypt-staging
+# spec:
+#   acme:
+#     server: https://acme-staging-v02.api.letsencrypt.org/directory
+#     email: admin@CHANGE_TO_YOUR_DOMAIN
+#     privateKeySecretRef:
+#       name: letsencrypt-staging
+#     solvers:
+#     - http01:
+#         ingress:
+#           class: nginx
+# EOF
+#
+# For self-signed certificates (air-gapped/intranet):
+# kubectl apply -f - <<EOF
+# apiVersion: cert-manager.io/v1
+# kind: ClusterIssuer
+# metadata:
+#   name: selfsigned
+# spec:
+#   selfSigned: {}
+# ---
+# # Create CA certificate
+# apiVersion: cert-manager.io/v1
+# kind: Certificate
+# metadata:
+#   name: internal-ca
+#   namespace: cert-manager
+# spec:
+#   isCA: true
+#   commonName: Internal CA
+#   secretName: internal-ca-secret
+#   privateKey:
+#     algorithm: ECDSA
+#     size: 256
+#   issuerRef:
+#     name: selfsigned
+#     kind: ClusterIssuer
+# ---
+# # Use CA to issue certificates
+# apiVersion: cert-manager.io/v1
+# kind: ClusterIssuer
+# metadata:
+#   name: internal-ca
+# spec:
+#   ca:
+#     secretName: internal-ca-secret
+# EOF
+
+# ============================================================================
+# CERTIFICATE REQUEST EXAMPLE
+# ============================================================================
+# Ingress with automatic certificate:
+#
+# apiVersion: networking.k8s.io/v1
+# kind: Ingress
+# metadata:
+#   name: matrix-ingress
+#   annotations:
+#     cert-manager.io/cluster-issuer: letsencrypt-prod
+#     # OR for self-signed:
+#     # cert-manager.io/cluster-issuer: internal-ca
+# spec:
+#   ingressClassName: nginx
+#   tls:
+#   - hosts:
+#     - chat.z3r0d3v.com
+#     secretName: matrix-tls  # cert-manager will create this
+#   rules:
+#   - host: chat.z3r0d3v.com
+#     http:
+#       paths:
+#       - path: /
+#         pathType: Prefix
+#         backend:
+#           service:
+#             name: synapse
+#             port:
+#               number: 8008
+
+# ============================================================================
+# AIR-GAPPED DEPLOYMENT NOTES
+# ============================================================================
+# For air-gapped deployments after initial setup:
+#
+# 1. Obtain Let's Encrypt certificates during setup phase (with internet)
+# 2. Extract certificate secrets before cutting internet
+# 3. After going air-gapped, certificates cannot auto-renew via ACME
+# 4. Options:
+#    a) Use self-signed certificates with internal CA
+#    b) Manually renew Let's Encrypt certs (requires temp internet)
+#    c) Use long-lived certificates from internal CA
+#
+# Recommended for air-gapped:
+# - Use internal-ca ClusterIssuer
+# - Generate long-lived certificates (1-2 years)
+# - Plan manual renewal process
+# - Distribute CA certificate to all clients
+# ============================================================================
+
+# ============================================================================
+# TROUBLESHOOTING
+# ============================================================================
+# View cert-manager logs:
+# kubectl logs -n cert-manager -l app=cert-manager
+#
+# Check certificate status:
+# kubectl get certificate -A
+# kubectl describe certificate <name> -n <namespace>
+#
+# Check certificate requests:
+# kubectl get certificaterequest -A
+# kubectl describe certificaterequest <name> -n <namespace>
+#
+# View ClusterIssuers:
+# kubectl get clusterissuer
+# kubectl describe clusterissuer <name>
+#
+# Manual certificate renewal:
+# kubectl delete certificaterequest <name> -n <namespace>
+# Certificate will be automatically recreated
+#
+# Check certificate expiry:
+# kubectl get secret <tls-secret> -n <namespace> -o jsonpath='{.data.tls\.crt}' | base64 -d | openssl x509 -noout -enddate
+# ============================================================================

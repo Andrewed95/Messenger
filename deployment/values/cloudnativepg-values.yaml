@@ -1,0 +1,76 @@
+# CloudNativePG Operator Helm Values
+# Matrix/Synapse Production Deployment - 20K CCU
+# Version: 2.0
+
+# CloudNativePG Operator Configuration
+# Manages PostgreSQL clusters with automatic HA and failover
+
+# ============================================================================
+# INSTALLATION
+# ============================================================================
+# helm repo add cnpg https://cloudnative-pg.github.io/charts
+# helm install cloudnativepg cnpg/cloudnative-pg \
+#   --namespace cnpg-system \
+#   --create-namespace \
+#   --values cloudnativepg-values.yaml
+
+# ============================================================================
+# OPERATOR CONFIGURATION
+# ============================================================================
+
+# Operator Configuration
+config:
+  # Inherit namespace annotations to clusters
+  INHERITED_ANNOTATIONS: ""
+
+  # Inherit namespace labels to clusters
+  INHERITED_LABELS: ""
+
+  # Watch namespace (empty = all namespaces)
+  WATCH_NAMESPACE: ""
+
+# Operator Resources
+resources:
+  requests:
+    cpu: 100m
+    memory: 200Mi
+  limits:
+    cpu: 500m
+    memory: 500Mi
+
+# Replica count for operator HA
+replicaCount: 2
+
+# ============================================================================
+# RBAC & SERVICE ACCOUNT
+# ============================================================================
+
+serviceAccount:
+  create: true
+  name: ""  # Auto-generated if empty
+
+# ============================================================================
+# MONITORING
+# ============================================================================
+
+monitoring:
+  # Enable Prometheus monitoring
+  podMonitorEnabled: true
+
+  # Grafana dashboards ConfigMap
+  grafanaDashboard:
+    create: true
+    namespace: monitoring
+
+# ============================================================================
+# NOTES
+# ============================================================================
+# After installing operator, create PostgreSQL cluster using manifest:
+# kubectl apply -f manifests/postgresql-cluster.yaml
+#
+# Cluster will be configured with:
+# - 3 instances (1 primary + 2 replicas)
+# - Synchronous replication (ANY 1 of 2 replicas)
+# - PgBouncer pooler in session mode
+# - Automatic backups to S3 (MinIO)
+# - switchoverDelay: 300 seconds (5 minutes)

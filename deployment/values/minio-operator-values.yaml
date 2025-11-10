@@ -1,0 +1,134 @@
+# MinIO Operator Helm Values
+# Matrix/Synapse Production Deployment - 20K CCU
+# Version: 2.0
+
+# ============================================================================
+# CRITICAL: MinIO provides S3-compatible object storage for Synapse media
+# - Handles user uploads (images, videos, files)
+# - Erasure coding for data redundancy (EC:4)
+# - Scalable distributed storage
+# ============================================================================
+
+# ============================================================================
+# INSTALLATION
+# ============================================================================
+# helm repo add minio-operator https://operator.min.io
+# helm install minio-operator minio-operator/operator \
+#   --namespace minio-operator \
+#   --create-namespace \
+#   --values minio-operator-values.yaml
+
+# ============================================================================
+# OPERATOR CONFIGURATION
+# ============================================================================
+
+# Operator Resources
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+# Operator Replica Count (for HA)
+replicas: 2
+
+# ============================================================================
+# CONSOLE (MinIO Web UI)
+# ============================================================================
+
+console:
+  # Enable MinIO Console for management
+  enabled: true
+
+  # Resources for Console
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+  # Console Ingress (optional, for web UI access)
+  ingress:
+    enabled: false  # Enable if you want web UI access
+    # annotations:
+    #   cert-manager.io/cluster-issuer: letsencrypt-prod
+    # host: minio-console.CHANGE_TO_YOUR_DOMAIN
+    # tls: true
+
+# ============================================================================
+# MONITORING
+# ============================================================================
+
+# Prometheus monitoring
+prometheus:
+  enabled: true
+  namespace: monitoring
+
+# ============================================================================
+# TENANT CONFIGURATION
+# ============================================================================
+# After operator installation, create MinIO Tenant using manifest:
+# kubectl apply -f manifests/minio-tenant.yaml
+#
+# Tenant will be configured with:
+# - 4 servers × 4 drives/server = 16 drives total (1 erasure set)
+# - Erasure coding EC:4 (12 data + 4 parity)
+# - 75% usable capacity (lose up to 4 drives and still operational)
+# - Total storage: 4TB per server × 4 servers = 16TB raw
+# - Usable: ~12TB after EC:4
+#
+# For 20K CCU:
+# - Estimated media growth: 500GB-1TB/day
+# - 16TB provides 12-24 days before expansion needed
+# - Plan expansion strategy accordingly
+# ============================================================================
+
+# ============================================================================
+# SERVICE ACCOUNT & RBAC
+# ============================================================================
+
+serviceAccount:
+  create: true
+  name: minio-operator
+
+# ============================================================================
+# NOTES
+# ============================================================================
+# MinIO Tenant Manifest Requirements:
+#
+# apiVersion: minio.min.io/v2
+# kind: Tenant
+# metadata:
+#   name: synapse-media
+#   namespace: minio
+# spec:
+#   pools:
+#     - servers: 4           # 4 MinIO servers
+#       volumesPerServer: 4  # 4 drives per server
+#       volumeClaimTemplate:
+#         spec:
+#           storageClassName: CHANGE_TO_YOUR_STORAGE_CLASS
+#           accessModes:
+#             - ReadWriteOnce
+#           resources:
+#             requests:
+#               storage: 1Ti  # 1TB per drive
+#
+#   # Bucket for Synapse media
+#   buckets:
+#     - name: synapse-media
+#       objectLock: false
+#       region: us-east-1
+#
+#   # User for Synapse access
+#   users:
+#     - name: synapse
+#
+# Retrieve credentials after deployment:
+# kubectl get secret synapse-media-user-0 -n minio -o jsonpath='{.data.CONSOLE_ACCESS_KEY}' | base64 -d
+# kubectl get secret synapse-media-user-0 -n minio -o jsonpath='{.data.CONSOLE_SECRET_KEY}' | base64 -d
+# ============================================================================

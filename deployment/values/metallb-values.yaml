@@ -1,0 +1,219 @@
+# MetalLB Helm Values
+# Matrix/Synapse Production Deployment - 20K CCU
+# Version: 2.0
+
+# ============================================================================
+# CRITICAL: MetalLB provides LoadBalancer service type in bare-metal K8s
+# - Assigns external IPs to LoadBalancer services
+# - Required for NGINX Ingress, coturn, and LiveKit
+# - Uses L2 mode (ARP) or BGP mode
+# ============================================================================
+
+# ============================================================================
+# INSTALLATION
+# ============================================================================
+# helm repo add metallb https://metallb.github.io/metallb
+# helm install metallb metallb/metallb \
+#   --namespace metallb-system \
+#   --create-namespace \
+#   --values metallb-values.yaml
+
+# ============================================================================
+# CONTROLLER CONFIGURATION
+# ============================================================================
+
+controller:
+  # Enable controller
+  enabled: true
+
+  # Log level
+  logLevel: info
+
+  # Resources
+  resources:
+    requests:
+      cpu: 100m
+      memory: 100Mi
+    limits:
+      cpu: 200m
+      memory: 200Mi
+
+  # Tolerations for control plane nodes (if applicable)
+  tolerations: []
+
+  # Node selector
+  nodeSelector: {}
+
+  # Pod anti-affinity for HA
+  affinity: {}
+
+# ============================================================================
+# SPEAKER CONFIGURATION
+# ============================================================================
+
+speaker:
+  # Enable speaker (runs as DaemonSet on all nodes)
+  enabled: true
+
+  # Log level
+  logLevel: info
+
+  # Resources
+  resources:
+    requests:
+      cpu: 100m
+      memory: 100Mi
+    limits:
+      cpu: 200m
+      memory: 200Mi
+
+  # Tolerations to run on all nodes
+  tolerations:
+    - effect: NoSchedule
+      key: node-role.kubernetes.io/master
+      operator: Exists
+    - effect: NoSchedule
+      key: node-role.kubernetes.io/control-plane
+      operator: Exists
+
+  # FRR (Free Range Routing) mode for BGP
+  frr:
+    enabled: false  # Enable if using BGP mode instead of L2
+
+# ============================================================================
+# PROMETHEUS MONITORING
+# ============================================================================
+
+prometheus:
+  # Prometheus scrape annotations
+  scrapeAnnotations: true
+
+  # Prometheus Operator ServiceMonitor
+  serviceMonitor:
+    enabled: true
+    namespace: monitoring
+
+  # Prometheus Operator PodMonitor
+  podMonitor:
+    enabled: true
+    namespace: monitoring
+
+# ============================================================================
+# RBAC & SERVICE ACCOUNT
+# ============================================================================
+
+rbac:
+  create: true
+
+serviceAccounts:
+  controller:
+    create: true
+    name: ""
+  speaker:
+    create: true
+    name: ""
+
+# ============================================================================
+# LOAD BALANCER CONFIGURATION
+# ============================================================================
+# After MetalLB installation, configure IP address pools and L2 advertisements:
+#
+# kubectl apply -f - <<EOF
+# apiVersion: metallb.io/v1beta1
+# kind: IPAddressPool
+# metadata:
+#   name: main-pool
+#   namespace: metallb-system
+# spec:
+#   addresses:
+#   - 192.168.1.240-192.168.1.250  # CHANGE_TO_YOUR_IP_RANGE
+#   # OR use CIDR notation:
+#   # - 192.168.1.240/28
+# ---
+# apiVersion: metallb.io/v1beta1
+# kind: L2Advertisement
+# metadata:
+#   name: main-l2-adv
+#   namespace: metallb-system
+# spec:
+#   ipAddressPools:
+#   - main-pool
+#   # Optional: limit to specific interfaces
+#   # interfaces:
+#   # - enp0s3
+# EOF
+
+# ============================================================================
+# IP ADDRESS PLANNING
+# ============================================================================
+# Services that will consume LoadBalancer IPs:
+#
+# 1. NGINX Ingress Controller (HTTP/HTTPS)
+#    - Ports: 80, 443, 8448 (federation)
+#    - Needs: 1 IP address
+#
+# 2. coturn (TURN/STUN) - Per instance
+#    - Ports: 3478 TCP/UDP, 5349 TCP/UDP, 49152-65535 UDP
+#    - Needs: 2 IPs (2 coturn instances for HA)
+#    - MUST use hostNetwork DaemonSet (NOT LoadBalancer)
+#
+# 3. LiveKit SFU - Per instance
+#    - Ports: 7880 TCP, 7881 TCP, 7882 UDP, 50100-50200 UDP
+#    - Needs: 4 IPs (4 LiveKit instances)
+#    - MUST use hostNetwork DaemonSet (NOT LoadBalancer)
+#
+# IMPORTANT: For UDP-heavy services (coturn, LiveKit), use hostNetwork
+# DaemonSet pattern instead of LoadBalancer Service. This provides:
+# - Direct kernel-level UDP handling (no kube-proxy overhead)
+# - Better performance for WebRTC
+# - Source IP preservation
+#
+# Required IPs from pool:
+# - 1 for NGINX Ingress (HTTP/HTTPS)
+# - Optional: Additional IPs for other services
+#
+# Recommended pool size: 10-20 IPs for flexibility
+# ============================================================================
+
+# ============================================================================
+# BGP MODE (ALTERNATIVE TO L2)
+# ============================================================================
+# If using BGP mode instead of L2:
+#
+# apiVersion: metallb.io/v1beta2
+# kind: BGPPeer
+# metadata:
+#   name: router-peer
+#   namespace: metallb-system
+# spec:
+#   myASN: 64500
+#   peerASN: 64501
+#   peerAddress: 192.168.1.1
+#
+# BGP provides:
+# - True multi-path ECMP load balancing
+# - Better scalability
+# - Integration with network infrastructure
+#
+# L2 mode provides:
+# - Simpler setup (no router configuration)
+# - Works with any network switch
+# - One node announces IP (active/passive)
+# ============================================================================
+
+# ============================================================================
+# TROUBLESHOOTING
+# ============================================================================
+# View MetalLB logs:
+# kubectl logs -n metallb-system -l app.kubernetes.io/component=controller
+# kubectl logs -n metallb-system -l app.kubernetes.io/component=speaker
+#
+# Check IP assignment:
+# kubectl get svc -A | grep LoadBalancer
+#
+# View IP address pools:
+# kubectl get ipaddresspools -n metallb-system
+#
+# View L2 advertisements:
+# kubectl get l2advertisements -n metallb-system
+# ============================================================================
