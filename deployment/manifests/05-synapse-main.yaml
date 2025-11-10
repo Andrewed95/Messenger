@@ -118,8 +118,12 @@ data:
         user: synapse
         password: "CHANGE_TO_POSTGRES_PASSWORD"
         database: synapse
+        # CORRECTED: Reduced from cp_max: 50 to prevent connection exhaustion
+        # With 19 processes (1 main + 18 workers), must stay under PostgreSQL max_connections: 500
+        # Main process handles many endpoints: cp_max: 25
+        # Workers will use cp_max: 15 (see worker configs)
         cp_min: 5
-        cp_max: 50
+        cp_max: 25
         keepalives_idle: 10
         keepalives_interval: 10
         keepalives_count: 3
@@ -264,8 +268,86 @@ data:
     # Worker mode enabled (main process coordinates workers)
     worker_app: synapse.app.homeserver
 
-    # Worker configuration (loaded from separate files)
-    # Workers will be configured via their own config files
+    # Instance map - defines all Synapse processes for replication
+    instance_map:
+      main:
+        host: synapse-main.matrix.svc.cluster.local
+        port: 9093
+
+      # Sync workers (8)
+      sync_worker_1:
+        host: synapse-sync-worker-0.synapse-sync-worker.matrix.svc.cluster.local
+        port: 9093
+      sync_worker_2:
+        host: synapse-sync-worker-1.synapse-sync-worker.matrix.svc.cluster.local
+        port: 9093
+      sync_worker_3:
+        host: synapse-sync-worker-2.synapse-sync-worker.matrix.svc.cluster.local
+        port: 9093
+      sync_worker_4:
+        host: synapse-sync-worker-3.synapse-sync-worker.matrix.svc.cluster.local
+        port: 9093
+      sync_worker_5:
+        host: synapse-sync-worker-4.synapse-sync-worker.matrix.svc.cluster.local
+        port: 9093
+      sync_worker_6:
+        host: synapse-sync-worker-5.synapse-sync-worker.matrix.svc.cluster.local
+        port: 9093
+      sync_worker_7:
+        host: synapse-sync-worker-6.synapse-sync-worker.matrix.svc.cluster.local
+        port: 9093
+      sync_worker_8:
+        host: synapse-sync-worker-7.synapse-sync-worker.matrix.svc.cluster.local
+        port: 9093
+
+      # Generic workers (4)
+      generic_worker_1:
+        host: synapse-generic-worker-0.synapse-generic-worker.matrix.svc.cluster.local
+        port: 9093
+      generic_worker_2:
+        host: synapse-generic-worker-1.synapse-generic-worker.matrix.svc.cluster.local
+        port: 9093
+      generic_worker_3:
+        host: synapse-generic-worker-2.synapse-generic-worker.matrix.svc.cluster.local
+        port: 9093
+      generic_worker_4:
+        host: synapse-generic-worker-3.synapse-generic-worker.matrix.svc.cluster.local
+        port: 9093
+
+      # Event persisters (2)
+      event_persister_1:
+        host: synapse-event-persister-0.synapse-event-persister.matrix.svc.cluster.local
+        port: 9093
+      event_persister_2:
+        host: synapse-event-persister-1.synapse-event-persister.matrix.svc.cluster.local
+        port: 9093
+
+      # Federation senders (4)
+      federation_sender_1:
+        host: synapse-federation-sender-0.synapse-federation-sender.matrix.svc.cluster.local
+        port: 9093
+      federation_sender_2:
+        host: synapse-federation-sender-1.synapse-federation-sender.matrix.svc.cluster.local
+        port: 9093
+      federation_sender_3:
+        host: synapse-federation-sender-2.synapse-federation-sender.matrix.svc.cluster.local
+        port: 9093
+      federation_sender_4:
+        host: synapse-federation-sender-3.synapse-federation-sender.matrix.svc.cluster.local
+        port: 9093
+
+    # Stream writers - designate which workers handle specific operations
+    stream_writers:
+      events:
+        - event_persister_1
+        - event_persister_2
+
+    # Federation sender instances (explicit list required)
+    federation_sender_instances:
+      - federation_sender_1
+      - federation_sender_2
+      - federation_sender_3
+      - federation_sender_4
 
   # Logging configuration
   log.config: |

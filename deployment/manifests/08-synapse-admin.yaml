@@ -1,0 +1,271 @@
+# Synapse Admin - Matrix Homeserver Administration UI
+# Matrix/Synapse Production Deployment - 20K CCU
+# Version: 2.0
+
+# ============================================================================
+# Synapse Admin is a React-based web UI for managing Synapse homeserver
+# Provides user management, room management, statistics, and more
+# ============================================================================
+
+---
+# ============================================================================
+# CONFIGMAP: Synapse Admin Configuration
+# ============================================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: synapse-admin-config
+  namespace: matrix
+data:
+  # Config for nginx reverse proxy
+  nginx.conf: |
+    server {
+      listen 80;
+      server_name _;
+
+      # Security headers
+      add_header X-Frame-Options "SAMEORIGIN" always;
+      add_header X-Content-Type-Options "nosniff" always;
+      add_header X-XSS-Protection "1; mode=block" always;
+      add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+      # Root directory
+      root /usr/share/nginx/html;
+      index index.html;
+
+      # SPA routing - all routes go to index.html
+      location / {
+        try_files $uri $uri/ /index.html;
+      }
+
+      # Gzip compression
+      gzip on;
+      gzip_types text/plain text/css application/json application/javascript text/xml application/xml application/xml+rss text/javascript;
+      gzip_vary on;
+      gzip_min_length 256;
+
+      # Cache static assets
+      location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+      }
+
+      # Health check endpoint
+      location /health {
+        access_log off;
+        return 200 "OK\n";
+        add_header Content-Type text/plain;
+      }
+    }
+
+  # Environment configuration for Synapse Admin
+  config.json: |
+    {
+      "restrictBaseUrl": [
+        "https://chat.z3r0d3v.com"
+      ],
+      "asManagedUsers": false
+    }
+
+---
+# ============================================================================
+# DEPLOYMENT: Synapse Admin
+# ============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: synapse-admin
+  namespace: matrix
+  labels:
+    app: synapse-admin
+    component: admin-ui
+spec:
+  replicas: 2  # HA with 2 replicas
+
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+
+  selector:
+    matchLabels:
+      app: synapse-admin
+      component: admin-ui
+
+  template:
+    metadata:
+      labels:
+        app: synapse-admin
+        component: admin-ui
+      annotations:
+        checksum/config: "{{ .Values.config | sha256sum }}"
+
+    spec:
+      # Pod anti-affinity for HA
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: synapse-admin
+                topologyKey: kubernetes.io/hostname
+
+      containers:
+        - name: synapse-admin
+          image: awesometechnologies/synapse-admin:0.10.0  # CHANGE_TO_LATEST_STABLE
+          imagePullPolicy: IfNotPresent
+
+          ports:
+            - name: http
+              containerPort: 80
+              protocol: TCP
+
+          env:
+            # React app configuration
+            - name: REACT_APP_SERVER
+              value: "https://chat.z3r0d3v.com"
+
+          volumeMounts:
+            - name: config
+              mountPath: /app/config.json
+              subPath: config.json
+              readOnly: true
+
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 101  # nginx user
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: false
+
+      volumes:
+        - name: config
+          configMap:
+            name: synapse-admin-config
+
+---
+# ============================================================================
+# SERVICE: Synapse Admin
+# ============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: synapse-admin
+  namespace: matrix
+  labels:
+    app: synapse-admin
+    component: admin-ui
+spec:
+  type: ClusterIP
+  selector:
+    app: synapse-admin
+    component: admin-ui
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+      protocol: TCP
+
+---
+# ============================================================================
+# USAGE NOTES
+# ============================================================================
+# After deployment:
+#
+# 1. Check status:
+#    kubectl get pods -n matrix -l app=synapse-admin
+#    kubectl logs -n matrix -l app=synapse-admin
+#
+# 2. Test locally:
+#    kubectl port-forward -n matrix svc/synapse-admin 8081:80
+#    Open browser: http://localhost:8081
+#
+# 3. Login to Synapse Admin:
+#    - URL: Will be configured via Ingress (e.g., https://chat.z3r0d3v.com/admin)
+#    - Homeserver: https://chat.z3r0d3v.com
+#    - Username: Your admin username
+#    - Password: Your admin password
+#    - The admin user must have "admin: true" in Synapse database
+#
+# 4. Create admin user:
+#    # First create regular user
+#    kubectl exec -n matrix $(kubectl get pod -n matrix -l component=main -o name) -- \
+#      register_new_matrix_user -c /config/homeserver.yaml \
+#      -u admin -p YOUR_SECURE_PASSWORD -a http://localhost:8008
+#
+#    # Or manually in PostgreSQL
+#    kubectl exec -n matrix synapse-postgres-1 -- \
+#      psql -U synapse -d synapse -c \
+#      "UPDATE users SET admin = 1 WHERE name = '@admin:chat.z3r0d3v.com';"
+#
+# 5. Synapse Admin features:
+#    - User management (create, deactivate, reset password)
+#    - Room management (view, delete, purge)
+#    - Server statistics and resource usage
+#    - Media quarantine and deletion
+#    - Registration token management
+#    - Device management
+#    - View federation status
+#
+# 6. Security considerations:
+#    - CRITICAL: Restrict access via Ingress annotations (IP whitelist)
+#    - Use strong authentication
+#    - Enable audit logging for admin actions
+#    - Consider using OAuth/OIDC for admin access
+#
+# 7. Access control via Ingress (recommended):
+#    Add to Ingress manifest:
+#    ```yaml
+#    nginx.ingress.kubernetes.io/whitelist-source-range: "10.0.0.0/8,192.168.0.0/16"
+#    nginx.ingress.kubernetes.io/auth-type: basic
+#    nginx.ingress.kubernetes.io/auth-secret: synapse-admin-basic-auth
+#    ```
+#
+# 8. Create basic auth secret (additional security layer):
+#    htpasswd -c auth admin
+#    kubectl create secret generic synapse-admin-basic-auth \
+#      --from-file=auth -n matrix
+#
+# 9. For air-gapped deployment:
+#    docker pull awesometechnologies/synapse-admin:0.10.0
+#    docker tag awesometechnologies/synapse-admin:0.10.0 \
+#      your-registry.com/synapse-admin:0.10.0
+#    docker push your-registry.com/synapse-admin:0.10.0
+#
+# 10. Monitoring:
+#     - Monitor failed login attempts
+#     - Alert on user deactivation events
+#     - Track admin API usage
+#
+# ============================================================================

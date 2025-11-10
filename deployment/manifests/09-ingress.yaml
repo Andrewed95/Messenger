@@ -1,0 +1,408 @@
+# Ingress Routing Configuration
+# Matrix/Synapse Production Deployment - 20K CCU
+# Version: 2.0
+
+# ============================================================================
+# INGRESS ARCHITECTURE:
+# ============================================================================
+# Single domain with path-based routing:
+#
+# https://chat.z3r0d3v.com/
+#   ├─ /                          → Element Web (web client)
+#   ├─ /_matrix/client/*          → Synapse workers (client API)
+#   ├─ /_matrix/media/*           → Synapse workers (media API)
+#   ├─ /_matrix/federation/*      → Synapse main (federation API)
+#   ├─ /_synapse/admin/*          → Synapse main (admin API)
+#   ├─ /admin/*                   → Synapse Admin UI
+#   └─ /.well-known/matrix/*      → Synapse main (federation discovery)
+#
+# Load balancing strategy:
+# - Client /sync requests → sync workers (with session affinity)
+# - Other client API → generic workers (round-robin)
+# - Federation → main process
+# ============================================================================
+
+---
+# ============================================================================
+# CERTIFICATE: Let's Encrypt TLS Certificate
+# ============================================================================
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: matrix-tls
+  namespace: matrix
+spec:
+  secretName: matrix-tls-secret
+  issuerRef:
+    name: letsencrypt-prod
+    kind: ClusterIssuer
+  dnsNames:
+    - chat.z3r0d3v.com
+  duration: 2160h  # 90 days
+  renewBefore: 720h  # 30 days
+
+---
+# ============================================================================
+# UPSTREAM CONFIGURATION: Worker Load Balancing
+# ============================================================================
+# This ConfigMap defines upstream groups for NGINX load balancing
+# to Synapse workers with appropriate strategies
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-worker-upstreams
+  namespace: matrix
+data:
+  # Sync workers with session affinity (hash by username)
+  sync-upstream.conf: |
+    upstream synapse_sync_workers {
+      # Session affinity by username from Matrix user ID
+      hash $http_authorization consistent;
+
+      server synapse-sync-worker-0.synapse-sync-worker.matrix.svc.cluster.local:8083 max_fails=3 fail_timeout=30s;
+      server synapse-sync-worker-1.synapse-sync-worker.matrix.svc.cluster.local:8083 max_fails=3 fail_timeout=30s;
+      server synapse-sync-worker-2.synapse-sync-worker.matrix.svc.cluster.local:8083 max_fails=3 fail_timeout=30s;
+      server synapse-sync-worker-3.synapse-sync-worker.matrix.svc.cluster.local:8083 max_fails=3 fail_timeout=30s;
+      server synapse-sync-worker-4.synapse-sync-worker.matrix.svc.cluster.local:8083 max_fails=3 fail_timeout=30s;
+      server synapse-sync-worker-5.synapse-sync-worker.matrix.svc.cluster.local:8083 max_fails=3 fail_timeout=30s;
+      server synapse-sync-worker-6.synapse-sync-worker.matrix.svc.cluster.local:8083 max_fails=3 fail_timeout=30s;
+      server synapse-sync-worker-7.synapse-sync-worker.matrix.svc.cluster.local:8083 max_fails=3 fail_timeout=30s;
+
+      keepalive 32;
+    }
+
+  # Generic workers with round-robin
+  generic-upstream.conf: |
+    upstream synapse_generic_workers {
+      least_conn;  # Route to worker with least connections
+
+      server synapse-generic-worker-0.synapse-generic-worker.matrix.svc.cluster.local:8081 max_fails=3 fail_timeout=30s;
+      server synapse-generic-worker-1.synapse-generic-worker.matrix.svc.cluster.local:8081 max_fails=3 fail_timeout=30s;
+      server synapse-generic-worker-2.synapse-generic-worker.matrix.svc.cluster.local:8081 max_fails=3 fail_timeout=30s;
+      server synapse-generic-worker-3.synapse-generic-worker.matrix.svc.cluster.local:8081 max_fails=3 fail_timeout=30s;
+
+      keepalive 32;
+    }
+
+---
+# ============================================================================
+# INGRESS: Main Matrix Routing
+# ============================================================================
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: matrix-ingress
+  namespace: matrix
+  labels:
+    app: matrix
+  annotations:
+    # Cert-manager for TLS
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+
+    # NGINX Ingress specific annotations
+    kubernetes.io/ingress.class: "nginx"
+
+    # Client IP preservation (already in NGINX controller config, but explicit here)
+    nginx.ingress.kubernetes.io/use-forwarded-headers: "true"
+
+    # Increase timeouts for long-polling /sync requests
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "120"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "120"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "120"
+    nginx.ingress.kubernetes.io/proxy-body-size: "500m"  # Match Synapse max_upload_size
+
+    # Security headers
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      more_set_headers "X-Content-Type-Options: nosniff";
+      more_set_headers "X-Frame-Options: SAMEORIGIN";
+      more_set_headers "X-XSS-Protection: 1; mode=block";
+      more_set_headers "Referrer-Policy: strict-origin-when-cross-origin";
+
+    # Rate limiting (protect against abuse)
+    nginx.ingress.kubernetes.io/limit-rps: "100"
+    nginx.ingress.kubernetes.io/limit-connections: "50"
+
+    # CORS for Matrix federation
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+    nginx.ingress.kubernetes.io/cors-allow-origin: "*"
+    nginx.ingress.kubernetes.io/cors-allow-methods: "GET, POST, PUT, DELETE, OPTIONS"
+    nginx.ingress.kubernetes.io/cors-allow-headers: "Authorization, Content-Type"
+
+spec:
+  tls:
+    - hosts:
+        - chat.z3r0d3v.com
+      secretName: matrix-tls-secret
+
+  rules:
+    - host: chat.z3r0d3v.com
+      http:
+        paths:
+          # ============================================================
+          # FEDERATION API (/_matrix/federation/*)
+          # ============================================================
+          # Federation goes to main process
+          # Must be first to match before client API
+
+          - path: /_matrix/federation
+            pathType: Prefix
+            backend:
+              service:
+                name: synapse-main
+                port:
+                  number: 8008
+
+          # ============================================================
+          # WELL-KNOWN (/.well-known/matrix/*)
+          # ============================================================
+          # Federation discovery - served by main process
+
+          - path: /.well-known/matrix
+            pathType: Prefix
+            backend:
+              service:
+                name: synapse-main
+                port:
+                  number: 8008
+
+          # ============================================================
+          # ADMIN API (/_synapse/admin/*)
+          # ============================================================
+          # Admin API goes to main process
+
+          - path: /_synapse/admin
+            pathType: Prefix
+            backend:
+              service:
+                name: synapse-main
+                port:
+                  number: 8008
+
+          # ============================================================
+          # CLIENT SYNC API (/_matrix/client/*/sync)
+          # ============================================================
+          # Route to sync workers with session affinity
+          # This is the most frequently called endpoint
+
+          - path: /_matrix/client/r0/sync
+            pathType: Prefix
+            backend:
+              service:
+                name: synapse-sync-worker
+                port:
+                  number: 8083
+
+          - path: /_matrix/client/v3/sync
+            pathType: Prefix
+            backend:
+              service:
+                name: synapse-sync-worker
+                port:
+                  number: 8083
+
+          # ============================================================
+          # MEDIA API (/_matrix/media/*)
+          # ============================================================
+          # Route to generic workers for media endpoints
+
+          - path: /_matrix/media
+            pathType: Prefix
+            backend:
+              service:
+                name: synapse-generic-worker
+                port:
+                  number: 8081
+
+          - path: /_matrix/client/v1/media
+            pathType: Prefix
+            backend:
+              service:
+                name: synapse-generic-worker
+                port:
+                  number: 8081
+
+          # ============================================================
+          # CLIENT API (/_matrix/client/*)
+          # ============================================================
+          # All other client API endpoints go to generic workers
+
+          - path: /_matrix/client
+            pathType: Prefix
+            backend:
+              service:
+                name: synapse-generic-worker
+                port:
+                  number: 8081
+
+          # ============================================================
+          # SYNAPSE ADMIN UI (/admin/*)
+          # ============================================================
+          # Web-based admin interface
+
+          - path: /admin
+            pathType: Prefix
+            backend:
+              service:
+                name: synapse-admin
+                port:
+                  number: 80
+
+          # ============================================================
+          # ELEMENT WEB (/)
+          # ============================================================
+          # Default route - web client
+          # Must be LAST to avoid catching other paths
+
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: element-web
+                port:
+                  number: 80
+
+---
+# ============================================================================
+# INGRESS: Admin UI with IP Whitelist (Optional Security)
+# ============================================================================
+# Separate Ingress for admin interface with stricter access control
+# Comment out if you want admin accessible from everywhere
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: matrix-admin-ingress
+  namespace: matrix
+  labels:
+    app: matrix
+    component: admin
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    kubernetes.io/ingress.class: "nginx"
+
+    # IP whitelist for admin access (CHANGE_TO_YOUR_ADMIN_IPS)
+    # Example: Office IP, VPN IP, etc.
+    nginx.ingress.kubernetes.io/whitelist-source-range: "0.0.0.0/0"  # CHANGE_ME: "10.0.0.0/8,192.168.1.0/24"
+
+    # Basic auth (additional security layer)
+    # Create secret: htpasswd -c auth admin && kubectl create secret generic synapse-admin-basic-auth --from-file=auth -n matrix
+    # nginx.ingress.kubernetes.io/auth-type: basic
+    # nginx.ingress.kubernetes.io/auth-secret: synapse-admin-basic-auth
+    # nginx.ingress.kubernetes.io/auth-realm: "Matrix Admin Authentication Required"
+
+spec:
+  tls:
+    - hosts:
+        - chat.z3r0d3v.com
+      secretName: matrix-tls-secret
+
+  rules:
+    - host: chat.z3r0d3v.com
+      http:
+        paths:
+          - path: /admin
+            pathType: Prefix
+            backend:
+              service:
+                name: synapse-admin
+                port:
+                  number: 80
+
+          - path: /_synapse/admin
+            pathType: Prefix
+            backend:
+              service:
+                name: synapse-main
+                port:
+                  number: 8008
+
+---
+# ============================================================================
+# INGRESS: Federation Port 8448 (Optional)
+# ============================================================================
+# Matrix federation traditionally uses port 8448
+# If you want to support this in addition to HTTPS federation:
+
+# apiVersion: v1
+# kind: Service
+# metadata:
+#   name: synapse-federation
+#   namespace: matrix
+# spec:
+#   type: LoadBalancer
+#   selector:
+#     app: synapse
+#     component: main
+#   ports:
+#     - name: federation
+#       port: 8448
+#       targetPort: 8008
+#       protocol: TCP
+#   loadBalancerIP: ""  # CHANGE_TO_YOUR_METALLB_IP
+
+---
+# ============================================================================
+# USAGE NOTES
+# ============================================================================
+# After deployment:
+#
+# 1. Verify Ingress status:
+#    kubectl get ingress -n matrix
+#    kubectl describe ingress matrix-ingress -n matrix
+#
+# 2. Check certificate issuance:
+#    kubectl get certificate -n matrix
+#    kubectl describe certificate matrix-tls -n matrix
+#
+# 3. Test endpoints:
+#    # Element Web
+#    curl https://chat.z3r0d3v.com/
+#
+#    # Client API
+#    curl https://chat.z3r0d3v.com/_matrix/client/versions
+#
+#    # Federation well-known
+#    curl https://chat.z3r0d3v.com/.well-known/matrix/server
+#
+#    # Server version
+#    curl https://chat.z3r0d3v.com/_matrix/federation/v1/version
+#
+# 4. DNS configuration required:
+#    # Add A record
+#    chat.z3r0d3v.com.  IN  A  <YOUR_LOADBALANCER_IP>
+#
+#    # Optional: Add SRV records for federation
+#    _matrix._tcp.z3r0d3v.com. IN SRV 10 0 8448 chat.z3r0d3v.com.
+#
+# 5. Test federation (if enabled):
+#    https://federationtester.matrix.org/
+#    Enter: chat.z3r0d3v.com
+#
+# 6. Monitor Ingress logs:
+#    kubectl logs -n ingress-nginx -l app.kubernetes.io/name=ingress-nginx
+#
+# 7. Common issues:
+#    - Certificate not ready: Wait for cert-manager (can take 2-5 minutes)
+#    - 502 Bad Gateway: Check backend services are running
+#    - 504 Gateway Timeout: Increase timeout annotations
+#    - 413 Request Entity Too Large: Increase proxy-body-size
+#
+# 8. Load balancer IP allocation (MetalLB):
+#    kubectl get svc -n ingress-nginx
+#    # Look for EXTERNAL-IP assigned to LoadBalancer service
+#
+# 9. Security hardening:
+#    - Enable IP whitelist for admin endpoints
+#    - Add basic auth for Synapse Admin UI
+#    - Configure WAF rules if available
+#    - Enable rate limiting per user/IP
+#    - Monitor for suspicious patterns
+#
+# 10. Performance tuning:
+#     - Enable HTTP/2 (default in NGINX Ingress)
+#     - Enable connection keepalive
+#     - Tune worker_processes in NGINX
+#     - Monitor connection pool exhaustion
+#
+# ============================================================================

@@ -254,6 +254,11 @@ spec:
       # Server reset query (cleanup between sessions)
       server_reset_query: "DISCARD ALL"
 
+      # CRITICAL: Synapse compatibility - always reset connection state
+      # GitHub Issue #4473: Synapse sets REPEATABLE READ isolation level
+      # PgBouncer must ensure connection state is properly reset
+      server_reset_query_always: "1"
+
       # Logging
       log_connections: "0"
       log_disconnections: "0"
