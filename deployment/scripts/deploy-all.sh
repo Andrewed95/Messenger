@@ -369,8 +369,8 @@ phase_12_synapse() {
 
 main() {
     print_header "Matrix/Synapse Production Deployment"
-    print_warning "Version: 2.0"
-    print_warning "Target: 20K CCU"
+    print_warning "Version: 2.1 - Scale-aware deployment"
+    print_warning "📊 Supports: 100 CCU to 20K+ CCU (configure manifests for your scale)"
 
     # Check prerequisites
     check_prerequisites
