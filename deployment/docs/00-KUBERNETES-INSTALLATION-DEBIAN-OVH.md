@@ -5,7 +5,9 @@
 **Kubernetes Version:** 1.28+
 **Container Runtime:** containerd
 **Network Plugin:** Calico
-**Target Deployment:** Matrix/Synapse 20K CCU HA Cluster
+**Target Deployment:** Matrix/Synapse HA Cluster (scalable 100-20K+ CCU)
+
+**📊 Scale Planning:** Server count and specifications depend on your target scale. See [SCALING-GUIDE.md](SCALING-GUIDE.md) first to determine your requirements.
 
 ---
 
@@ -29,62 +31,77 @@
 
 ### 1.1 OVH VM Specifications
 
-Based on the Matrix/Synapse architecture requirements for 20K CCU:
+**📊 IMPORTANT:** Server count and specifications depend on your deployment scale.
 
-#### Control Plane Nodes (3 nodes)
-- **Quantity:** 3 nodes
-- **vCPU:** 4 cores each
-- **RAM:** 8 GiB each
-- **Storage:** 100 GiB SSD each
-- **Network:** 1 Gbps
+**See [SCALING-GUIDE.md](SCALING-GUIDE.md) for detailed requirements for your target scale (100 CCU, 1K, 5K, 10K, or 20K CCU).**
+
+The examples below show typical node types. Actual quantities and resources vary by scale:
+
+#### Control Plane Nodes (Always 3 nodes for HA)
+- **Quantity:** 3 nodes (all scales)
+- **vCPU:** 4-8 cores each (scale-dependent)
+- **RAM:** 8-16 GiB each
+- **Storage:** 100-200 GiB SSD each
+- **Network:** 1-10 Gbps
 - **OS:** Debian 12 (Bookworm) 64-bit
 - **Purpose:** Kubernetes control plane (API server, etcd, scheduler, controller-manager)
 
-#### Database Nodes (3 nodes)
-- **Quantity:** 3 nodes
-- **vCPU:** 16 cores each
-- **RAM:** 64 GiB each
-- **Storage:** 1 TiB NVMe SSD each
-- **Network:** 10 Gbps (recommended for database replication)
+**Examples:**
+- **100 CCU:** 3 nodes @ 4 vCPU, 8GB RAM
+- **20K CCU:** 3 nodes @ 8 vCPU, 16GB RAM
+
+#### Database Nodes (3-5 nodes depending on scale)
+- **vCPU:** 4-32 cores each
+- **RAM:** 16-128 GiB each
+- **Storage:** 500GB-4TB NVMe SSD each
+- **Network:** 10 Gbps recommended
 - **OS:** Debian 12 (Bookworm) 64-bit
 - **Purpose:** CloudNativePG PostgreSQL cluster
 - **Label:** `node-role=database`
 
-#### Storage Nodes (4 nodes)
-- **Quantity:** 4 nodes
-- **vCPU:** 8 cores each
-- **RAM:** 32 GiB each
-- **Storage:** 4× 1 TiB drives (total 4 TiB per node, 16 TiB cluster raw)
-- **Network:** 10 Gbps
+**Examples:**
+- **100 CCU:** 3 nodes @ 4 vCPU, 16GB RAM, 500GB NVMe
+- **20K CCU:** 5 nodes @ 32 vCPU, 128GB RAM, 4TB NVMe
+
+#### Storage Nodes (4-12 nodes in pools of 4)
+- **vCPU:** 4-16 cores each
+- **RAM:** 8-32 GiB each
+- **Storage:** 1-4 TiB per node
+- **Network:** 10 Gbps recommended
 - **OS:** Debian 12 (Bookworm) 64-bit
-- **Purpose:** MinIO object storage (EC:4)
+- **Purpose:** MinIO object storage (EC:4 per pool)
 - **Label:** `node-role=storage`
 
-#### Application Nodes (4 nodes)
-- **Quantity:** 4 nodes
-- **vCPU:** 16 cores each
-- **RAM:** 64 GiB each
-- **Storage:** 500 GiB SSD each
-- **Network:** 10 Gbps
+**Examples:**
+- **100 CCU:** 4 nodes @ 4 vCPU, 8GB RAM, 1TB (1 pool)
+- **20K CCU:** 12 nodes @ 16 vCPU, 32GB RAM, 4TB (3 pools)
+
+#### Application Nodes (3-21 nodes depending on scale)
+- **vCPU:** 8-32 cores each
+- **RAM:** 16-128 GiB each
+- **Storage:** 200-2000 GiB SSD each
+- **Network:** 1-10 Gbps
 - **OS:** Debian 12 (Bookworm) 64-bit
-- **Purpose:** Synapse main + workers
+- **Purpose:** Synapse main + workers, monitoring
 - **Label:** `node-role=application`
 
-#### WebRTC Nodes (4 nodes for LiveKit)
-- **Quantity:** 4 nodes
-- **vCPU:** 8 cores each
-- **RAM:** 16 GiB each
-- **Storage:** 100 GiB SSD each
-- **Network:** 10 Gbps (critical for video streaming)
-- **OS:** Debian 12 (Bookworm) 64-bit
-- **Purpose:** LiveKit SFU instances
-- **Label:** `livekit=true`
-- **Note:** Requires public IP or port forwarding for UDP 50100-50200
+**Examples:**
+- **100 CCU:** 3 nodes @ 8 vCPU, 16GB RAM, 200GB SSD
+- **20K CCU:** 21 nodes @ 32 vCPU, 128GB RAM, 2TB SSD
 
-#### TURN Nodes (2 nodes for coturn)
-- **Quantity:** 2 nodes
-- **vCPU:** 4 cores each
-- **RAM:** 8 GiB each
+#### Call Server Nodes (2-10 nodes depending on scale)
+- **vCPU:** 4-16 cores each
+- **RAM:** 8-32 GiB each
+- **Storage:** 50-200 GiB SSD each
+- **Network:** 10 Gbps (critical for media)
+- **OS:** Debian 12 (Bookworm) 64-bit
+- **Purpose:** LiveKit SFU + coturn TURN servers
+- **Labels:** `livekit=true` or `coturn=true`
+- **Note:** Requires public IP or port forwarding for UDP
+
+**Examples:**
+- **100 CCU:** 2 nodes @ 4 vCPU, 8GB RAM
+- **20K CCU:** 10 nodes @ 16 vCPU, 32GB RAM
 - **Storage:** 50 GiB SSD each
 - **Network:** 1 Gbps
 - **OS:** Debian 12 (Bookworm) 64-bit
