@@ -1,6 +1,8 @@
 # Matrix Synapse Kubernetes Deployment Guide
 
-Complete production deployment of Matrix Synapse homeserver on Kubernetes, designed for enterprise use with 20,000 concurrent users and full high availability.
+Complete production deployment of Matrix Synapse homeserver on Kubernetes with full high availability, scalable from 100 to 20,000+ concurrent users.
+
+**📊 Choose Your Scale:** This deployment supports 100 CCU to 20K+ CCU. See [SCALING-GUIDE.md](docs/SCALING-GUIDE.md) for infrastructure sizing at your scale.
 
 ---
 
@@ -9,15 +11,15 @@ Complete production deployment of Matrix Synapse homeserver on Kubernetes, desig
 This deployment provides a complete, production-ready Matrix homeserver with:
 
 **Core Messaging Platform:**
-- Synapse homeserver with 18 workers for horizontal scaling
+- Synapse homeserver with horizontally scalable workers (2-38 workers depending on scale)
 - Element Web client for browser access
 - Synapse Admin interface for user/room management
-- Full high availability with zero single points of failure
+- Full high availability at all scales with zero single points of failure
 
 **Infrastructure Components:**
-- PostgreSQL database cluster (3 nodes, synchronous replication)
+- PostgreSQL database cluster (3-5 nodes with synchronous replication)
 - Redis caching (2 separate instances for different services)
-- MinIO object storage (4 nodes, erasure coded)
+- MinIO object storage (4-12 nodes, erasure coded for HA)
 - Complete monitoring stack (Prometheus, Grafana, Loki)
 
 **Communication Features:**
@@ -41,12 +43,15 @@ This deployment provides a complete, production-ready Matrix homeserver with:
 ### What You Need
 
 **Infrastructure:**
-- 21 servers (virtual or physical) running Debian 12
-  - 3 servers for Kubernetes control plane (4 vCPU, 8GB RAM each)
-  - 18 servers for Kubernetes workers (8 vCPU, 32GB RAM each)
+- **Servers:** 15-51 servers depending on scale (see [SCALING-GUIDE.md](docs/SCALING-GUIDE.md))
+  - **Example for 100 CCU:** 15 servers total
+  - **Example for 20K CCU:** 51 servers total
+- All servers: Virtual or physical, running Debian 12
 - Network connectivity between all servers
 - IP address range for load balancers (10-20 addresses)
 - Domain name for your Matrix server (e.g., `chat.example.com`)
+
+**Important:** Review [SCALING-GUIDE.md](docs/SCALING-GUIDE.md) to determine exact server count and specifications for your target scale.
 
 **Technical Knowledge:**
 - Basic Linux system administration
@@ -171,6 +176,9 @@ deployment/
 ├── docs/                              ← Detailed documentation
 │   ├── 00-KUBERNETES-INSTALLATION-DEBIAN-OVH.md
 │   │                                  ← Step-by-step Kubernetes installation
+│   │
+│   ├── SCALING-GUIDE.md               ← **START HERE** - Choose your scale (100-20K CCU)
+│   │                                  Infrastructure sizing for all scales
 │   │
 │   ├── DEPLOYMENT-GUIDE.md            ← Detailed deployment walkthrough
 │   │
@@ -879,6 +887,7 @@ Now that you've read this overview:
 
 | Document | Purpose | When to Read |
 |----------|---------|--------------|
+| [`SCALING-GUIDE.md`](docs/SCALING-GUIDE.md) | **Infrastructure sizing for 100-20K CCU** | **FIRST** - Determine your server requirements |
 | [`00-KUBERNETES-INSTALLATION-DEBIAN-OVH.md`](docs/00-KUBERNETES-INSTALLATION-DEBIAN-OVH.md) | Install Kubernetes from scratch | Before deployment, if you don't have Kubernetes |
 | [`DEPLOYMENT-GUIDE.md`](docs/DEPLOYMENT-GUIDE.md) | Step-by-step deployment walkthrough | During deployment, for detailed explanations |
 | [`CONFIGURATION-REFERENCE.md`](docs/CONFIGURATION-REFERENCE.md) | Complete configuration options | When customizing settings |

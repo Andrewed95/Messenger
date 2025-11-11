@@ -2,6 +2,12 @@
 
 Complete reference for all configuration options in the Matrix Synapse deployment.
 
+**📊 IMPORTANT - Scaling:** Many configuration values depend on your deployment scale (100 CCU vs 20K CCU).
+
+- **See [SCALING-GUIDE.md](SCALING-GUIDE.md) FIRST** to understand your infrastructure requirements
+- This document provides examples for both **100 CCU** and **20K CCU** scales where relevant
+- For scales in between (1K, 5K, 10K), interpolate values or refer to SCALING-GUIDE.md
+
 ---
 
 ## Configuration File Location
@@ -320,18 +326,36 @@ openssl rand -base64 32
 
 **Configuration:**
 
-PostgreSQL is configured with these fixed settings optimized for Synapse:
+PostgreSQL configuration varies by scale. Here are examples for common scales:
 
+**For 100 CCU:**
 | Setting | Value | Purpose |
 |---------|-------|---------|
-| Instances | 3 | 1 primary + 2 standby replicas |
-| Synchronous Replication | ANY 1 | Zero data loss on failover |
-| switchoverDelay | 300s (5 minutes) | Prevents false positive failovers |
-| max_connections | 500 | Total connections allowed |
-| shared_buffers | 8GB | In-memory cache (25% of RAM) |
-| effective_cache_size | 24GB | Query planner hint (75% of RAM) |
-| Storage Size | 500Gi | Per instance |
-| WAL Storage | 50Gi | Separate fast storage for WAL |
+| Instances | 3 | 1 primary + 2 replicas (HA) |
+| CPU per instance | 4 vCPU | |
+| RAM per instance | 16GB | |
+| max_connections | 200 | Total connections allowed |
+| shared_buffers | 4GB | In-memory cache (25% of RAM) |
+| effective_cache_size | 12GB | Query planner hint (75% of RAM) |
+| Storage Size | 500GB | Per instance |
+
+**For 20K CCU:**
+| Setting | Value | Purpose |
+|---------|-------|---------|
+| Instances | 5 | 1 primary + 4 replicas (HA + read scaling) |
+| CPU per instance | 32 vCPU | |
+| RAM per instance | 128GB | |
+| max_connections | 600 | Total connections allowed |
+| shared_buffers | 32GB | In-memory cache (25% of RAM) |
+| effective_cache_size | 96GB | Query planner hint (75% of RAM) |
+| Storage Size | 4TB | Per instance |
+
+**All Scales:**
+- Synchronous Replication: ANY 1 (zero data loss on failover)
+- switchoverDelay: 300s (prevents false positive failovers)
+- WAL Storage: 50Gi (separate fast storage for WAL)
+
+**For your scale:** See [SCALING-GUIDE.md](SCALING-GUIDE.md) Section 9.2 for connection pool calculations.
 
 **See Also:** [`HA-ROUTING-GUIDE.md`](HA-ROUTING-GUIDE.md) for failover details.
 
@@ -339,22 +363,30 @@ PostgreSQL is configured with these fixed settings optimized for Synapse:
 
 ## Redis Configuration
 
-Redis is deployed automatically with Helm charts. No user configuration required beyond what's in the main configuration.
+Redis is deployed automatically with Helm charts. Resource sizing scales with your deployment.
 
 **Architecture:**
 - 2 separate Redis instances (Synapse and LiveKit)
-- Each: 1 master + 3 replicas + 3 Sentinel instances
+- Each: 1 master + 2 replicas + 3 Sentinel instances
 - Automatic failover via Sentinel
 
-**Configuration:**
+**Configuration by Scale:**
+
+**For 100 CCU:**
+- Synapse Redis: 1 vCPU, 2GB RAM per instance
+- LiveKit Redis: 1 vCPU, 1GB RAM per instance
+
+**For 20K CCU:**
+- Synapse Redis: 8 vCPU, 24GB RAM per instance
+- LiveKit Redis: 4 vCPU, 12GB RAM per instance
 
 | Component | Replicas | Purpose |
 |-----------|----------|---------|
 | Redis Master | 1 | Active cache/pubsub |
-| Redis Replicas | 3 | Standby, automatic failover |
+| Redis Replicas | 2 | Standby, automatic failover |
 | Redis Sentinel | 3 | Monitor health, trigger failover |
 
-**No user configuration needed.** Defaults are optimized for the deployment.
+**No user configuration needed.** Resources are configured in Helm values files based on your scale.
 
 ---
 
