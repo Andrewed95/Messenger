@@ -1,8 +1,10 @@
 # Antivirus Implementation Guide
-## Complete Guide for Matrix/Synapse at 20K CCU Scale
+## Complete Guide for Matrix/Synapse (All Scales)
+
+**📊 Scaling Notice:** This guide applies to all deployment scales (100 CCU to 20K+ CCU). Examples use 20K CCU for demonstration, but principles apply at any scale. See [SCALING-GUIDE.md](SCALING-GUIDE.md) for scale-specific infrastructure sizing.
 
 **Last Updated:** November 11, 2025
-**Document Version:** 2.0
+**Document Version:** 2.1
 
 ---
 
@@ -86,11 +88,11 @@ Even ONE prevented malware incident per year justifies the cost.
 
 ### 1.5 Critical Technical Constraint
 
-**⚠️ IMPORTANT:** At 20K CCU scale, **synchronous antivirus scanning is NOT viable**.
+**⚠️ IMPORTANT:** At larger scales (1K+ CCU), **synchronous antivirus scanning is NOT viable**.
 
 If you implement antivirus, you **MUST** use asynchronous background scanning (detailed in Section 2).
 
-**Why Synchronous Scanning Fails:**
+**Why Synchronous Scanning Fails (Example: 20K CCU):**
 - 200 concurrent uploads during peak hour
 - 10-200 seconds scan time per file
 - Would require 100+ CPU cores for acceptable latency
@@ -98,6 +100,8 @@ If you implement antivirus, you **MUST** use asynchronous background scanning (d
 - User experience: 3+ minute wait for upload completion
 
 **Solution:** Asynchronous scanning (files are available for 30-60 seconds before scan completes).
+
+**📊 Scale-Specific Sizing:** See [SCALING-GUIDE.md](SCALING-GUIDE.md) for ClamAV and scan worker counts at your scale.
 
 ---
 
@@ -161,12 +165,14 @@ If you implement antivirus, you **MUST** use asynchronous background scanning (d
 - CPU: 100% of 1 core during scan (CPU-bound)
 - RAM: ~50-100MB per concurrent scan thread
 
-**20K CCU Upload Pattern Assumptions:**
+**Upload Pattern Assumptions (Example: 20K CCU):**
 - Total users: 20,000 concurrent
 - Active uploaders: 5% (1,000 users might upload during peak hour)
 - Upload rate: 1 file per user per hour average
 - Average file size: 5MB (images, documents, small videos)
 - Peak upload burst: 1% of users upload simultaneously (200 concurrent uploads)
+
+**📊 For Your Scale:** Apply same percentages to your CCU count. For 100 CCU: ~2 concurrent uploads. For 5K CCU: ~50 concurrent uploads.
 
 **Scaling Calculation:**
 
@@ -889,8 +895,19 @@ kubectl logs -n matrix -l component=scan-worker --tail=50 | grep -i infected
 
 ### 2.5 Resource Planning
 
-**For 20K CCU with async scanning:**
+**📊 Scale-Specific Resource Requirements:**
 
+**For 100 CCU:**
+| Component | Replicas | CPU/pod | RAM/pod | Total CPU | Total RAM |
+|-----------|----------|---------|---------|-----------|-----------|
+| ClamAV | 2 | 1 core | 2Gi | 2 cores | 4Gi |
+| Scan Workers | 2 | 0.5 core | 512Mi | 1 core | 1Gi |
+| Redis Cache | 1 | 0.5 core | 1Gi | 0.5 cores | 1Gi |
+| **TOTAL** | - | - | - | **3.5 cores** | **6Gi** |
+
+**Cost Estimate:** ~$40-60/month
+
+**For 20K CCU:**
 | Component | Replicas | CPU/pod | RAM/pod | Total CPU | Total RAM |
 |-----------|----------|---------|---------|-----------|-----------|
 | ClamAV | 10 | 1 core | 2Gi | 10 cores | 20Gi |
@@ -898,9 +915,12 @@ kubectl logs -n matrix -l component=scan-worker --tail=50 | grep -i infected
 | Redis Cache | 1 | 0.5 core | 2Gi | 0.5 cores | 2Gi |
 | **TOTAL** | - | - | - | **13 cores** | **24.5Gi** |
 
-**Cost Estimate (AWS example):**
-- 13 vCPUs + 24.5Gi RAM ≈ 2-3 m5.xlarge instances
-- Cost: ~$150-250/month
+**Cost Estimate:** ~$150-250/month
+
+**📊 Scaling Formula:**
+- ClamAV pods: `CEIL(peak_concurrent_uploads / 2)`, minimum 2 for HA
+- Scan workers: `CEIL(ClamAV_pods / 2)`, minimum 2 for HA
+- Detailed sizing tables available in [SCALING-GUIDE.md](SCALING-GUIDE.md)
 
 ### 2.6 Monitoring and Alerting
 
