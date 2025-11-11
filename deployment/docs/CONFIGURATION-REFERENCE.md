@@ -829,11 +829,8 @@ LETSENCRYPT_EMAIL="admin@example.com"
 - ✅ **Pros:** Malware protection, ransomware prevention
 - ❌ **Cons:** Additional CPU usage, slight upload delay
 
-**To Enable:**
-See [`ANTIVIRUS-IMPLEMENTATION-CRITICAL-ANALYSIS.md`](ANTIVIRUS-IMPLEMENTATION-CRITICAL-ANALYSIS.md)
-
-**To Disable:**
-See [`ANTIVIRUS-DISABLE-GUIDE.md`](ANTIVIRUS-DISABLE-GUIDE.md)
+**Complete Guide:**
+See [`ANTIVIRUS-GUIDE.md`](ANTIVIRUS-GUIDE.md) for decision framework and complete implementation instructions for both enabling and disabling antivirus.
 
 ### Federation
 

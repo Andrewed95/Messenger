@@ -176,15 +176,15 @@ deployment/
 │   │
 │   ├── CONFIGURATION-REFERENCE.md     ← All configuration options explained
 │   │
+│   ├── OPERATIONS-UPDATE-GUIDE.md     ← Update, scale, and maintain services
+│   │
 │   ├── HA-ROUTING-GUIDE.md            ← How HA and routing works
 │   │
 │   ├── CONTAINER-IMAGES-AND-CUSTOMIZATION.md
 │   │                                  ← Image sources and customization
 │   │
-│   ├── ANTIVIRUS-IMPLEMENTATION-CRITICAL-ANALYSIS.md
-│   │                                  ← Optional: Antivirus integration
-│   │
-│   └── ANTIVIRUS-DISABLE-GUIDE.md     ← Optional: Security without antivirus
+│   └── ANTIVIRUS-GUIDE.md             ← Complete antivirus implementation guide
+│                                      (both with and without AV options)
 │
 ├── config/                            ← Configuration files
 │   ├── deployment.env.example         ← Template with all settings
@@ -733,13 +733,13 @@ Optionally scan uploaded files for malware using ClamAV.
 - **Pros**: Protection against malware, ransomware
 - **Cons**: Additional CPU usage, slight upload delay, operational complexity
 
-**To enable:**
+**Complete antivirus guide:**
 
-See [`docs/ANTIVIRUS-IMPLEMENTATION-CRITICAL-ANALYSIS.md`](docs/ANTIVIRUS-IMPLEMENTATION-CRITICAL-ANALYSIS.md) for asynchronous scanning implementation.
-
-**To disable:**
-
-See [`docs/ANTIVIRUS-DISABLE-GUIDE.md`](docs/ANTIVIRUS-DISABLE-GUIDE.md) for alternative security measures.
+See [`docs/ANTIVIRUS-GUIDE.md`](docs/ANTIVIRUS-GUIDE.md) for:
+- Decision framework (should you enable/disable?)
+- Option A: Asynchronous scanning implementation (if enabling)
+- Option B: Alternative security measures (if disabling)
+- Complete deployment steps for both options
 
 ---
 
@@ -882,10 +882,10 @@ Now that you've read this overview:
 | [`00-KUBERNETES-INSTALLATION-DEBIAN-OVH.md`](docs/00-KUBERNETES-INSTALLATION-DEBIAN-OVH.md) | Install Kubernetes from scratch | Before deployment, if you don't have Kubernetes |
 | [`DEPLOYMENT-GUIDE.md`](docs/DEPLOYMENT-GUIDE.md) | Step-by-step deployment walkthrough | During deployment, for detailed explanations |
 | [`CONFIGURATION-REFERENCE.md`](docs/CONFIGURATION-REFERENCE.md) | Complete configuration options | When customizing settings |
+| [`OPERATIONS-UPDATE-GUIDE.md`](docs/OPERATIONS-UPDATE-GUIDE.md) | Update, scale, and maintain services | After deployment, for ongoing operations |
 | [`HA-ROUTING-GUIDE.md`](docs/HA-ROUTING-GUIDE.md) | How HA and routing works | To understand architecture and troubleshoot |
 | [`CONTAINER-IMAGES-AND-CUSTOMIZATION.md`](docs/CONTAINER-IMAGES-AND-CUSTOMIZATION.md) | Image sources, custom builds | When using custom Synapse versions |
-| [`ANTIVIRUS-IMPLEMENTATION-CRITICAL-ANALYSIS.md`](docs/ANTIVIRUS-IMPLEMENTATION-CRITICAL-ANALYSIS.md) | Antivirus integration guide | If adding antivirus scanning |
-| [`ANTIVIRUS-DISABLE-GUIDE.md`](docs/ANTIVIRUS-DISABLE-GUIDE.md) | Security without antivirus | If skipping antivirus |
+| [`ANTIVIRUS-GUIDE.md`](docs/ANTIVIRUS-GUIDE.md) | Complete antivirus guide | If implementing or skipping antivirus |
 
 ---
 
