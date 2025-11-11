@@ -1,8 +1,19 @@
 # CloudNativePG PostgreSQL Cluster
-# Matrix/Synapse Production Deployment - 20K CCU
-# Version: 2.0 - CORRECTED: switchoverDelay: 300 seconds
+# Matrix/Synapse Production Deployment
+# Version: 2.1 - Scale-aware configuration
 
 # ============================================================================
+# SCALING NOTICE: Configuration Depends on Your Scale
+# ============================================================================
+# 📊 Current values are EXAMPLES for mid-scale (~5K CCU).
+# See SCALING-GUIDE.md Section 9.2 for your scale:
+#
+# - 100 CCU:  3 instances, 200 max_connections, 4 vCPU, 16GB RAM, 500GB storage
+# - 1K CCU:   3 instances, 300 max_connections, 8 vCPU, 32GB RAM, 1TB storage
+# - 5K CCU:   3 instances, 450 max_connections, 16 vCPU, 64GB RAM, 2TB storage
+# - 10K CCU:  5 instances, 550 max_connections, 24 vCPU, 96GB RAM, 3TB storage
+# - 20K CCU:  5 instances, 600 max_connections, 32 vCPU, 128GB RAM, 4TB storage
+#
 # CRITICAL CORRECTIONS:
 # - switchoverDelay: 300 (was 40000000 - FIXED!)
 # - dataDurability: required (explicit in v1.25+)
@@ -17,7 +28,8 @@ metadata:
   name: synapse-postgres
   namespace: matrix
 spec:
-  # Number of instances (1 primary + 2 replicas)
+  # Number of instances (1 primary + N replicas)
+  # ADJUST: 3 for <10K CCU, 5 for 10K+ CCU (see header for guidance)
   instances: 3
 
   # CORRECTED: 5 minutes graceful shutdown before forced failover
@@ -48,30 +60,30 @@ spec:
         - CREATE EXTENSION IF NOT EXISTS btree_gin;
 
   # ============================================================================
-  # STORAGE
+  # STORAGE (ADJUST based on scale - see header for guidance)
   # ============================================================================
   storage:
     storageClass: ""  # CHANGE_TO_YOUR_STORAGE_CLASS (e.g., local-path, ceph-block)
-    size: 500Gi
+    size: 500Gi  # Example for 100 CCU. Scale: 1TB (1K), 2TB (5K), 3TB (10K), 4TB (20K)
     # Resize in place (if storage class supports it)
     resizeInUseVolumes: true
 
   # WAL storage (for better I/O performance)
   walStorage:
     storageClass: ""  # CHANGE_TO_YOUR_STORAGE_CLASS (prefer fast SSD/NVMe)
-    size: 50Gi
+    size: 50Gi  # 10% of main storage typically sufficient
     resizeInUseVolumes: true
 
   # ============================================================================
-  # RESOURCES
+  # RESOURCES (ADJUST based on scale - see header for guidance)
   # ============================================================================
   resources:
     requests:
-      cpu: 4000m
-      memory: 16Gi
+      cpu: 4000m      # Example for 100 CCU. Scale: 8 (1K), 16 (5K), 24 (10K), 32 (20K)
+      memory: 16Gi    # Example for 100 CCU. Scale: 32 (1K), 64 (5K), 96 (10K), 128 (20K)
     limits:
-      cpu: 8000m
-      memory: 32Gi
+      cpu: 8000m      # 2× requests for burst capacity
+      memory: 32Gi    # 2× requests for burst capacity
 
   # ============================================================================
   # POSTGRESQL CONFIGURATION
@@ -79,13 +91,13 @@ spec:
   postgresql:
     # PostgreSQL parameters
     parameters:
-      # Connection settings
-      max_connections: "500"  # For 18 workers + main process + overhead
+      # Connection settings (ADJUST based on worker count - see SCALING-GUIDE.md Section 9.2)
+      max_connections: "500"  # Example for ~5K CCU (adjust for your scale)
       superuser_reserved_connections: "3"
 
-      # Memory settings (for 32Gi RAM limit)
-      shared_buffers: "8GB"  # 25% of RAM
-      effective_cache_size: "24GB"  # 75% of RAM
+      # Memory settings (ADJUST based on your instance RAM - see header)
+      shared_buffers: "8GB"  # 25% of RAM (adjust for your instance size)
+      effective_cache_size: "24GB"  # 75% of RAM (adjust for your instance size)
       maintenance_work_mem: "2GB"
       work_mem: "32MB"  # (RAM - shared_buffers) / (max_connections * 3)
 

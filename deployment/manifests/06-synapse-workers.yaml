@@ -1,10 +1,21 @@
 # Synapse Workers - Complete Worker Architecture
-# Matrix/Synapse Production Deployment - 20K CCU
-# Version: 2.0
+# Matrix/Synapse Production Deployment
+# Version: 2.1
 
 # ============================================================================
-# ARCHITECTURE: 18 Workers Total
+# SCALING NOTICE: Worker Counts Depend on Your Scale
 # ============================================================================
+# The replica counts below are EXAMPLES for mid-scale deployment (~5K CCU).
+# You MUST adjust these values based on your target scale.
+#
+# 📊 See SCALING-GUIDE.md Section 9.1 for worker counts at your scale:
+# - 100 CCU:  2 sync, 2 generic, 2 event persisters, 2 federation (8 total)
+# - 1K CCU:   4 sync, 2 generic, 2 event persisters, 2 federation (10 total)
+# - 5K CCU:   8 sync, 4 generic, 2 event persisters, 4 federation (18 total)
+# - 10K CCU: 12 sync, 6 generic, 3 event persisters, 6 federation (27 total)
+# - 20K CCU: 18 sync, 8 generic, 4 event persisters, 8 federation (38 total)
+#
+# CURRENT CONFIGURATION: 18 Workers Total (Example for ~5K CCU)
 # - 8 Sync Workers (handle /sync endpoint - user session affinity)
 # - 4 Generic Workers (client API + federation receiver)
 # - 4 Federation Senders (outbound federation traffic)
