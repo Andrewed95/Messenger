@@ -1,6 +1,6 @@
 # LiveKit SFU Helm Values
-# Matrix/Synapse Production Deployment - 20K CCU
-# Version: 2.0 - CORRECTED: Separate Redis instance
+# Matrix/Synapse Production Deployment (Scalable 100 CCU - 20K+ CCU)
+# Version: 2.1 - Scale-aware configuration
 
 # ============================================================================
 # CRITICAL: LiveKit provides Selective Forwarding Unit for group video
@@ -32,10 +32,14 @@ image:
 # REPLICA CONFIGURATION
 # ============================================================================
 
-# Number of LiveKit SFU instances
-# For 20K CCU: 4 instances recommended
+# Number of LiveKit SFU instances (see SCALING-GUIDE.md Section 9.5)
+# - 100 CCU:  2 instances (HA minimum)
+# - 1K CCU:   2 instances
+# - 5K CCU:   2 instances
+# - 10K CCU:  3 instances
+# - 20K CCU:  4 instances
 # Each instance handles 50-100 concurrent rooms
-replicaCount: 4
+replicaCount: 2  # Adjust based on your scale
 
 # ============================================================================
 # DEPLOYMENT STRATEGY
@@ -280,10 +284,14 @@ tolerations: []
 # ============================================================================
 # CAPACITY PLANNING
 # ============================================================================
-# For 20K CCU with 4 LiveKit instances:
-# - Concurrent video calls: ~400-800 users in calls
-# - Concurrent rooms: 50-100 rooms (8-16 participants each)
-# - Per instance capacity: 12-25 rooms
+# Concurrent video calls by scale (see SCALING-GUIDE.md Section 9.5):
+# - 100 CCU:   5-10 users in calls, 2-5 rooms, 2 instances
+# - 1K CCU:    50-100 users in calls, 10-20 rooms, 2 instances
+# - 5K CCU:    100-200 users in calls, 20-40 rooms, 2 instances
+# - 10K CCU:   200-400 users in calls, 30-60 rooms, 3 instances
+# - 20K CCU:   400-800 users in calls, 50-100 rooms, 4 instances
+#
+# Per instance capacity: ~25-50 concurrent rooms
 #
 # Scaling triggers:
 # - CPU >70% sustained: Add more LiveKit nodes

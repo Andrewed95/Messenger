@@ -1,5 +1,5 @@
 # MinIO Operator Helm Values
-# Matrix/Synapse Production Deployment - 20K CCU
+# Matrix/Synapse Production Deployment (Scalable 100 CCU - 20K+ CCU)
 # Version: 2.0
 
 # ============================================================================

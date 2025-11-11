@@ -1,6 +1,6 @@
 # Redis Sentinel for Synapse - Helm Values
-# Matrix/Synapse Production Deployment - 20K CCU
-# Version: 2.0 - CORRECTED: Separate Redis for Synapse
+# Matrix/Synapse Production Deployment (Scalable 100 CCU - 20K+ CCU)
+# Version: 2.1 - Scale-aware configuration
 
 # ============================================================================
 # CRITICAL: Synapse has dedicated Redis instance (NOT shared with LiveKit)
@@ -178,8 +178,14 @@ networkPolicy:
 # ============================================================================
 # SCALING NOTES
 # ============================================================================
-# For 20K CCU with 18 workers:
-# - Current config (2Gi RAM) sufficient for worker replication pub/sub
-# - Monitor memory usage; scale if >80% consistently
-# - Can increase replicaCount if geographic distribution needed
+# Redis RAM requirements by scale (see SCALING-GUIDE.md Section 9.3):
+# - 100 CCU:   1GB RAM sufficient
+# - 1K CCU:    2GB RAM sufficient
+# - 5K CCU:    4GB RAM recommended
+# - 10K CCU:   8GB RAM recommended
+# - 20K CCU:   24GB RAM recommended
+#
+# Current config (2Gi RAM) sufficient for up to 1K CCU.
+# Adjust master.resources and replica.resources based on your scale.
+# Monitor memory usage; scale if >80% consistently.
 # ============================================================================
