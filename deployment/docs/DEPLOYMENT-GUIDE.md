@@ -16,7 +16,7 @@ Before starting, ensure you have:
 
 **Don't have Kubernetes yet?** Follow [`00-KUBERNETES-INSTALLATION-DEBIAN-OVH.md`](00-KUBERNETES-INSTALLATION-DEBIAN-OVH.md) first.
 
-✅ **Tools installed on your machine:**
+✅ **Tools installed on your workstation:**
 ```bash
 # Check kubectl
 kubectl version --client
@@ -28,13 +28,19 @@ helm version
 kubectl cluster-info
 ```
 
-✅ **Configuration file ready:**
-```bash
-# Must exist and be filled out
-ls -l config/deployment.env
-```
+**→ Don't have these tools?** Follow [`00-WORKSTATION-SETUP.md`](00-WORKSTATION-SETUP.md) for complete installation instructions.
 
-**Not configured yet?** See [Configuration Reference](CONFIGURATION-REFERENCE.md).
+✅ **Configuration values prepared:**
+- Domain name ready
+- Storage classes identified
+- Passwords generated
+- All placeholder values replaced
+
+**→ CRITICAL:** Review [`CONFIGURATION-CHECKLIST.md`](CONFIGURATION-CHECKLIST.md) for complete list of ALL values that must be replaced before deployment.
+
+**Additional References:**
+- [Configuration Reference](CONFIGURATION-REFERENCE.md) - Detailed explanation of every option
+- [Scaling Guide](SCALING-GUIDE.md) - Infrastructure sizing for your scale
 
 ---
 
@@ -635,11 +641,84 @@ kubectl get pods -n matrix -l app=synapse-admin
 # Should show 2 pods Running
 ```
 
+#### Step 4.5: Deploy HAProxy Routing Layer
+
+**IMPORTANT:** HAProxy provides intelligent routing to Synapse workers. Deploy this AFTER workers are running.
+
+```bash
+# Create HAProxy ConfigMap from configuration file
+kubectl create configmap haproxy-config \
+  --from-file=haproxy.cfg=config/haproxy.cfg \
+  -n matrix
+
+# Verify ConfigMap created
+kubectl get configmap haproxy-config -n matrix
+```
+
+**What this ConfigMap contains:**
+- HAProxy routing rules (sync workers vs generic workers)
+- Health check configuration
+- DNS service discovery settings
+- Load balancing strategies (token-based hashing for sync, round-robin for generic)
+
+```bash
+# Deploy HAProxy pods
+kubectl apply -f manifests/06-haproxy.yaml
+
+# Wait for HAProxy to be ready
+kubectl wait --for=condition=ready pod -l app=haproxy -n matrix --timeout=3m
+```
+
+**What this does:**
+- Deploys HAProxy routing layer (2+ replicas for HA)
+- Routes `/sync` requests to sync workers (with sticky sessions)
+- Routes all other Matrix requests to generic workers
+- Provides automatic fallback to main process if workers down
+- Enables health-aware load balancing
+
+**Verify HAProxy deployment:**
+```bash
+# Check HAProxy pods
+kubectl get pods -n matrix -l app=haproxy
+# Should show 2+ pods Running
+
+# Check HAProxy service
+kubectl get svc -n matrix haproxy
+# Should show ClusterIP service on port 8008
+
+# Test HAProxy health
+kubectl exec -n matrix -l app=haproxy -- curl -f http://localhost:8404/stats
+# Should return HAProxy stats page HTML
+```
+
+**Verify routing configuration:**
+```bash
+# Check HAProxy can reach sync workers
+kubectl exec -n matrix -l app=haproxy -- curl -f http://synapse-sync-worker-0.synapse-sync-worker.matrix.svc.cluster.local:8083/_matrix/client/versions
+# Should return: {"versions": ["r0.0.1", ...]}
+
+# Check HAProxy can reach generic workers
+kubectl exec -n matrix -l app=haproxy -- curl -f http://synapse-generic-worker-0.synapse-generic-worker.matrix.svc.cluster.local:8081/_matrix/client/versions
+# Should return: {"versions": ["r0.0.1", ...]}
+```
+
+**Check HAProxy logs:**
+```bash
+kubectl logs -n matrix -l app=haproxy --tail=50
+# Should show:
+# - "Starting HAProxy"
+# - DNS resolution for worker services
+# - No errors about unreachable backends
+```
+
+**For detailed HAProxy architecture and routing patterns:**
+See [`docs/HAPROXY-ARCHITECTURE.md`](HAPROXY-ARCHITECTURE.md)
+
 ---
 
 ### Phase 5: Routing Layer
 
-This configures external access.
+This configures external access via Ingress (routes to HAProxy).
 
 #### Step 5.1: Create ClusterIssuer (Let's Encrypt)
 
@@ -1077,10 +1156,25 @@ After successful deployment:
 
 ## Related Documentation
 
-- [Main README](../README.md) - Overview and quick start
-- [HA Routing Guide](HA-ROUTING-GUIDE.md) - How components connect
+**Setup & Configuration:**
+- [Workstation Setup](00-WORKSTATION-SETUP.md) - Install kubectl, helm, git
+- [Configuration Checklist](CONFIGURATION-CHECKLIST.md) - **Complete list of values to replace**
 - [Configuration Reference](CONFIGURATION-REFERENCE.md) - All settings explained
+- [Scaling Guide](SCALING-GUIDE.md) - Infrastructure sizing for your scale
+
+**Architecture & Routing:**
+- [HAProxy Architecture](HAPROXY-ARCHITECTURE.md) - Intelligent routing layer
+- [HA Routing Guide](HA-ROUTING-GUIDE.md) - How components connect
+
+**Optional Components:**
+- [Matrix Authentication Service](MATRIX-AUTHENTICATION-SERVICE.md) - Enterprise SSO with Keycloak
+
+**Operations:**
+- [Operations & Update Guide](OPERATIONS-UPDATE-GUIDE.md) - Update, scale, maintain
 - [Container Images Guide](CONTAINER-IMAGES-AND-CUSTOMIZATION.md) - Custom images
+
+**Main Overview:**
+- [Main README](../README.md) - Overview and quick start
 
 ---
 

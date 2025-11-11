@@ -64,6 +64,8 @@ This deployment provides a complete, production-ready Matrix homeserver with:
 - SSH access to your servers
 - Text editor (vim, nano, or VS Code)
 
+**→ See [`docs/00-WORKSTATION-SETUP.md`](docs/00-WORKSTATION-SETUP.md) for complete installation instructions**
+
 ### Time Required
 
 - **Kubernetes Installation**: 2-4 hours (if starting from scratch)
@@ -266,6 +268,8 @@ The deployment process follows these main steps:
 
 ### Phase 2: Configuration
 
+**→ IMPORTANT:** Review [`docs/CONFIGURATION-CHECKLIST.md`](docs/CONFIGURATION-CHECKLIST.md) for complete list of values to replace before deployment.
+
 1. Copy configuration template:
    ```bash
    cd deployment/
@@ -273,12 +277,14 @@ The deployment process follows these main steps:
    ```
 
 2. Edit `config/deployment.env` with your values:
-   - Domain name
-   - Storage classes
-   - IP addresses
-   - Passwords and secrets
+   - Domain name (replace `chat.z3r0d3v.com`)
+   - Storage classes (replace empty `""`)
+   - IP addresses (MetalLB range)
+   - Passwords and secrets (all `CHANGE_TO_*` placeholders)
 
-   **See:** [`docs/CONFIGURATION-REFERENCE.md`](docs/CONFIGURATION-REFERENCE.md) for detailed explanation of every option.
+   **See:**
+   - [`docs/CONFIGURATION-CHECKLIST.md`](docs/CONFIGURATION-CHECKLIST.md) - **Complete checklist of ALL values to replace**
+   - [`docs/CONFIGURATION-REFERENCE.md`](docs/CONFIGURATION-REFERENCE.md) - Detailed explanation of every option
 
 3. Generate required secrets:
    ```bash
@@ -288,9 +294,17 @@ The deployment process follows these main steps:
    # Synapse signing key
    docker run -it --rm matrixdotorg/synapse:latest generate
 
-   # Other secrets
+   # coturn shared secret
+   openssl rand -base64 32
+
+   # Synapse secrets (registration, macaroon, form)
    openssl rand -base64 32  # Run for each secret needed
+
+   # MinIO credentials
+   openssl rand -base64 32
    ```
+
+   **See [`docs/CONFIGURATION-CHECKLIST.md`](docs/CONFIGURATION-CHECKLIST.md) Section 4 for detailed secret generation instructions.**
 
 ### Phase 3: Deployment
 
@@ -915,11 +929,15 @@ Now that you've read this overview:
 | Document | Purpose | When to Read |
 |----------|---------|--------------|
 | [`SCALING-GUIDE.md`](docs/SCALING-GUIDE.md) | **Infrastructure sizing for 100-20K CCU** | **FIRST** - Determine your server requirements |
+| [`00-WORKSTATION-SETUP.md`](docs/00-WORKSTATION-SETUP.md) | **Install kubectl, helm, git on your laptop/desktop** | **SECOND** - Set up your local workstation tools |
 | [`00-KUBERNETES-INSTALLATION-DEBIAN-OVH.md`](docs/00-KUBERNETES-INSTALLATION-DEBIAN-OVH.md) | Install Kubernetes from scratch | Before deployment, if you don't have Kubernetes |
+| [`CONFIGURATION-CHECKLIST.md`](docs/CONFIGURATION-CHECKLIST.md) | **Complete list of values to replace before deployment** | **Before deployment** - Replace all placeholders |
 | [`DEPLOYMENT-GUIDE.md`](docs/DEPLOYMENT-GUIDE.md) | Step-by-step deployment walkthrough | During deployment, for detailed explanations |
+| [`HAPROXY-ARCHITECTURE.md`](docs/HAPROXY-ARCHITECTURE.md) | HAProxy routing layer and load balancing | To understand intelligent routing to workers |
+| [`HA-ROUTING-GUIDE.md`](docs/HA-ROUTING-GUIDE.md) | How HA and routing works | To understand architecture and troubleshoot |
+| [`MATRIX-AUTHENTICATION-SERVICE.md`](docs/MATRIX-AUTHENTICATION-SERVICE.md) | **Enterprise SSO with Keycloak (Optional)** | When implementing SSO authentication |
 | [`CONFIGURATION-REFERENCE.md`](docs/CONFIGURATION-REFERENCE.md) | Complete configuration options | When customizing settings |
 | [`OPERATIONS-UPDATE-GUIDE.md`](docs/OPERATIONS-UPDATE-GUIDE.md) | Update, scale, and maintain services | After deployment, for ongoing operations |
-| [`HA-ROUTING-GUIDE.md`](docs/HA-ROUTING-GUIDE.md) | How HA and routing works | To understand architecture and troubleshoot |
 | [`CONTAINER-IMAGES-AND-CUSTOMIZATION.md`](docs/CONTAINER-IMAGES-AND-CUSTOMIZATION.md) | Image sources, custom builds | When using custom Synapse versions |
 | [`ANTIVIRUS-GUIDE.md`](docs/ANTIVIRUS-GUIDE.md) | Complete antivirus guide | If implementing or skipping antivirus |
 
