@@ -1,9 +1,41 @@
 # HAProxy Routing Architecture for Matrix/Synapse
 
-**Document Version:** 1.0
+**Document Version:** 1.1
 **Last Updated:** 2025-11-11
 **Applies to:** All Scales (100 CCU to 20K CCU)
-**Source:** Based on Element's ess-helm production architecture
+**Architecture:** Simplified worker architecture (extensible)
+
+---
+
+> **📋 IMPORTANT: Actual Architecture Implementation**
+>
+> This deployment uses a **simplified worker architecture** that is production-ready and handles 100 CCU to 20K+ CCU efficiently:
+>
+> **Current Worker Types:**
+> - **Sync Workers** (2-18 replicas) - Handle `/sync` endpoints with token-based hashing
+> - **Generic Workers** (2-8 replicas) - Handle ALL other Matrix endpoints (client API, federation, media, admin)
+> - **Background Workers** - Event persisters and federation senders (not routed through HAProxy)
+>
+> **HAProxy Routing:**
+> - `/sync` requests → Sync Workers (sticky sessions per user)
+> - All other requests → Generic Workers (round-robin)
+> - Automatic fallback to main process if workers unavailable
+>
+> **Why Simplified:**
+> - Easier operations and monitoring
+> - Sufficient for most deployments up to 20K CCU
+> - Generic workers efficiently handle multiple endpoint types
+> - Can be extended with specialized workers later if needed
+>
+> **Future Expansion (Optional):**
+> - This architecture can be extended with specialized workers (media-repo, event-creator, federation-inbound, etc.) following patterns from Element's ess-helm
+> - See Section 4 for details on specialized worker types (future expansion only)
+> - Current HAProxy configuration is optimized for sync + generic architecture
+>
+> **For Current Implementation Details:**
+> - See `deployment/config/haproxy.cfg` for actual configuration
+> - See `deployment/manifests/06-synapse-workers.yaml` for worker deployments
+> - See `ARCHITECTURE-REVIEW-FIXES.md` for architecture decisions
 
 ---
 
@@ -172,9 +204,32 @@ This architecture is used in production by Element for their enterprise Matrix d
 
 ## 4. Routing Patterns
 
-HAProxy routes requests to specialized workers based on URL patterns and request characteristics.
+> **⚠️ NOTE:** This section describes routing patterns for specialized worker architectures (future expansion).
+>
+> **Current Implementation:**
+> - `/sync` endpoints → Sync Workers
+> - All other endpoints → Generic Workers
+> - See `deployment/config/haproxy.cfg` for actual routing rules
+>
+> The table below shows potential routing patterns if specialized workers are added later.
 
-### 4.1: URL-Based Routing
+### 4.1: Current Routing (Simplified Architecture)
+
+**Actual Routing in Current Deployment:**
+
+| URL Pattern | Worker Type | Port | Load Balancing |
+|-------------|-------------|------|----------------|
+| `/_matrix/client/*/sync` | sync-workers | 8083 | Token hash (sticky sessions) |
+| `/_matrix/client/*` (all other) | generic-workers | 8081 | Round-robin |
+| `/_matrix/federation/*` | generic-workers | 8081 | Round-robin |
+| `/_matrix/media/*` | generic-workers | 8081 | Round-robin |
+| `/_synapse/admin/*` | generic-workers | 8081 | Round-robin |
+| `/.well-known/matrix/*` | generic-workers | 8081 | Round-robin |
+| All requests (fallback) | synapse-main | 8008 | Backup (when workers down) |
+
+### 4.2: Future Expansion - Specialized Worker Routing (Optional)
+
+If you decide to add specialized workers later, here are the routing patterns from Element's ess-helm:
 
 | URL Pattern | Worker Type | Purpose |
 |-------------|-------------|---------|
