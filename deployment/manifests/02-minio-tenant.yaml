@@ -1,9 +1,18 @@
 # MinIO Tenant for Synapse Media Storage
-# Matrix/Synapse Production Deployment - 20K CCU
-# Version: 2.0
+# Matrix/Synapse Production Deployment
+# Version: 2.1 - Scale-aware configuration
 
 # ============================================================================
-# CRITICAL: S3-compatible object storage for Synapse media
+# SCALING NOTICE: Storage Depends on Your Scale
+# ============================================================================
+# 📊 See SCALING-GUIDE.md Section 9.4 for media storage sizing at your scale:
+# - 100 CCU:  4 servers (1 pool), 1TB raw, ~750GB usable
+# - 1K CCU:   4 servers (1 pool), 4TB raw, ~3TB usable
+# - 5K CCU:   8 servers (2 pools), 12TB raw, ~9TB usable
+# - 10K CCU:  8 servers (2 pools), 20TB raw, ~15TB usable
+# - 20K CCU: 12 servers (3 pools), 40TB raw, ~30TB usable
+#
+# CURRENT CONFIGURATION: 4 servers (1 pool) - Example for 100-1K CCU
 # - 4 servers × 4 drives = 16 drives (single erasure set)
 # - Erasure coding EC:4 (12 data + 4 parity shards)
 # - Can lose up to 4 drives and remain operational
@@ -234,20 +243,23 @@ spec:
 # ============================================================================
 # CAPACITY & SCALING NOTES
 # ============================================================================
-# Current configuration:
+# Current configuration (Example for 100-1K CCU):
 # - Raw capacity: 4 servers × 4 drives × 1TB = 16TB
 # - Erasure coding EC:4 overhead: 25%
 # - Usable capacity: ~12TB
 #
-# For 20K CCU:
-# - Estimated media growth: 500GB-1TB/day
-# - Current capacity provides: 12-24 days
-# - Plan expansion when 70% full
+# Media growth rates by scale (see SCALING-GUIDE.md Section 9.4):
+# - 100 CCU:  ~20GB/day, 1TB lasts ~50 days
+# - 1K CCU:   ~200GB/day, 4TB lasts ~20 days
+# - 5K CCU:   ~1TB/day, 12TB lasts ~12 days
+# - 10K CCU:  ~2TB/day, 20TB lasts ~10 days
+# - 20K CCU:  ~4TB/day, 40TB lasts ~10 days
+# Plan expansion when 70% full.
 #
 # Scaling options:
 # 1. Add more drives per server (expand volumesPerServer)
 # 2. Replace drives with larger capacity
-# 3. Add new pool (distributed setup)
+# 3. Add new pool (distributed setup) - REQUIRED for 5K+ CCU
 #
 # To expand storage:
 # 1. kubectl edit tenant synapse-media -n minio
