@@ -1,0 +1,370 @@
+# Headless Services for Synapse Workers
+# Purpose: Enable DNS SRV-based service discovery for HAProxy routing
+# These services return individual pod IPs instead of load-balanced ClusterIP
+# Version: 2.0
+# Scale-aware: Services automatically discover all worker pods via selectors
+
+---
+# ============================================================================
+# SYNC WORKERS - Headless Service
+# ============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: synapse-sync
+  namespace: matrix
+  labels:
+    app: synapse
+    component: sync-worker
+spec:
+  clusterIP: None  # Headless service (returns pod IPs directly)
+  selector:
+    app: synapse
+    component: sync-worker
+  ports:
+  - name: synapse-sync
+    port: 8008
+    targetPort: 8008
+    protocol: TCP
+  publishNotReadyAddresses: false  # Only return ready pods
+
+---
+# ============================================================================
+# EVENT CREATOR WORKERS - Headless Service
+# ============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: synapse-event-creator
+  namespace: matrix
+  labels:
+    app: synapse
+    component: event-creator
+spec:
+  clusterIP: None
+  selector:
+    app: synapse
+    component: event-creator
+  ports:
+  - name: synapse-event-creator
+    port: 8008
+    targetPort: 8008
+    protocol: TCP
+  publishNotReadyAddresses: false
+
+---
+# ============================================================================
+# TO-DEVICE WORKERS - Headless Service
+# ============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: synapse-to-device
+  namespace: matrix
+  labels:
+    app: synapse
+    component: to-device
+spec:
+  clusterIP: None
+  selector:
+    app: synapse
+    component: to-device
+  ports:
+  - name: synapse-to-device
+    port: 8008
+    targetPort: 8008
+    protocol: TCP
+  publishNotReadyAddresses: false
+
+---
+# ============================================================================
+# MEDIA REPOSITORY WORKERS - Headless Service
+# ============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: synapse-media-repo
+  namespace: matrix
+  labels:
+    app: synapse
+    component: media-repo
+spec:
+  clusterIP: None
+  selector:
+    app: synapse
+    component: media-repo
+  ports:
+  - name: synapse-media-repo
+    port: 8008
+    targetPort: 8008
+    protocol: TCP
+  publishNotReadyAddresses: false
+
+---
+# ============================================================================
+# FEDERATION INBOUND WORKERS - Headless Service
+# ============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: synapse-federation-inbound
+  namespace: matrix
+  labels:
+    app: synapse
+    component: federation-inbound
+spec:
+  clusterIP: None
+  selector:
+    app: synapse
+    component: federation-inbound
+  ports:
+  - name: synapse-federation-inbound
+    port: 8008
+    targetPort: 8008
+    protocol: TCP
+  publishNotReadyAddresses: false
+
+---
+# ============================================================================
+# PRESENCE WORKERS - Headless Service
+# ============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: synapse-presence
+  namespace: matrix
+  labels:
+    app: synapse
+    component: presence
+spec:
+  clusterIP: None
+  selector:
+    app: synapse
+    component: presence
+  ports:
+  - name: synapse-presence
+    port: 8008
+    targetPort: 8008
+    protocol: TCP
+  publishNotReadyAddresses: false
+
+---
+# ============================================================================
+# TYPING WORKERS - Headless Service
+# ============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: synapse-typing
+  namespace: matrix
+  labels:
+    app: synapse
+    component: typing
+spec:
+  clusterIP: None
+  selector:
+    app: synapse
+    component: typing
+  ports:
+  - name: synapse-typing
+    port: 8008
+    targetPort: 8008
+    protocol: TCP
+  publishNotReadyAddresses: false
+
+---
+# ============================================================================
+# RECEIPTS WORKERS - Headless Service
+# ============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: synapse-receipts
+  namespace: matrix
+  labels:
+    app: synapse
+    component: receipts
+spec:
+  clusterIP: None
+  selector:
+    app: synapse
+    component: receipts
+  ports:
+  - name: synapse-receipts
+    port: 8008
+    targetPort: 8008
+    protocol: TCP
+  publishNotReadyAddresses: false
+
+---
+# ============================================================================
+# ACCOUNT DATA WORKERS - Headless Service
+# ============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: synapse-account-data
+  namespace: matrix
+  labels:
+    app: synapse
+    component: account-data
+spec:
+  clusterIP: None
+  selector:
+    app: synapse
+    component: account-data
+  ports:
+  - name: synapse-account-data
+    port: 8008
+    targetPort: 8008
+    protocol: TCP
+  publishNotReadyAddresses: false
+
+---
+# ============================================================================
+# PUSH RULES WORKERS - Headless Service
+# ============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: synapse-push-rules
+  namespace: matrix
+  labels:
+    app: synapse
+    component: push-rules
+spec:
+  clusterIP: None
+  selector:
+    app: synapse
+    component: push-rules
+  ports:
+  - name: synapse-push-rules
+    port: 8008
+    targetPort: 8008
+    protocol: TCP
+  publishNotReadyAddresses: false
+
+---
+# ============================================================================
+# USER DIRECTORY WORKERS - Headless Service
+# ============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: synapse-user-dir
+  namespace: matrix
+  labels:
+    app: synapse
+    component: user-dir
+spec:
+  clusterIP: None
+  selector:
+    app: synapse
+    component: user-dir
+  ports:
+  - name: synapse-user-dir
+    port: 8008
+    targetPort: 8008
+    protocol: TCP
+  publishNotReadyAddresses: false
+
+---
+# ============================================================================
+# GENERIC WORKERS - Headless Service
+# ============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: synapse-generic
+  namespace: matrix
+  labels:
+    app: synapse
+    component: generic-worker
+spec:
+  clusterIP: None
+  selector:
+    app: synapse
+    component: generic-worker
+  ports:
+  - name: synapse-generic
+    port: 8008
+    targetPort: 8008
+    protocol: TCP
+  publishNotReadyAddresses: false
+
+---
+# ============================================================================
+# EVENT PERSISTER WORKERS - Headless Service
+# (Used by stream writers for horizontal scaling)
+# ============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: synapse-event-persister
+  namespace: matrix
+  labels:
+    app: synapse
+    component: event-persister
+spec:
+  clusterIP: None
+  selector:
+    app: synapse
+    component: event-persister
+  ports:
+  - name: synapse-event-persister
+    port: 8008
+    targetPort: 8008
+    protocol: TCP
+  publishNotReadyAddresses: false
+
+---
+# ============================================================================
+# FEDERATION SENDER WORKERS - Headless Service
+# (For outbound federation)
+# ============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: synapse-federation-sender
+  namespace: matrix
+  labels:
+    app: synapse
+    component: federation-sender
+spec:
+  clusterIP: None
+  selector:
+    app: synapse
+    component: federation-sender
+  ports:
+  - name: synapse-federation-sender
+    port: 8008
+    targetPort: 8008
+    protocol: TCP
+  publishNotReadyAddresses: false
+
+---
+# ============================================================================
+# NOTES ON DNS SRV QUERIES
+# ============================================================================
+# HAProxy queries these services using DNS SRV format:
+# _<port-name>._tcp.<service-name>.<namespace>.svc.cluster.local
+#
+# Examples:
+# - _synapse-sync._tcp.synapse-sync.matrix.svc.cluster.local
+#   Returns: All sync worker pod IPs with port 8008
+#
+# - _synapse-event-creator._tcp.synapse-event-creator.matrix.svc.cluster.local
+#   Returns: All event-creator worker pod IPs with port 8008
+#
+# Kubernetes DNS automatically creates SRV records for headless services
+# that point to individual pod IPs (not load-balanced).
+#
+# HAProxy uses these SRV records for:
+# 1. Automatic service discovery (no hardcoded IPs)
+# 2. Dynamic scaling (new pods automatically discovered)
+# 3. Health-aware routing (only routes to healthy pods)
+#
+# IMPORTANT:
+# - Service selector must match worker pod labels exactly
+# - Port name must match format used in HAProxy configuration
+# - publishNotReadyAddresses: false ensures only ready pods included
