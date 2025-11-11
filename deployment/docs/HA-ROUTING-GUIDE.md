@@ -1,6 +1,13 @@
 # High Availability and Routing Architecture
 
-This document explains how all components in the Matrix deployment connect to each other, how high availability is achieved, and how traffic flows through the system.
+> **⚠️ IMPORTANT UPDATE:** This deployment now uses HAProxy routing layer for production-grade intelligent routing to specialized workers. While this document provides general HA concepts, please refer to **[HAPROXY-ARCHITECTURE.md](HAPROXY-ARCHITECTURE.md)** for the complete routing architecture, including:
+> - Intelligent routing to specialized workers (sync, event-creator, federation, media, etc.)
+> - Advanced load balancing strategies (token hashing, room hashing, origin hashing)
+> - Health-aware routing with automatic fallbacks
+> - Service discovery via DNS SRV records
+> - Production-proven patterns from Element's ess-helm
+
+This document explains the general high availability principles and how all components in the Matrix deployment connect to each other.
 
 ---
 
@@ -88,14 +95,29 @@ Here's what happens when a user accesses your Matrix server:
                       │
                       ▼
 4. NGINX routes based on URL path:
-   ┌─────────────────────────────────────────┐
-   │ Path              →  Backend Service    │
-   ├─────────────────────────────────────────┤
-   │ /                 →  Element Web        │
-   │ /_matrix/client/  →  Synapse Workers    │
-   │ /_matrix/federation/  →  Synapse Main   │
-   │ /admin            →  Synapse Admin      │
-   └─────────────────────────────────────────┘
+   ┌───────────────────────────────────────────────────┐
+   │ Path                    →  Backend Service        │
+   ├───────────────────────────────────────────────────┤
+   │ /                       →  Element Web (direct)   │
+   │ /_matrix/*              →  HAProxy Layer          │
+   │ /_synapse/admin/*       →  HAProxy Layer          │
+   │ /.well-known/matrix/*   →  HAProxy Layer          │
+   │ /admin                  →  Synapse Admin (direct) │
+   └───────────────────────────────────────────────────┘
+                      │
+                      ▼
+5. HAProxy intelligently routes Matrix traffic:
+   ┌────────────────────────────────────────────────────┐
+   │ Request Type              →  Worker Type           │
+   ├────────────────────────────────────────────────────┤
+   │ /sync                     →  Sync Workers          │
+   │ /rooms/.../send/          →  Event Creators        │
+   │ /sendToDevice             →  To-Device Workers     │
+   │ /media/*                  →  Media Repo Workers    │
+   │ /federation/*             →  Federation Workers    │
+   │ (and 8 more worker types) →  Specialized workers   │
+   └────────────────────────────────────────────────────┘
+   See HAPROXY-ARCHITECTURE.md for complete routing details
                       │
                       ▼
 5. Request reaches appropriate backend pod

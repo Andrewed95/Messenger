@@ -1,25 +1,50 @@
 # Ingress Routing Configuration
-# Matrix/Synapse Production Deployment - 20K CCU
-# Version: 2.0
+# Matrix/Synapse Production Deployment - Scale-aware (100 CCU to 20K CCU)
+# Version: 3.0 - HAProxy Routing Architecture
 
 # ============================================================================
 # INGRESS ARCHITECTURE:
 # ============================================================================
-# Single domain with path-based routing:
+# Single domain with path-based routing through HAProxy intelligent routing layer:
 #
-# https://chat.z3r0d3v.com/
+# External Traffic (HTTPS)
+#         ↓
+# ┌───────────────────┐
+# │ NGINX Ingress     │  ← TLS termination, DDoS protection, rate limiting
+# │ Controller        │
+# └─────────┬─────────┘
+#           │ HTTP
+#           ↓
+# ┌───────────────────┐
+# │ HAProxy Layer     │  ← Intelligent routing to specialized workers
+# │                   │    - Token-based hashing for sync
+# └─────────┬─────────┘    - Room-based hashing for events
+#           │              - Health-aware load balancing
+#           ↓              - Automatic fallback mechanisms
+#   ┌───────┴───────────────────┬────────────────┐
+#   │                           │                │
+#   v                           v                v
+# Sync Workers          Event Creators    Federation Workers
+# Generic Workers       Media Workers     To-Device Workers
+# (+ 8 more specialized worker types)
+#
+# Routing paths:
 #   ├─ /                          → Element Web (web client)
-#   ├─ /_matrix/client/*          → Synapse workers (client API)
-#   ├─ /_matrix/media/*           → Synapse workers (media API)
-#   ├─ /_matrix/federation/*      → Synapse main (federation API)
-#   ├─ /_synapse/admin/*          → Synapse main (admin API)
-#   ├─ /admin/*                   → Synapse Admin UI
-#   └─ /.well-known/matrix/*      → Synapse main (federation discovery)
+#   ├─ /_matrix/client/*          → HAProxy → Specialized workers
+#   ├─ /_matrix/media/*           → HAProxy → Media workers
+#   ├─ /_matrix/federation/*      → HAProxy → Federation workers
+#   ├─ /_synapse/admin/*          → HAProxy → Main process
+#   ├─ /admin/*                   → Synapse Admin UI (direct)
+#   └─ /.well-known/matrix/*      → HAProxy → Main process
 #
-# Load balancing strategy:
-# - Client /sync requests → sync workers (with session affinity)
-# - Other client API → generic workers (round-robin)
-# - Federation → main process
+# Benefits of HAProxy layer:
+# - Specialized workers handle specific request types (better performance)
+# - Advanced load balancing (consistent hashing by user, room, server)
+# - Health-check aware routing (no requests to unhealthy workers)
+# - Automatic fallback to main process if all workers down
+# - Better observability (HAProxy metrics per backend)
+#
+# See HAPROXY-ARCHITECTURE.md for detailed documentation
 # ============================================================================
 
 ---
@@ -43,47 +68,23 @@ spec:
 
 ---
 # ============================================================================
-# UPSTREAM CONFIGURATION: Worker Load Balancing
+# NOTE: Worker Load Balancing Now Handled by HAProxy
 # ============================================================================
-# This ConfigMap defines upstream groups for NGINX load balancing
-# to Synapse workers with appropriate strategies
-
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: nginx-worker-upstreams
-  namespace: matrix
-data:
-  # Sync workers with session affinity (hash by username)
-  sync-upstream.conf: |
-    upstream synapse_sync_workers {
-      # Session affinity by username from Matrix user ID
-      hash $http_authorization consistent;
-
-      server synapse-sync-worker-0.synapse-sync-worker.matrix.svc.cluster.local:8083 max_fails=3 fail_timeout=30s;
-      server synapse-sync-worker-1.synapse-sync-worker.matrix.svc.cluster.local:8083 max_fails=3 fail_timeout=30s;
-      server synapse-sync-worker-2.synapse-sync-worker.matrix.svc.cluster.local:8083 max_fails=3 fail_timeout=30s;
-      server synapse-sync-worker-3.synapse-sync-worker.matrix.svc.cluster.local:8083 max_fails=3 fail_timeout=30s;
-      server synapse-sync-worker-4.synapse-sync-worker.matrix.svc.cluster.local:8083 max_fails=3 fail_timeout=30s;
-      server synapse-sync-worker-5.synapse-sync-worker.matrix.svc.cluster.local:8083 max_fails=3 fail_timeout=30s;
-      server synapse-sync-worker-6.synapse-sync-worker.matrix.svc.cluster.local:8083 max_fails=3 fail_timeout=30s;
-      server synapse-sync-worker-7.synapse-sync-worker.matrix.svc.cluster.local:8083 max_fails=3 fail_timeout=30s;
-
-      keepalive 32;
-    }
-
-  # Generic workers with round-robin
-  generic-upstream.conf: |
-    upstream synapse_generic_workers {
-      least_conn;  # Route to worker with least connections
-
-      server synapse-generic-worker-0.synapse-generic-worker.matrix.svc.cluster.local:8081 max_fails=3 fail_timeout=30s;
-      server synapse-generic-worker-1.synapse-generic-worker.matrix.svc.cluster.local:8081 max_fails=3 fail_timeout=30s;
-      server synapse-generic-worker-2.synapse-generic-worker.matrix.svc.cluster.local:8081 max_fails=3 fail_timeout=30s;
-      server synapse-generic-worker-3.synapse-generic-worker.matrix.svc.cluster.local:8081 max_fails=3 fail_timeout=30s;
-
-      keepalive 32;
-    }
+# Previous NGINX-based worker load balancing has been replaced by HAProxy
+# routing layer for better performance and production-grade patterns.
+#
+# HAProxy provides:
+# - Intelligent routing to specialized workers
+# - Health-aware load balancing
+# - Advanced hashing strategies (token, room, origin, URI)
+# - Automatic fallback mechanisms
+# - Service discovery via DNS SRV records
+#
+# See:
+# - deployment/manifests/06-haproxy.yaml (HAProxy deployment)
+# - deployment/config/haproxy.cfg (routing configuration)
+# - deployment/docs/HAPROXY-ARCHITECTURE.md (detailed documentation)
+# ============================================================================
 
 ---
 # ============================================================================
@@ -140,100 +141,42 @@ spec:
       http:
         paths:
           # ============================================================
-          # FEDERATION API (/_matrix/federation/*)
+          # ALL MATRIX ENDPOINTS (/_matrix/*, /_synapse/*, /.well-known/matrix/*)
           # ============================================================
-          # Federation goes to main process
-          # Must be first to match before client API
+          # All Matrix traffic routes through HAProxy intelligent routing layer
+          # HAProxy handles:
+          # - Federation → federation-inbound workers
+          # - Client /sync → sync workers (token-based hashing)
+          # - Event creation → event-creator workers (room-based hashing)
+          # - Media → media-repo workers
+          # - To-device → to-device workers
+          # - Generic → generic workers
+          # - Admin API → main process
+          # - With automatic fallback and health-aware routing
 
-          - path: /_matrix/federation
+          - path: /_matrix
             pathType: Prefix
             backend:
               service:
-                name: synapse-main
+                name: haproxy
                 port:
                   number: 8008
-
-          # ============================================================
-          # WELL-KNOWN (/.well-known/matrix/*)
-          # ============================================================
-          # Federation discovery - served by main process
-
-          - path: /.well-known/matrix
-            pathType: Prefix
-            backend:
-              service:
-                name: synapse-main
-                port:
-                  number: 8008
-
-          # ============================================================
-          # ADMIN API (/_synapse/admin/*)
-          # ============================================================
-          # Admin API goes to main process
 
           - path: /_synapse/admin
             pathType: Prefix
             backend:
               service:
-                name: synapse-main
+                name: haproxy
                 port:
                   number: 8008
 
-          # ============================================================
-          # CLIENT SYNC API (/_matrix/client/*/sync)
-          # ============================================================
-          # Route to sync workers with session affinity
-          # This is the most frequently called endpoint
-
-          - path: /_matrix/client/r0/sync
+          - path: /.well-known/matrix
             pathType: Prefix
             backend:
               service:
-                name: synapse-sync-worker
+                name: haproxy
                 port:
-                  number: 8083
-
-          - path: /_matrix/client/v3/sync
-            pathType: Prefix
-            backend:
-              service:
-                name: synapse-sync-worker
-                port:
-                  number: 8083
-
-          # ============================================================
-          # MEDIA API (/_matrix/media/*)
-          # ============================================================
-          # Route to generic workers for media endpoints
-
-          - path: /_matrix/media
-            pathType: Prefix
-            backend:
-              service:
-                name: synapse-generic-worker
-                port:
-                  number: 8081
-
-          - path: /_matrix/client/v1/media
-            pathType: Prefix
-            backend:
-              service:
-                name: synapse-generic-worker
-                port:
-                  number: 8081
-
-          # ============================================================
-          # CLIENT API (/_matrix/client/*)
-          # ============================================================
-          # All other client API endpoints go to generic workers
-
-          - path: /_matrix/client
-            pathType: Prefix
-            backend:
-              service:
-                name: synapse-generic-worker
-                port:
-                  number: 8081
+                  number: 8008
 
           # ============================================================
           # SYNAPSE ADMIN UI (/admin/*)
@@ -313,7 +256,7 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: synapse-main
+                name: haproxy
                 port:
                   number: 8008
 

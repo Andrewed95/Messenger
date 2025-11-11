@@ -99,16 +99,29 @@ Before deploying, it helps to understand how components connect:
 │                              ▼                                  │
 │  ┌────────────────────────────────────────────────────────┐   │
 │  │           NGINX Ingress Controller                      │   │
-│  │  Routes traffic based on URL path:                     │   │
-│  │  • / → Element Web (client interface)                  │   │
-│  │  • /_matrix/* → Synapse (API endpoints)                │   │
-│  │  • /admin → Synapse Admin (management interface)       │   │
+│  │      TLS termination & DDoS protection                 │   │
+│  │  • / → Element Web (direct)                            │   │
+│  │  • /_matrix/* → HAProxy Layer                          │   │
+│  │  • /admin → Synapse Admin (direct)                     │   │
+│  └────────────────────────────────────────────────────────┘   │
+│                              │                                  │
+│                              ▼                                  │
+│  ┌────────────────────────────────────────────────────────┐   │
+│  │           HAProxy Routing Layer (NEW!)                  │   │
+│  │  Intelligent routing to specialized workers:           │   │
+│  │  • Sync requests → Sync workers (token hashing)        │   │
+│  │  • Event creation → Event creators (room hashing)      │   │
+│  │  • Federation → Federation workers (origin hashing)    │   │
+│  │  • Media uploads/downloads → Media workers             │   │
+│  │  • + 8 more specialized worker types                   │   │
+│  │  (See HAPROXY-ARCHITECTURE.md for details)             │   │
 │  └────────────────────────────────────────────────────────┘   │
 │           │                  │                  │               │
 │           ▼                  ▼                  ▼               │
 │  ┌──────────────┐  ┌────────────────┐  ┌──────────────┐      │
 │  │ Element Web  │  │    Synapse     │  │Synapse Admin │      │
-│  │  (3 pods)    │  │  Main + Workers│  │   (2 pods)   │      │
+│  │  (2 pods)    │  │ Main + 12-38   │  │   (2 pods)   │      │
+│  │              │  │  Worker Pods   │  │              │      │
 │  └──────────────┘  └────────────────┘  └──────────────┘      │
 │                            │                                    │
 │                            ▼                                    │
@@ -186,7 +199,13 @@ deployment/
 │   │
 │   ├── OPERATIONS-UPDATE-GUIDE.md     ← Update, scale, and maintain services
 │   │
-│   ├── HA-ROUTING-GUIDE.md            ← How HA and routing works
+│   ├── HAPROXY-ARCHITECTURE.md        ← **NEW!** HAProxy intelligent routing layer
+│   │                                  Production-grade routing to specialized workers
+│   │
+│   ├── MATRIX-AUTHENTICATION-SERVICE.md  ← **NEW!** Enterprise SSO with Keycloak
+│   │                                  Optional component for Keycloak OIDC integration
+│   │
+│   ├── HA-ROUTING-GUIDE.md            ← How HA and routing works (general concepts)
 │   │
 │   ├── CONTAINER-IMAGES-AND-CUSTOMIZATION.md
 │   │                                  ← Image sources and customization
@@ -848,6 +867,8 @@ kubectl get pods -n matrix -l cnpg.io/cluster=synapse-postgres
    ```
 
 4. **Review architecture documentation:**
+   - [`docs/HAPROXY-ARCHITECTURE.md`](docs/HAPROXY-ARCHITECTURE.md) - **NEW!** Intelligent routing layer (production-grade)
+   - [`docs/MATRIX-AUTHENTICATION-SERVICE.md`](docs/MATRIX-AUTHENTICATION-SERVICE.md) - **NEW!** Enterprise SSO with Keycloak
    - [`docs/HA-ROUTING-GUIDE.md`](docs/HA-ROUTING-GUIDE.md) - How components connect
    - [`docs/DEPLOYMENT-GUIDE.md`](docs/DEPLOYMENT-GUIDE.md) - Detailed deployment steps
 
@@ -870,7 +891,13 @@ Now that you've read this overview:
 3. **To understand configuration options:**
    → Go to [`docs/CONFIGURATION-REFERENCE.md`](docs/CONFIGURATION-REFERENCE.md)
 
-4. **To understand how HA works:**
+4. **To understand intelligent routing:**
+   → Go to [`docs/HAPROXY-ARCHITECTURE.md`](docs/HAPROXY-ARCHITECTURE.md)
+
+5. **For enterprise SSO deployment:**
+   → Go to [`docs/MATRIX-AUTHENTICATION-SERVICE.md`](docs/MATRIX-AUTHENTICATION-SERVICE.md)
+
+6. **To understand how HA works:**
    → Go to [`docs/HA-ROUTING-GUIDE.md`](docs/HA-ROUTING-GUIDE.md)
 
 5. **Ready to deploy?**
