@@ -1,8 +1,17 @@
 # coturn TURN/STUN Server
-# Matrix/Synapse Production Deployment - 20K CCU
-# Version: 2.0
+# Matrix/Synapse Production Deployment
+# Version: 2.1 - Scale-aware configuration
 
 # ============================================================================
+# SCALING NOTICE: coturn Instances Depend on Your Scale
+# ============================================================================
+# 📊 See SCALING-GUIDE.md Section 9.6 for coturn sizing at your scale:
+# - 100 CCU:  2 instances (HA minimum)
+# - 1K CCU:   2 instances
+# - 5K CCU:   3 instances
+# - 10K CCU:  4 instances
+# - 20K CCU:  5 instances
+#
 # CRITICAL: TURN/STUN server for WebRTC NAT traversal
 # - Enables 1:1 voice/video calls
 # - Uses hostNetwork for UDP performance
@@ -299,15 +308,22 @@ spec:
 # ============================================================================
 # NODE LABELING INSTRUCTIONS
 # ============================================================================
-# Before deploying coturn, label 2-4 nodes:
+# Before deploying coturn, label N nodes based on your scale:
 #
-# For 20K CCU deployment (2 coturn instances):
+# For 100-1K CCU (2 instances - HA minimum):
 # kubectl label node node1 coturn=true
 # kubectl label node node2 coturn=true
 #
-# For higher capacity (3-4 instances):
+# For 5K CCU (3 instances):
 # kubectl label node node3 coturn=true
+#
+# For 10K CCU (4 instances):
 # kubectl label node node4 coturn=true
+#
+# For 20K CCU (5 instances):
+# kubectl label node node5 coturn=true
+#
+# See SCALING-GUIDE.md Section 9.6 for exact instance counts at your scale.
 #
 # To remove label:
 # kubectl label node <node-name> coturn-
@@ -386,11 +402,18 @@ spec:
 # ============================================================================
 # CAPACITY & SCALING
 # ============================================================================
-# For 20K CCU:
-# - Concurrent video calls: ~5-10% of CCU = 1000-2000 users
+# Concurrent video calls by scale (~5-10% of CCU):
+# - 100 CCU:   5-10 concurrent calls, 2 instances sufficient
+# - 1K CCU:    50-100 concurrent calls, 2 instances sufficient
+# - 5K CCU:    250-500 concurrent calls, 3 instances recommended
+# - 10K CCU:   500-1000 concurrent calls, 4 instances recommended
+# - 20K CCU:   1000-2000 concurrent calls, 5 instances recommended
+#
+# Per coturn instance capacity:
+# - ~500-1000 concurrent TURN sessions
 # - Each TURN connection: ~1-2 Mbps (video call)
-# - Per coturn instance: 500-1000 concurrent sessions
-# - 2 instances handle 1000-2000 sessions (sufficient)
+#
+# See SCALING-GUIDE.md Section 9.6 for detailed coturn sizing.
 #
 # Scaling indicators:
 # - CPU >70%: Add more coturn instances
