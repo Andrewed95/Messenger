@@ -932,6 +932,7 @@ Now that you've read this overview:
 | [`00-WORKSTATION-SETUP.md`](docs/00-WORKSTATION-SETUP.md) | **Install kubectl, helm, git on your laptop/desktop** | **SECOND** - Set up your local workstation tools |
 | [`00-KUBERNETES-INSTALLATION-DEBIAN-OVH.md`](docs/00-KUBERNETES-INSTALLATION-DEBIAN-OVH.md) | Install Kubernetes from scratch | Before deployment, if you don't have Kubernetes |
 | [`CONFIGURATION-CHECKLIST.md`](docs/CONFIGURATION-CHECKLIST.md) | **Complete list of values to replace before deployment** | **Before deployment** - Replace all placeholders |
+| [`SECRETS-MANAGEMENT.md`](docs/SECRETS-MANAGEMENT.md) | **Encryption at rest, external secrets, rotation** | **Before deployment** - Secure your secrets |
 | [`DEPLOYMENT-GUIDE.md`](docs/DEPLOYMENT-GUIDE.md) | Step-by-step deployment walkthrough | During deployment, for detailed explanations |
 | [`HAPROXY-ARCHITECTURE.md`](docs/HAPROXY-ARCHITECTURE.md) | HAProxy routing layer and load balancing | To understand intelligent routing to workers |
 | [`HA-ROUTING-GUIDE.md`](docs/HA-ROUTING-GUIDE.md) | How HA and routing works | To understand architecture and troubleshoot |

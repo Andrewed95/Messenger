@@ -789,6 +789,105 @@ kubectl get certificate -n matrix
 
 ---
 
+### Phase 5.5: High Availability and Security (Optional but Recommended)
+
+These components enhance production readiness with improved availability and security posture.
+
+#### Step 5.5.1: Deploy Pod Disruption Budgets
+
+**What are PDBs?** Prevent too many pods being disrupted during node maintenance, ensuring minimum availability.
+
+```bash
+kubectl apply -f manifests/11-pod-disruption-budgets.yaml
+```
+
+**What this does:**
+- Sets minimum available replicas for each component
+- Protects against disruptions during node drains
+- Ensures high availability during maintenance
+- Does NOT protect against node failures (that's anti-affinity)
+
+**Verify:**
+```bash
+kubectl get pdb -n matrix
+
+# Example output:
+# NAME                        MIN AVAILABLE   MAX UNAVAILABLE   ALLOWED DISRUPTIONS   AGE
+# synapse-sync-worker         4               N/A               4                     30s
+# synapse-generic-worker      2               N/A               2                     30s
+# haproxy                     1               N/A               1                     30s
+```
+
+**Adjust for your scale:**
+Edit `manifests/11-pod-disruption-budgets.yaml` and update `minAvailable` values based on your worker replica counts (see SCALING-GUIDE.md).
+
+#### Step 5.5.2: Deploy Network Policies (Requires Calico CNI)
+
+**What are NetworkPolicies?** Firewall rules between pods (microsegmentation).
+
+**IMPORTANT:** Your cluster uses Calico CNI (from K8s installation guide), which supports NetworkPolicy. If you used a different CNI, check compatibility first.
+
+```bash
+# Test deployment (dry-run)
+kubectl apply -f manifests/13-network-policies.yaml --dry-run=server
+
+# If no errors, apply
+kubectl apply -f manifests/13-network-policies.yaml
+```
+
+**What this does:**
+- Restricts pod-to-pod communication to explicit allow-list
+- Synapse can only talk to PostgreSQL, Redis, MinIO
+- HAProxy can only talk to Synapse workers
+- PostgreSQL only accepts connections from Synapse
+- Defense-in-depth security
+
+**Verify:**
+```bash
+kubectl get networkpolicy --all-namespaces
+
+# Example output:
+# NAMESPACE   NAME                        POD-SELECTOR
+# matrix      synapse-main                app=synapse,component=main
+# matrix      synapse-sync-worker         app=synapse,component=sync-worker
+# matrix      haproxy                     app=haproxy
+# matrix      postgresql                  cnpg.io/cluster=matrix-postgresql
+```
+
+**Test connectivity:**
+```bash
+# Test Synapse → PostgreSQL (should work)
+kubectl exec -it -n matrix deploy/synapse-main -- \
+  nc -zv postgres-rw.matrix.svc.cluster.local 5432
+
+# Test Element Web → PostgreSQL (should fail - blocked by policy)
+kubectl exec -it -n matrix deploy/element-web -- \
+  nc -zv postgres-rw.matrix.svc.cluster.local 5432
+```
+
+**Troubleshooting NetworkPolicies:**
+If connectivity breaks after applying NetworkPolicies:
+
+```bash
+# View policy details
+kubectl describe networkpolicy <policy-name> -n matrix
+
+# Temporarily disable ALL policies (for debugging)
+kubectl delete networkpolicies --all -n matrix
+
+# Re-apply after identifying issue
+kubectl apply -f manifests/13-network-policies.yaml
+```
+
+**Skip if:**
+- Your CNI doesn't support NetworkPolicy (check with: `kubectl get nodes -o wide`)
+- You're in development environment (NetworkPolicies add complexity)
+- You need to troubleshoot connectivity issues first
+
+**See also:** [Network Policies documentation](13-network-policies.yaml) for detailed policy definitions.
+
+---
+
 ### Phase 6: Monitoring Layer
 
 #### Step 6.1: Install Prometheus Stack
@@ -1159,6 +1258,7 @@ After successful deployment:
 **Setup & Configuration:**
 - [Workstation Setup](00-WORKSTATION-SETUP.md) - Install kubectl, helm, git
 - [Configuration Checklist](CONFIGURATION-CHECKLIST.md) - **Complete list of values to replace**
+- [Secrets Management](SECRETS-MANAGEMENT.md) - **Encryption at rest, external secrets, rotation**
 - [Configuration Reference](CONFIGURATION-REFERENCE.md) - All settings explained
 - [Scaling Guide](SCALING-GUIDE.md) - Infrastructure sizing for your scale
 
