@@ -569,18 +569,23 @@ kubectl wait --for=condition=ready pod -l app=synapse -n matrix --timeout=10m
 ```
 
 **What this does:**
-- Deploys 18 workers across 4 StatefulSets:
-  - 8 sync workers (handle /sync requests)
-  - 4 generic workers (handle API requests)
-  - 4 federation senders (outbound federation)
-  - 2 event persisters (database writes)
+- Deploys Synapse workers across 4 StatefulSets (count varies by scale):
+  - Sync workers (handle /sync requests)
+  - Generic workers (handle API requests, media, federation receiver)
+  - Federation senders (outbound federation)
+  - Event persisters (database writes)
 - Each worker connects to main process via HTTP replication
+
+**📊 Worker Counts by Scale:**
+- **100 CCU:** 2 sync, 2 generic, 2 federation, 2 event persisters (8 total)
+- **20K CCU:** 18 sync, 8 generic, 8 federation, 4 event persisters (38 total)
+- **Your scale:** See [SCALING-GUIDE.md](SCALING-GUIDE.md) Section 9.1 for exact worker counts
 
 **Verify:**
 ```bash
 # Check all workers running
 kubectl get pods -n matrix -l app=synapse
-# Should show 19 total pods (1 main + 18 workers)
+# Should show 1 main + all workers (count varies by your scale)
 
 # Check each worker type
 kubectl get statefulset -n matrix

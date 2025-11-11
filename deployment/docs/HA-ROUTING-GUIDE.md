@@ -150,13 +150,15 @@ database:
     cp_max: 25     # Maximum connection pool size (main process)
 ```
 
-**Why these pool sizes?**
+**Why these pool sizes? (Example for 20K CCU scale)**
 - Main process: `cp_max: 25` (handles many different endpoints)
-- Workers: `cp_max: 15` (more focused tasks)
-- Total: 1 main + 18 workers = 19 processes
-- Maximum connections: (1 × 25) + (18 × 15) = 295 connections
-- PostgreSQL limit: 500 connections
-- Headroom: 205 connections for overhead and other processes
+- Workers: `cp_max: 12` (adjusted to stay under connection limit)
+- Total: 1 main + 38 workers = 39 processes (20K CCU scale)
+- Maximum connections: (1 × 25) + (38 × 12) = 481 connections
+- PostgreSQL limit: 600 connections (20K CCU scale)
+- Headroom: 119 connections for overhead and other processes
+
+**📊 Scale-Specific Values:** See [SCALING-GUIDE.md](SCALING-GUIDE.md) Section 9.2 for connection pool calculations at your scale.
 
 ### Synapse to Redis Connection
 
