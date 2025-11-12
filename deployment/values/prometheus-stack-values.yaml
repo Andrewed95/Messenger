@@ -1,0 +1,407 @@
+# Prometheus Stack (kube-prometheus-stack) Helm Values
+# Matrix/Synapse Production Deployment (Scalable 100 CCU - 20K+ CCU)
+# Version: 2.0
+
+# ============================================================================
+# CRITICAL: Complete monitoring stack
+# - Prometheus for metrics collection
+# - Grafana for visualization
+# - AlertManager DISABLED per requirements
+# - Node exporters for system metrics
+# - Operator for CRD management
+# ============================================================================
+
+# ============================================================================
+# INSTALLATION
+# ============================================================================
+# helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+# helm install prometheus prometheus-community/kube-prometheus-stack \
+#   --namespace monitoring \
+#   --create-namespace \
+#   --values prometheus-stack-values.yaml
+
+# ============================================================================
+# PROMETHEUS CONFIGURATION
+# ============================================================================
+
+prometheus:
+  enabled: true
+
+  prometheusSpec:
+    # Retention period
+    retention: 30d
+    retentionSize: "100GB"
+
+    # Resources
+    resources:
+      requests:
+        cpu: 500m
+        memory: 4Gi
+      limits:
+        cpu: 2000m
+        memory: 8Gi
+
+    # Storage
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: ""  # CHANGE_TO_YOUR_STORAGE_CLASS
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 100Gi
+
+    # Scrape interval
+    scrapeInterval: 30s
+    evaluationInterval: 30s
+
+    # Service monitors selector (match all)
+    serviceMonitorSelectorNilUsesHelmValues: false
+    serviceMonitorSelector: {}
+    serviceMonitorNamespaceSelector: {}
+
+    # Pod monitors selector (match all)
+    podMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelector: {}
+    podMonitorNamespaceSelector: {}
+
+    # Probe selector
+    probeSelectorNilUsesHelmValues: false
+    probeSelector: {}
+    probeNamespaceSelector: {}
+
+    # Rule selector
+    ruleSelectorNilUsesHelmValues: false
+    ruleSelector: {}
+    ruleNamespaceSelector: {}
+
+    # External labels
+    externalLabels:
+      cluster: matrix-production
+      environment: production
+
+    # Pod anti-affinity
+    affinity:
+      podAntiAffinity:
+        preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                  - key: app.kubernetes.io/name
+                    operator: In
+                    values:
+                      - prometheus
+              topologyKey: kubernetes.io/hostname
+
+  # Ingress for Prometheus UI (optional, for internal access)
+  ingress:
+    enabled: false  # Enable if you want web UI access
+    # annotations:
+    #   nginx.ingress.kubernetes.io/whitelist-source-range: "10.0.0.0/8"
+    # hosts:
+    #   - prometheus.CHANGE_TO_YOUR_INTERNAL_DOMAIN
+    # tls: []
+
+# ============================================================================
+# ALERTMANAGER CONFIGURATION (DISABLED PER REQUIREMENTS)
+# ============================================================================
+
+alertmanager:
+  enabled: false  # User explicitly requested NO AlertManager
+
+# ============================================================================
+# GRAFANA CONFIGURATION
+# ============================================================================
+
+grafana:
+  enabled: true
+
+  # Admin credentials
+  adminPassword: "CHANGE_TO_SECURE_PASSWORD"  # CRITICAL: Change this!
+
+  # Resources
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 2Gi
+
+  # Persistence for dashboards
+  persistence:
+    enabled: true
+    storageClassName: ""  # CHANGE_TO_YOUR_STORAGE_CLASS
+    size: 10Gi
+
+  # Replica count
+  replicas: 2
+
+  # Ingress for Grafana
+  ingress:
+    enabled: false  # Enable for web access
+    # annotations:
+    #   cert-manager.io/cluster-issuer: letsencrypt-prod
+    #   nginx.ingress.kubernetes.io/whitelist-source-range: "10.0.0.0/8"
+    # hosts:
+    #   - grafana.CHANGE_TO_YOUR_DOMAIN
+    # tls:
+    #   - secretName: grafana-tls
+    #     hosts:
+    #       - grafana.CHANGE_TO_YOUR_DOMAIN
+
+  # Data sources
+  datasources:
+    datasources.yaml:
+      apiVersion: 1
+      datasources:
+        - name: Prometheus
+          type: prometheus
+          url: http://prometheus-kube-prometheus-prometheus.monitoring:9090
+          access: proxy
+          isDefault: true
+          jsonData:
+            timeInterval: 30s
+
+        - name: Loki
+          type: loki
+          url: http://loki.monitoring:3100
+          access: proxy
+          jsonData:
+            maxLines: 1000
+
+  # Dashboard providers
+  dashboardProviders:
+    dashboardproviders.yaml:
+      apiVersion: 1
+      providers:
+        - name: 'default'
+          orgId: 1
+          folder: ''
+          type: file
+          disableDeletion: false
+          editable: true
+          options:
+            path: /var/lib/grafana/dashboards/default
+
+        - name: 'synapse'
+          orgId: 1
+          folder: 'Matrix Synapse'
+          type: file
+          disableDeletion: false
+          editable: true
+          options:
+            path: /var/lib/grafana/dashboards/synapse
+
+  # Pre-installed dashboards
+  dashboards:
+    default:
+      # Kubernetes cluster monitoring
+      kubernetes-cluster:
+        gnetId: 7249
+        revision: 1
+        datasource: Prometheus
+
+      # Node exporter
+      node-exporter:
+        gnetId: 1860
+        revision: 27
+        datasource: Prometheus
+
+      # PostgreSQL
+      postgresql:
+        gnetId: 9628
+        revision: 7
+        datasource: Prometheus
+
+      # Redis
+      redis:
+        gnetId: 11835
+        revision: 1
+        datasource: Prometheus
+
+      # NGINX Ingress
+      nginx-ingress:
+        gnetId: 9614
+        revision: 1
+        datasource: Prometheus
+
+    # Synapse-specific dashboards (will be added via ConfigMap)
+    synapse: {}
+
+  # Grafana configuration
+  grafana.ini:
+    server:
+      root_url: "%(protocol)s://%(domain)s/"
+    analytics:
+      check_for_updates: false
+      reporting_enabled: false
+    security:
+      disable_gravatar: true
+    users:
+      allow_sign_up: false
+      auto_assign_org: true
+      auto_assign_org_role: Viewer
+    auth.anonymous:
+      enabled: false
+
+# ============================================================================
+# NODE EXPORTER (System metrics)
+# ============================================================================
+
+nodeExporter:
+  enabled: true
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 30Mi
+    limits:
+      cpu: 200m
+      memory: 100Mi
+
+# ============================================================================
+# KUBE-STATE-METRICS (K8s object metrics)
+# ============================================================================
+
+kubeStateMetrics:
+  enabled: true
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+
+# ============================================================================
+# PROMETHEUS OPERATOR
+# ============================================================================
+
+prometheusOperator:
+  enabled: true
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+  # Admission webhooks
+  admissionWebhooks:
+    enabled: true
+    failurePolicy: Fail
+
+    patch:
+      enabled: true
+
+# ============================================================================
+# ADDITIONAL SCRAPE CONFIGURATIONS
+# ============================================================================
+
+# Additional scrape configs for Synapse, LiveKit, etc.
+# These will be defined via ServiceMonitor CRDs in manifests
+# Example:
+# - Synapse main process: matrix:9000/metrics
+# - Synapse workers: matrix:9001-9018/metrics
+# - LiveKit: livekit:7881/metrics
+# - MinIO: minio:9000/minio/v2/metrics/cluster
+
+# ============================================================================
+# SERVICE MONITORS
+# ============================================================================
+# Service monitors are created separately for each component:
+# - synapse-servicemonitor.yaml
+# - livekit-servicemonitor.yaml
+# - postgresql-servicemonitor.yaml
+# - redis-servicemonitor.yaml (enabled in Redis Helm values)
+# - minio-servicemonitor.yaml (enabled in MinIO Operator)
+# ============================================================================
+
+# ============================================================================
+# PROMETHEUS RULES
+# ============================================================================
+# Custom Prometheus rules for alerting:
+
+additionalPrometheusRulesMap:
+  matrix-synapse-rules:
+    groups:
+      - name: synapse
+        interval: 30s
+        rules:
+          - alert: SynapseDown
+            expr: up{job="synapse"} == 0
+            for: 2m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Synapse instance down"
+              description: "Synapse instance {{ $labels.instance }} has been down for more than 2 minutes"
+
+          - alert: SynapseHighSyncLatency
+            expr: synapse_http_server_response_time_seconds{servlet="sync"} > 0.3
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "High Synapse sync latency"
+              description: "Synapse sync endpoint latency is {{ $value }}s (threshold: 300ms)"
+
+          - alert: SynapseHighEventPersistLag
+            expr: synapse_storage_events_persisted_by_source_type_total > 500
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "High event persist lag"
+              description: "Event persist lag is {{ $value }}ms (threshold: 500ms)"
+
+          - alert: PostgreSQLDown
+            expr: up{job="postgresql"} == 0
+            for: 2m
+            labels:
+              severity: critical
+            annotations:
+              summary: "PostgreSQL down"
+              description: "PostgreSQL instance {{ $labels.instance }} is down"
+
+          - alert: RedisDown
+            expr: up{job=~"redis.*"} == 0
+            for: 2m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Redis instance down"
+              description: "Redis instance {{ $labels.instance }} is down"
+
+          - alert: LiveKitDown
+            expr: up{job="livekit"} == 0
+            for: 2m
+            labels:
+              severity: critical
+            annotations:
+              summary: "LiveKit SFU down"
+              description: "LiveKit instance {{ $labels.instance }} is down"
+
+# ============================================================================
+# NOTES
+# ============================================================================
+# After deployment:
+# 1. Access Grafana: kubectl port-forward -n monitoring svc/prometheus-grafana 3000:80
+# 2. Login with admin / CHANGE_TO_SECURE_PASSWORD
+# 3. Import Synapse dashboard from: https://github.com/element-hq/synapse/tree/develop/contrib/grafana
+# 4. Configure additional data sources if needed
+# 5. Set up notification channels (email, Slack, etc.) if not using AlertManager
+#
+# Synapse metrics endpoints:
+# - Main process: http://synapse:9000/_synapse/metrics
+# - Workers: http://synapse-worker-{type}-{id}:9000/_synapse/metrics
+#
+# View Prometheus targets:
+# kubectl port-forward -n monitoring svc/prometheus-kube-prometheus-prometheus 9090:9090
+# Open: http://localhost:9090/targets
+# ============================================================================

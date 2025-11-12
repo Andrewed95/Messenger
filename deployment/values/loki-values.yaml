@@ -1,0 +1,261 @@
+# Loki Stack Helm Values (Loki + Promtail)
+# Matrix/Synapse Production Deployment (Scalable 100 CCU - 20K+ CCU)
+# Version: 2.0
+
+# ============================================================================
+# CRITICAL: Log aggregation for debugging and monitoring
+# - Loki: Log storage and querying
+# - Promtail: Log collection agent (DaemonSet)
+# - Integrates with Grafana for log visualization
+# ============================================================================
+
+# ============================================================================
+# INSTALLATION
+# ============================================================================
+# helm repo add grafana https://grafana.github.io/helm-charts
+# helm install loki grafana/loki-stack \
+#   --namespace monitoring \
+#   --values loki-values.yaml
+
+# ============================================================================
+# LOKI CONFIGURATION
+# ============================================================================
+
+loki:
+  enabled: true
+
+  # Persistence
+  persistence:
+    enabled: true
+    storageClassName: ""  # CHANGE_TO_YOUR_STORAGE_CLASS
+    size: 50Gi
+
+  # Resources
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 2Gi
+
+  # Retention period (30 days)
+  config:
+    auth_enabled: false
+
+    server:
+      http_listen_port: 3100
+
+    ingester:
+      lifecycler:
+        ring:
+          kvstore:
+            store: inmemory
+          replication_factor: 1
+      chunk_idle_period: 3m
+      chunk_retain_period: 1m
+      max_chunk_age: 1h
+      chunk_target_size: 1048576
+
+    schema_config:
+      configs:
+        - from: 2023-01-01
+          store: boltdb-shipper
+          object_store: filesystem
+          schema: v11
+          index:
+            prefix: index_
+            period: 24h
+
+    storage_config:
+      boltdb_shipper:
+        active_index_directory: /data/loki/boltdb-shipper-active
+        cache_location: /data/loki/boltdb-shipper-cache
+        cache_ttl: 24h
+        shared_store: filesystem
+      filesystem:
+        directory: /data/loki/chunks
+
+    limits_config:
+      enforce_metric_name: false
+      reject_old_samples: true
+      reject_old_samples_max_age: 168h  # 7 days
+      retention_period: 720h  # 30 days
+      ingestion_rate_mb: 10
+      ingestion_burst_size_mb: 20
+
+    chunk_store_config:
+      max_look_back_period: 720h  # 30 days
+
+    table_manager:
+      retention_deletes_enabled: true
+      retention_period: 720h  # 30 days
+
+  # Service configuration
+  service:
+    type: ClusterIP
+    port: 3100
+
+  # Replica count (for HA, requires distributed mode config)
+  # Single instance sufficient for 20K CCU
+  replicas: 1
+
+# ============================================================================
+# PROMTAIL CONFIGURATION (Log shipper)
+# ============================================================================
+
+promtail:
+  enabled: true
+
+  # DaemonSet configuration (runs on all nodes)
+  daemonSet:
+    enabled: true
+
+  # Resources
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+  # Configuration
+  config:
+    serverPort: 3101
+
+    clients:
+      - url: http://{{ .Release.Name }}.{{ .Release.Namespace }}.svc.cluster.local:3100/loki/api/v1/push
+
+    positions:
+      filename: /run/promtail/positions.yaml
+
+    scrapeConfigs:
+      # Kubernetes pods
+      - job_name: kubernetes-pods
+        kubernetes_sd_configs:
+          - role: pod
+
+        relabel_configs:
+          # Only scrape pods with logging enabled
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+            action: keep
+            regex: true
+
+          # Pod name
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+
+          # Namespace
+          - source_labels: [__meta_kubernetes_namespace]
+            target_label: namespace
+
+          # Container name
+          - source_labels: [__meta_kubernetes_pod_container_name]
+            target_label: container
+
+          # Node name
+          - source_labels: [__meta_kubernetes_pod_node_name]
+            target_label: node
+
+        pipeline_stages:
+          # Extract log level if present
+          - regex:
+              expression: '.*level=(?P<level>\w+).*'
+          - labels:
+              level:
+
+      # System logs
+      - job_name: system
+        static_configs:
+          - targets:
+              - localhost
+            labels:
+              job: varlogs
+              __path__: /var/log/*.log
+
+  # Mount volumes for log access
+  volumeMounts:
+    - name: pods
+      mountPath: /var/log/pods
+      readOnly: true
+    - name: varlog
+      mountPath: /var/log
+      readOnly: true
+
+  volumes:
+    - name: pods
+      hostPath:
+        path: /var/log/pods
+    - name: varlog
+      hostPath:
+        path: /var/log
+
+  # Tolerations to run on all nodes
+  tolerations:
+    - effect: NoSchedule
+      key: node-role.kubernetes.io/master
+      operator: Exists
+    - effect: NoSchedule
+      key: node-role.kubernetes.io/control-plane
+      operator: Exists
+
+# ============================================================================
+# GRAFANA INTEGRATION
+# ============================================================================
+# Loki datasource already configured in prometheus-stack-values.yaml
+# To query logs in Grafana:
+# 1. Go to Explore
+# 2. Select Loki datasource
+# 3. Use LogQL queries:
+#    {namespace="matrix"} |= "error"
+#    {pod=~"synapse-.*"} | json | level="error"
+#    {namespace="matrix"} |= "error" | rate[5m]
+# ============================================================================
+
+# ============================================================================
+# USEFUL LOGQL QUERIES
+# ============================================================================
+# Synapse errors:
+# {namespace="matrix", pod=~"synapse-.*"} |= "ERROR"
+#
+# Synapse slow queries:
+# {namespace="matrix", pod=~"synapse-.*"} |= "slow" |= "query"
+#
+# PostgreSQL errors:
+# {namespace="matrix", pod=~"synapse-postgres-.*"} |= "ERROR"
+#
+# LiveKit connection issues:
+# {namespace="livekit"} |= "connection" |= "failed"
+#
+# NGINX 5xx errors:
+# {namespace="ingress-nginx"} | json | status>=500
+#
+# All critical logs:
+# {namespace=~"matrix|livekit|ingress-nginx"} |~ "(?i)(critical|fatal|error)"
+# ============================================================================
+
+# ============================================================================
+# ANNOTATIONS FOR POD LOG COLLECTION
+# ============================================================================
+# Add to pods for Promtail scraping:
+#
+# apiVersion: v1
+# kind: Pod
+# metadata:
+#   annotations:
+#     prometheus.io/scrape: "true"
+# ============================================================================
+
+# ============================================================================
+# STORAGE SIZING
+# ============================================================================
+# For 20K CCU:
+# - Estimated log volume: 10-20GB/day
+# - 30 day retention: 300-600GB
+# - Current config: 50Gi (may need expansion)
+# - Monitor disk usage and expand as needed
+#
+# To check Loki storage:
+# kubectl exec -n monitoring loki-0 -- du -sh /data/loki
+# ============================================================================

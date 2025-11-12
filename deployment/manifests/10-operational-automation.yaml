@@ -1,0 +1,515 @@
+# Operational Automation - Maintenance Tasks
+# Matrix/Synapse Production Deployment - 20K CCU
+# Version: 2.0
+
+# ============================================================================
+# OPERATIONAL TASKS:
+# ============================================================================
+# 1. S3 Media Cleanup - Remove local media files already uploaded to S3
+# 2. Database Maintenance - VACUUM, ANALYZE, table size monitoring
+# 3. Old Media Purge - Remove old/unused media from S3 and database
+# ============================================================================
+
+---
+# ============================================================================
+# CRONJOB: S3 Media Cleanup
+# ============================================================================
+# Synapse stores media locally first, then async uploads to S3
+# Local files are NOT automatically deleted - this CronJob cleans them up
+
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: synapse-s3-cleanup
+  namespace: matrix
+  labels:
+    app: synapse
+    component: maintenance
+spec:
+  schedule: "0 2 * * *"  # Daily at 2 AM
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  concurrencyPolicy: Forbid  # Don't run concurrent cleanup jobs
+
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: synapse
+            component: s3-cleanup
+        spec:
+          restartPolicy: OnFailure
+          securityContext:
+            runAsUser: 991  # Synapse user
+            runAsGroup: 991
+            fsGroup: 991
+
+          containers:
+            - name: s3-cleanup
+              image: matrixdotorg/synapse:v1.102.0
+              imagePullPolicy: IfNotPresent
+
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -e
+
+                  echo "==================================================="
+                  echo "Synapse S3 Media Cleanup Job"
+                  echo "Started at: $(date)"
+                  echo "==================================================="
+
+                  # Install s3_storage_provider if not in image
+                  echo "Installing synapse-s3-storage-provider..."
+                  pip install --quiet synapse-s3-storage-provider
+
+                  # Check which files are in S3
+                  echo "Checking files in S3..."
+                  s3_media_upload \
+                    --config /config/homeserver.yaml \
+                    check-deleted
+
+                  # Get stats before deletion
+                  echo "Calculating disk usage before cleanup..."
+                  du -sh /data/media || true
+
+                  # Delete local files that are in S3
+                  echo "Deleting local files already in S3..."
+                  s3_media_upload \
+                    --config /config/homeserver.yaml \
+                    --delete \
+                    check-deleted
+
+                  # Get stats after deletion
+                  echo "Calculating disk usage after cleanup..."
+                  du -sh /data/media || true
+
+                  echo "==================================================="
+                  echo "S3 Media Cleanup completed at: $(date)"
+                  echo "==================================================="
+
+              volumeMounts:
+                - name: config
+                  mountPath: /config/homeserver.yaml
+                  subPath: homeserver.yaml
+                  readOnly: true
+                - name: data
+                  mountPath: /data
+
+              resources:
+                requests:
+                  cpu: 500m
+                  memory: 512Mi
+                limits:
+                  cpu: 2000m
+                  memory: 2Gi
+
+          volumes:
+            - name: config
+              configMap:
+                name: synapse-config
+            - name: data
+              persistentVolumeClaim:
+                claimName: synapse-data
+
+---
+# ============================================================================
+# CRONJOB: Database Maintenance
+# ============================================================================
+# Regular PostgreSQL maintenance to prevent bloat and maintain performance
+
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: synapse-db-maintenance
+  namespace: matrix
+  labels:
+    app: synapse
+    component: maintenance
+spec:
+  schedule: "0 4 * * 0"  # Weekly on Sunday at 4 AM
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  concurrencyPolicy: Forbid
+
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: synapse
+            component: db-maintenance
+        spec:
+          restartPolicy: OnFailure
+          serviceAccountName: default
+
+          containers:
+            - name: db-maintenance
+              image: ghcr.io/cloudnative-pg/postgresql:16.2
+              imagePullPolicy: IfNotPresent
+
+              env:
+                - name: PGHOST
+                  value: "synapse-postgres-rw.matrix.svc.cluster.local"
+                - name: PGPORT
+                  value: "5432"
+                - name: PGDATABASE
+                  value: "synapse"
+                - name: PGUSER
+                  value: "synapse"
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: synapse-postgres-credentials
+                      key: password
+
+              command:
+                - /bin/bash
+                - -c
+                - |
+                  set -e
+
+                  echo "==================================================="
+                  echo "Synapse Database Maintenance Job"
+                  echo "Started at: $(date)"
+                  echo "==================================================="
+
+                  # Connection test
+                  echo "Testing database connection..."
+                  psql -c "SELECT version();" || {
+                    echo "ERROR: Cannot connect to database"
+                    exit 1
+                  }
+
+                  # Get database size before maintenance
+                  echo ""
+                  echo "Database size before maintenance:"
+                  psql -c "
+                    SELECT
+                      pg_size_pretty(pg_database_size('synapse')) as database_size,
+                      pg_size_pretty(pg_total_relation_size('state_groups_state')) as state_groups_state_size;
+                  "
+
+                  # Show top 10 largest tables
+                  echo ""
+                  echo "Top 10 largest tables:"
+                  psql -c "
+                    SELECT
+                      schemaname || '.' || tablename AS table,
+                      pg_size_pretty(pg_total_relation_size(schemaname||'.'||tablename)) AS size,
+                      pg_size_pretty(pg_relation_size(schemaname||'.'||tablename)) AS table_size,
+                      pg_size_pretty(pg_total_relation_size(schemaname||'.'||tablename) - pg_relation_size(schemaname||'.'||tablename)) AS indexes_size
+                    FROM pg_tables
+                    WHERE schemaname = 'public'
+                    ORDER BY pg_total_relation_size(schemaname||'.'||tablename) DESC
+                    LIMIT 10;
+                  "
+
+                  # Check bloat in state_groups_state
+                  echo ""
+                  echo "Checking state_groups_state table statistics:"
+                  psql -c "
+                    SELECT
+                      count(*) as row_count,
+                      pg_size_pretty(pg_total_relation_size('state_groups_state')) as total_size,
+                      pg_size_pretty(pg_relation_size('state_groups_state')) as table_size,
+                      pg_size_pretty(pg_indexes_size('state_groups_state')) as indexes_size
+                    FROM state_groups_state;
+                  "
+
+                  # Run VACUUM ANALYZE on all tables
+                  echo ""
+                  echo "Running VACUUM ANALYZE..."
+                  psql -c "VACUUM ANALYZE VERBOSE;" 2>&1 | grep -E '(INFO|WARNING|ERROR|VACUUM|pages)' || true
+
+                  # Analyze autovacuum status
+                  echo ""
+                  echo "Autovacuum statistics:"
+                  psql -c "
+                    SELECT
+                      schemaname || '.' || relname AS table,
+                      last_vacuum,
+                      last_autovacuum,
+                      last_analyze,
+                      last_autoanalyze,
+                      n_live_tup,
+                      n_dead_tup,
+                      round(100.0 * n_dead_tup / NULLIF(n_live_tup, 0), 2) AS dead_ratio
+                    FROM pg_stat_user_tables
+                    WHERE n_dead_tup > 1000
+                    ORDER BY n_dead_tup DESC
+                    LIMIT 10;
+                  "
+
+                  # Check for long-running queries
+                  echo ""
+                  echo "Long-running queries (>1 minute):"
+                  psql -c "
+                    SELECT
+                      pid,
+                      now() - pg_stat_activity.query_start AS duration,
+                      state,
+                      substring(query, 1, 100) as query
+                    FROM pg_stat_activity
+                    WHERE (now() - pg_stat_activity.query_start) > interval '1 minute'
+                      AND state != 'idle'
+                    ORDER BY duration DESC;
+                  "
+
+                  # Connection pool statistics
+                  echo ""
+                  echo "Database connection statistics:"
+                  psql -c "
+                    SELECT
+                      count(*) FILTER (WHERE state = 'active') as active_connections,
+                      count(*) FILTER (WHERE state = 'idle') as idle_connections,
+                      count(*) FILTER (WHERE state = 'idle in transaction') as idle_in_transaction,
+                      count(*) as total_connections
+                    FROM pg_stat_activity
+                    WHERE datname = 'synapse';
+                  "
+
+                  # Database size after maintenance
+                  echo ""
+                  echo "Database size after maintenance:"
+                  psql -c "
+                    SELECT
+                      pg_size_pretty(pg_database_size('synapse')) as database_size;
+                  "
+
+                  echo ""
+                  echo "==================================================="
+                  echo "Database Maintenance completed at: $(date)"
+                  echo "==================================================="
+                  echo ""
+                  echo "RECOMMENDATIONS:"
+                  echo "- If state_groups_state > 50GB, consider running synapse-compress-state"
+                  echo "- If dead_ratio > 20%, consider tuning autovacuum settings"
+                  echo "- If idle_in_transaction > 10, investigate application connection handling"
+
+              resources:
+                requests:
+                  cpu: 500m
+                  memory: 512Mi
+                limits:
+                  cpu: 2000m
+                  memory: 2Gi
+
+---
+# ============================================================================
+# CRONJOB: Old Media Purge (Optional)
+# ============================================================================
+# Removes old media from database and S3 storage
+# CAUTION: Adjust retention based on your requirements
+
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: synapse-media-purge
+  namespace: matrix
+  labels:
+    app: synapse
+    component: maintenance
+spec:
+  # Run monthly on 1st at 3 AM
+  schedule: "0 3 1 * *"
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  concurrencyPolicy: Forbid
+  suspend: true  # DISABLED BY DEFAULT - uncomment to enable
+
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: synapse
+            component: media-purge
+        spec:
+          restartPolicy: OnFailure
+
+          containers:
+            - name: media-purge
+              image: curlimages/curl:latest
+              imagePullPolicy: IfNotPresent
+
+              env:
+                - name: SYNAPSE_ADMIN_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: synapse-admin-token
+                      key: token
+
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -e
+
+                  echo "==================================================="
+                  echo "Synapse Media Purge Job"
+                  echo "Started at: $(date)"
+                  echo "==================================================="
+
+                  # Calculate timestamp for 1 year ago (in milliseconds)
+                  TIMESTAMP=$(date -d "1 year ago" +%s)000
+
+                  echo "Purging media older than: $(date -d @$((TIMESTAMP/1000)))"
+
+                  # Call Synapse Admin API to purge old media
+                  echo "Calling purge API..."
+                  curl -X POST \
+                    "http://synapse-main.matrix.svc.cluster.local:8008/_synapse/admin/v1/purge_media_cache?before_ts=${TIMESTAMP}" \
+                    -H "Authorization: Bearer ${SYNAPSE_ADMIN_TOKEN}" \
+                    -H "Content-Type: application/json" \
+                    -d '{"before_ts": '${TIMESTAMP}'}' \
+                    -v
+
+                  echo ""
+                  echo "==================================================="
+                  echo "Media Purge completed at: $(date)"
+                  echo "==================================================="
+
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 64Mi
+                limits:
+                  cpu: 500m
+                  memory: 256Mi
+
+---
+# ============================================================================
+# SECRET: Synapse Admin Token (for media purge)
+# ============================================================================
+# Create admin user token:
+# kubectl exec -n matrix $(kubectl get pod -n matrix -l component=main -o name) -- \
+#   python -c "from synapse.util.stringutils import random_string; print(random_string(32))"
+
+apiVersion: v1
+kind: Secret
+metadata:
+  name: synapse-admin-token
+  namespace: matrix
+type: Opaque
+stringData:
+  token: "CHANGE_TO_ADMIN_ACCESS_TOKEN"  # Get from: /_matrix/client/r0/login
+
+---
+# ============================================================================
+# SERVICEMONITOR: Monitor CronJob Execution
+# ============================================================================
+# Prometheus monitoring for CronJob execution status
+
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: synapse-maintenance-alerts
+  namespace: matrix
+  labels:
+    app: synapse
+    component: maintenance
+spec:
+  groups:
+    - name: synapse_maintenance
+      interval: 1m
+      rules:
+        # Alert if S3 cleanup hasn't run in 26 hours (should run daily)
+        - alert: SynapseS3CleanupNotRunning
+          expr: |
+            (time() - kube_job_status_start_time{job_name=~"synapse-s3-cleanup.*", namespace="matrix"}) > 93600
+          for: 1h
+          labels:
+            severity: warning
+          annotations:
+            summary: "Synapse S3 cleanup job hasn't run"
+            description: "S3 cleanup CronJob hasn't executed in over 26 hours"
+
+        # Alert if database maintenance hasn't run in 8 days (should run weekly)
+        - alert: SynapseDatabaseMaintenanceNotRunning
+          expr: |
+            (time() - kube_job_status_start_time{job_name=~"synapse-db-maintenance.*", namespace="matrix"}) > 691200
+          for: 1h
+          labels:
+            severity: warning
+          annotations:
+            summary: "Synapse database maintenance job hasn't run"
+            description: "Database maintenance CronJob hasn't executed in over 8 days"
+
+        # Alert if CronJob fails
+        - alert: SynapseMaintenanceJobFailed
+          expr: |
+            kube_job_status_failed{job_name=~"synapse-(s3-cleanup|db-maintenance|media-purge).*", namespace="matrix"} > 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Synapse maintenance job failed"
+            description: "Maintenance CronJob {{ $labels.job_name }} failed"
+
+---
+# ============================================================================
+# USAGE NOTES
+# ============================================================================
+# After deployment:
+#
+# 1. Verify CronJobs are created:
+#    kubectl get cronjobs -n matrix
+#
+# 2. Manually trigger S3 cleanup (for testing):
+#    kubectl create job --from=cronjob/synapse-s3-cleanup synapse-s3-cleanup-manual -n matrix
+#    kubectl logs -n matrix job/synapse-s3-cleanup-manual -f
+#
+# 3. Manually trigger database maintenance (for testing):
+#    kubectl create job --from=cronjob/synapse-db-maintenance synapse-db-maintenance-manual -n matrix
+#    kubectl logs -n matrix job/synapse-db-maintenance-manual -f
+#
+# 4. Check CronJob history:
+#    kubectl get jobs -n matrix -l app=synapse,component=maintenance
+#
+# 5. View last execution logs:
+#    kubectl logs -n matrix \
+#      $(kubectl get pods -n matrix -l component=s3-cleanup --sort-by=.status.startTime -o name | tail -1)
+#
+# 6. Disable a CronJob temporarily:
+#    kubectl patch cronjob synapse-s3-cleanup -n matrix -p '{"spec":{"suspend":true}}'
+#
+# 7. Re-enable a CronJob:
+#    kubectl patch cronjob synapse-s3-cleanup -n matrix -p '{"spec":{"suspend":false}}'
+#
+# 8. Adjust schedule:
+#    kubectl edit cronjob synapse-s3-cleanup -n matrix
+#    # Modify spec.schedule (cron format)
+#
+# 9. Enable media purge (disabled by default):
+#    kubectl patch cronjob synapse-media-purge -n matrix -p '{"spec":{"suspend":false}}'
+#
+# 10. State compaction (manual, for severe bloat):
+#     # Install tool
+#     pip install synapse-compress-state
+#
+#     # Run compression (can take hours)
+#     synapse_compress_state \
+#       -p postgresql://synapse:PASSWORD@synapse-postgres-rw.matrix.svc:5432/synapse \
+#       -c \
+#       -o state_compressor_output.sql
+#
+#     # Apply compressed state
+#     psql postgresql://synapse:PASSWORD@synapse-postgres-rw.matrix.svc:5432/synapse \
+#       < state_compressor_output.sql
+#
+# 11. Monitoring recommendations:
+#     - Set up Grafana dashboard for CronJob execution
+#     - Alert on job failures
+#     - Monitor disk usage trends
+#     - Track database size growth
+#
+# 12. Troubleshooting:
+#     - Job fails immediately: Check RBAC permissions
+#     - S3 cleanup fails: Verify MinIO credentials and connectivity
+#     - DB maintenance fails: Check PostgreSQL credentials
+#     - Out of memory: Increase resources.limits.memory
+#
+# ============================================================================

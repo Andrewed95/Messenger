@@ -1,0 +1,906 @@
+# Synapse Workers - Complete Worker Architecture
+# Matrix/Synapse Production Deployment
+# Version: 2.1
+
+# ============================================================================
+# SCALING NOTICE: Worker Counts Depend on Your Scale
+# ============================================================================
+# The replica counts below are EXAMPLES for mid-scale deployment (~5K CCU).
+# You MUST adjust these values based on your target scale.
+#
+# 📊 See SCALING-GUIDE.md Section 9.1 for worker counts at your scale:
+# - 100 CCU:  2 sync, 2 generic, 2 event persisters, 2 federation (8 total)
+# - 1K CCU:   4 sync, 2 generic, 2 event persisters, 2 federation (10 total)
+# - 5K CCU:   8 sync, 4 generic, 2 event persisters, 4 federation (18 total)
+# - 10K CCU: 12 sync, 6 generic, 3 event persisters, 6 federation (27 total)
+# - 20K CCU: 18 sync, 8 generic, 4 event persisters, 8 federation (38 total)
+#
+# CURRENT CONFIGURATION: 18 Workers Total (Example for ~5K CCU)
+# - 8 Sync Workers (handle /sync endpoint - user session affinity)
+# - 4 Generic Workers (client API + federation receiver)
+# - 4 Federation Senders (outbound federation traffic)
+# - 2 Event Persisters (database write optimization)
+#
+# CRITICAL: Each worker must have unique name and port
+# ============================================================================
+
+---
+# ============================================================================
+# CONFIGMAP: Worker Instance Map (for main homeserver)
+# ============================================================================
+# This ConfigMap fragment must be merged into synapse-config ConfigMap
+# It defines all worker instances for the instance_map
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: synapse-worker-instance-map
+  namespace: matrix
+data:
+  instance_map.yaml: |
+    # Instance map - defines all Synapse processes
+    instance_map:
+      main:
+        host: synapse-main.matrix.svc.cluster.local
+        port: 9093
+
+      # Sync workers (8)
+      sync_worker_1:
+        host: synapse-sync-worker-0.synapse-sync-worker.matrix.svc.cluster.local
+        port: 9093
+      sync_worker_2:
+        host: synapse-sync-worker-1.synapse-sync-worker.matrix.svc.cluster.local
+        port: 9093
+      sync_worker_3:
+        host: synapse-sync-worker-2.synapse-sync-worker.matrix.svc.cluster.local
+        port: 9093
+      sync_worker_4:
+        host: synapse-sync-worker-3.synapse-sync-worker.matrix.svc.cluster.local
+        port: 9093
+      sync_worker_5:
+        host: synapse-sync-worker-4.synapse-sync-worker.matrix.svc.cluster.local
+        port: 9093
+      sync_worker_6:
+        host: synapse-sync-worker-5.synapse-sync-worker.matrix.svc.cluster.local
+        port: 9093
+      sync_worker_7:
+        host: synapse-sync-worker-6.synapse-sync-worker.matrix.svc.cluster.local
+        port: 9093
+      sync_worker_8:
+        host: synapse-sync-worker-7.synapse-sync-worker.matrix.svc.cluster.local
+        port: 9093
+
+      # Generic workers (4)
+      generic_worker_1:
+        host: synapse-generic-worker-0.synapse-generic-worker.matrix.svc.cluster.local
+        port: 9093
+      generic_worker_2:
+        host: synapse-generic-worker-1.synapse-generic-worker.matrix.svc.cluster.local
+        port: 9093
+      generic_worker_3:
+        host: synapse-generic-worker-2.synapse-generic-worker.matrix.svc.cluster.local
+        port: 9093
+      generic_worker_4:
+        host: synapse-generic-worker-3.synapse-generic-worker.matrix.svc.cluster.local
+        port: 9093
+
+      # Event persisters (2)
+      event_persister_1:
+        host: synapse-event-persister-0.synapse-event-persister.matrix.svc.cluster.local
+        port: 9093
+      event_persister_2:
+        host: synapse-event-persister-1.synapse-event-persister.matrix.svc.cluster.local
+        port: 9093
+
+      # Federation senders (4)
+      federation_sender_1:
+        host: synapse-federation-sender-0.synapse-federation-sender.matrix.svc.cluster.local
+        port: 9093
+      federation_sender_2:
+        host: synapse-federation-sender-1.synapse-federation-sender.matrix.svc.cluster.local
+        port: 9093
+      federation_sender_3:
+        host: synapse-federation-sender-2.synapse-federation-sender.matrix.svc.cluster.local
+        port: 9093
+      federation_sender_4:
+        host: synapse-federation-sender-3.synapse-federation-sender.matrix.svc.cluster.local
+        port: 9093
+
+  stream_writers.yaml: |
+    # Stream writers configuration
+    stream_writers:
+      events:
+        - event_persister_1
+        - event_persister_2
+
+    # Federation sender instances
+    federation_sender_instances:
+      - federation_sender_1
+      - federation_sender_2
+      - federation_sender_3
+      - federation_sender_4
+
+---
+# ============================================================================
+# STATEFULSET: Sync Workers (8 replicas)
+# ============================================================================
+# Handle /sync endpoint with user session affinity
+# Most resource-intensive workers due to long-polling connections
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: synapse-sync-worker
+  namespace: matrix
+  labels:
+    app: synapse
+    component: sync-worker
+spec:
+  clusterIP: None  # Headless service for StatefulSet
+  selector:
+    app: synapse
+    component: sync-worker
+  ports:
+    - name: http
+      port: 8083
+      targetPort: 8083
+    - name: replication
+      port: 9093
+      targetPort: 9093
+    - name: metrics
+      port: 9000
+      targetPort: 9000
+
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: synapse-sync-worker
+  namespace: matrix
+  labels:
+    app: synapse
+    component: sync-worker
+spec:
+  serviceName: synapse-sync-worker
+  replicas: 8
+
+  selector:
+    matchLabels:
+      app: synapse
+      component: sync-worker
+
+  template:
+    metadata:
+      labels:
+        app: synapse
+        component: sync-worker
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9000"
+        prometheus.io/path: "/_synapse/metrics"
+
+    spec:
+      securityContext:
+        runAsUser: 991
+        runAsGroup: 991
+        fsGroup: 991
+
+      containers:
+        - name: synapse-worker
+          image: matrixdotorg/synapse:v1.102.0
+          imagePullPolicy: IfNotPresent
+
+          env:
+            - name: SYNAPSE_WORKER
+              value: synapse.app.generic_worker
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            # Worker name derived from pod name (sync_worker_1, sync_worker_2, etc.)
+            - name: SYNAPSE_WORKER_NAME
+              value: "sync_worker_$(echo $POD_NAME | sed 's/synapse-sync-worker-//' | awk '{print $1+1}')"
+
+          ports:
+            - name: http
+              containerPort: 8083
+            - name: replication
+              containerPort: 9093
+            - name: metrics
+              containerPort: 9000
+
+          volumeMounts:
+            - name: worker-config
+              mountPath: /worker-config
+            - name: shared-config
+              mountPath: /config/homeserver.yaml
+              subPath: homeserver.yaml
+            - name: shared-config
+              mountPath: /config/log.config
+              subPath: log.config
+            - name: signing-key
+              mountPath: /keys
+              readOnly: true
+
+          # Entrypoint script to generate worker config
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -e
+
+              # Extract worker number from pod name
+              WORKER_NUM=$(echo $POD_NAME | sed 's/synapse-sync-worker-//' | awk '{print $1+1}')
+
+              cat > /tmp/worker.yaml <<EOF
+              worker_app: synapse.app.generic_worker
+              worker_name: sync_worker_${WORKER_NUM}
+
+              # Listeners
+              worker_listeners:
+                - type: http
+                  port: 8083
+                  resources:
+                    - names: [client]
+                  x_forwarded: true
+                  bind_addresses: ['0.0.0.0']
+
+                - type: http
+                  port: 9093
+                  resources:
+                    - names: [replication]
+                  bind_addresses: ['0.0.0.0']
+
+                - type: metrics
+                  port: 9000
+                  bind_addresses: ['0.0.0.0']
+
+              # Worker log config
+              worker_log_config: /config/log.config
+              EOF
+
+              # Start Synapse with worker config
+              exec python -m synapse.app.generic_worker \
+                --config-path=/config/homeserver.yaml \
+                --config-path=/tmp/worker.yaml
+
+          resources:
+            requests:
+              cpu: 1000m
+              memory: 2Gi
+            limits:
+              cpu: 4000m
+              memory: 4Gi
+
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8083
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8083
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+      volumes:
+        - name: worker-config
+          emptyDir: {}
+        - name: shared-config
+          configMap:
+            name: synapse-config
+        - name: signing-key
+          secret:
+            secretName: synapse-signing-key
+
+---
+# ============================================================================
+# STATEFULSET: Generic Workers (4 replicas)
+# ============================================================================
+# Handle general client API and federation receiver endpoints
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: synapse-generic-worker
+  namespace: matrix
+  labels:
+    app: synapse
+    component: generic-worker
+spec:
+  clusterIP: None
+  selector:
+    app: synapse
+    component: generic-worker
+  ports:
+    - name: http
+      port: 8081
+      targetPort: 8081
+    - name: replication
+      port: 9093
+      targetPort: 9093
+    - name: metrics
+      port: 9000
+      targetPort: 9000
+
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: synapse-generic-worker
+  namespace: matrix
+  labels:
+    app: synapse
+    component: generic-worker
+spec:
+  serviceName: synapse-generic-worker
+  replicas: 4
+
+  selector:
+    matchLabels:
+      app: synapse
+      component: generic-worker
+
+  template:
+    metadata:
+      labels:
+        app: synapse
+        component: generic-worker
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9000"
+        prometheus.io/path: "/_synapse/metrics"
+
+    spec:
+      securityContext:
+        runAsUser: 991
+        runAsGroup: 991
+        fsGroup: 991
+
+      containers:
+        - name: synapse-worker
+          image: matrixdotorg/synapse:v1.102.0
+          imagePullPolicy: IfNotPresent
+
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+
+          ports:
+            - name: http
+              containerPort: 8081
+            - name: replication
+              containerPort: 9093
+            - name: metrics
+              containerPort: 9000
+
+          volumeMounts:
+            - name: shared-config
+              mountPath: /config/homeserver.yaml
+              subPath: homeserver.yaml
+            - name: shared-config
+              mountPath: /config/log.config
+              subPath: log.config
+            - name: signing-key
+              mountPath: /keys
+              readOnly: true
+
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -e
+
+              WORKER_NUM=$(echo $POD_NAME | sed 's/synapse-generic-worker-//' | awk '{print $1+1}')
+
+              cat > /tmp/worker.yaml <<EOF
+              worker_app: synapse.app.generic_worker
+              worker_name: generic_worker_${WORKER_NUM}
+
+              worker_listeners:
+                - type: http
+                  port: 8081
+                  resources:
+                    - names: [client, federation]
+                  x_forwarded: true
+                  bind_addresses: ['0.0.0.0']
+
+                - type: http
+                  port: 9093
+                  resources:
+                    - names: [replication]
+                  bind_addresses: ['0.0.0.0']
+
+                - type: metrics
+                  port: 9000
+                  bind_addresses: ['0.0.0.0']
+
+              worker_log_config: /config/log.config
+              EOF
+
+              exec python -m synapse.app.generic_worker \
+                --config-path=/config/homeserver.yaml \
+                --config-path=/tmp/worker.yaml
+
+          resources:
+            requests:
+              cpu: 1000m
+              memory: 2Gi
+            limits:
+              cpu: 4000m
+              memory: 4Gi
+
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8081
+            initialDelaySeconds: 60
+            periodSeconds: 30
+
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8081
+            initialDelaySeconds: 30
+            periodSeconds: 10
+
+      volumes:
+        - name: shared-config
+          configMap:
+            name: synapse-config
+        - name: signing-key
+          secret:
+            secretName: synapse-signing-key
+
+---
+# ============================================================================
+# STATEFULSET: Event Persisters (2 replicas)
+# ============================================================================
+# Dedicated workers for database writes - optimize event persistence
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: synapse-event-persister
+  namespace: matrix
+  labels:
+    app: synapse
+    component: event-persister
+spec:
+  clusterIP: None
+  selector:
+    app: synapse
+    component: event-persister
+  ports:
+    - name: replication
+      port: 9093
+      targetPort: 9093
+    - name: metrics
+      port: 9000
+      targetPort: 9000
+
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: synapse-event-persister
+  namespace: matrix
+  labels:
+    app: synapse
+    component: event-persister
+spec:
+  serviceName: synapse-event-persister
+  replicas: 2
+
+  selector:
+    matchLabels:
+      app: synapse
+      component: event-persister
+
+  template:
+    metadata:
+      labels:
+        app: synapse
+        component: event-persister
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9000"
+        prometheus.io/path: "/_synapse/metrics"
+
+    spec:
+      securityContext:
+        runAsUser: 991
+        runAsGroup: 991
+        fsGroup: 991
+
+      containers:
+        - name: synapse-worker
+          image: matrixdotorg/synapse:v1.102.0
+          imagePullPolicy: IfNotPresent
+
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+
+          ports:
+            - name: replication
+              containerPort: 9093
+            - name: metrics
+              containerPort: 9000
+
+          volumeMounts:
+            - name: shared-config
+              mountPath: /config/homeserver.yaml
+              subPath: homeserver.yaml
+            - name: shared-config
+              mountPath: /config/log.config
+              subPath: log.config
+            - name: signing-key
+              mountPath: /keys
+              readOnly: true
+
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -e
+
+              WORKER_NUM=$(echo $POD_NAME | sed 's/synapse-event-persister-//' | awk '{print $1+1}')
+
+              cat > /tmp/worker.yaml <<EOF
+              worker_app: synapse.app.generic_worker
+              worker_name: event_persister_${WORKER_NUM}
+
+              worker_listeners:
+                - type: http
+                  port: 9093
+                  resources:
+                    - names: [replication]
+                  bind_addresses: ['0.0.0.0']
+
+                - type: metrics
+                  port: 9000
+                  bind_addresses: ['0.0.0.0']
+
+              worker_log_config: /config/log.config
+              EOF
+
+              exec python -m synapse.app.generic_worker \
+                --config-path=/config/homeserver.yaml \
+                --config-path=/tmp/worker.yaml
+
+          resources:
+            requests:
+              cpu: 1500m
+              memory: 3Gi
+            limits:
+              cpu: 6000m
+              memory: 6Gi
+
+          livenessProbe:
+            httpGet:
+              path: /_synapse/metrics
+              port: 9000
+            initialDelaySeconds: 60
+            periodSeconds: 30
+
+          readinessProbe:
+            httpGet:
+              path: /_synapse/metrics
+              port: 9000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+
+      volumes:
+        - name: shared-config
+          configMap:
+            name: synapse-config
+        - name: signing-key
+          secret:
+            secretName: synapse-signing-key
+
+---
+# ============================================================================
+# STATEFULSET: Federation Senders (4 replicas)
+# ============================================================================
+# Handle outbound federation traffic to other Matrix servers
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: synapse-federation-sender
+  namespace: matrix
+  labels:
+    app: synapse
+    component: federation-sender
+spec:
+  clusterIP: None
+  selector:
+    app: synapse
+    component: federation-sender
+  ports:
+    - name: replication
+      port: 9093
+      targetPort: 9093
+    - name: metrics
+      port: 9000
+      targetPort: 9000
+
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: synapse-federation-sender
+  namespace: matrix
+  labels:
+    app: synapse
+    component: federation-sender
+spec:
+  serviceName: synapse-federation-sender
+  replicas: 4
+
+  selector:
+    matchLabels:
+      app: synapse
+      component: federation-sender
+
+  template:
+    metadata:
+      labels:
+        app: synapse
+        component: federation-sender
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9000"
+        prometheus.io/path: "/_synapse/metrics"
+
+    spec:
+      securityContext:
+        runAsUser: 991
+        runAsGroup: 991
+        fsGroup: 991
+
+      containers:
+        - name: synapse-worker
+          image: matrixdotorg/synapse:v1.102.0
+          imagePullPolicy: IfNotPresent
+
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+
+          ports:
+            - name: replication
+              containerPort: 9093
+            - name: metrics
+              containerPort: 9000
+
+          volumeMounts:
+            - name: shared-config
+              mountPath: /config/homeserver.yaml
+              subPath: homeserver.yaml
+            - name: shared-config
+              mountPath: /config/log.config
+              subPath: log.config
+            - name: signing-key
+              mountPath: /keys
+              readOnly: true
+
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -e
+
+              WORKER_NUM=$(echo $POD_NAME | sed 's/synapse-federation-sender-//' | awk '{print $1+1}')
+
+              cat > /tmp/worker.yaml <<EOF
+              worker_app: synapse.app.federation_sender
+              worker_name: federation_sender_${WORKER_NUM}
+
+              worker_listeners:
+                - type: http
+                  port: 9093
+                  resources:
+                    - names: [replication]
+                  bind_addresses: ['0.0.0.0']
+
+                - type: metrics
+                  port: 9000
+                  bind_addresses: ['0.0.0.0']
+
+              worker_log_config: /config/log.config
+              EOF
+
+              exec python -m synapse.app.federation_sender \
+                --config-path=/config/homeserver.yaml \
+                --config-path=/tmp/worker.yaml
+
+          resources:
+            requests:
+              cpu: 1000m
+              memory: 2Gi
+            limits:
+              cpu: 4000m
+              memory: 4Gi
+
+          livenessProbe:
+            httpGet:
+              path: /_synapse/metrics
+              port: 9000
+            initialDelaySeconds: 60
+            periodSeconds: 30
+
+          readinessProbe:
+            httpGet:
+              path: /_synapse/metrics
+              port: 9000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+
+      volumes:
+        - name: shared-config
+          configMap:
+            name: synapse-config
+        - name: signing-key
+          secret:
+            secretName: synapse-signing-key
+
+---
+# ============================================================================
+# CRONJOB: Worker Memory Leak Mitigation
+# ============================================================================
+# Research shows workers don't free RAM - restart weekly to prevent bloat
+
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: synapse-worker-restart
+  namespace: matrix
+spec:
+  schedule: "0 3 * * 0"  # Weekly on Sunday at 3 AM
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: synapse-worker-restart-sa
+          restartPolicy: OnFailure
+
+          containers:
+            - name: kubectl
+              image: bitnami/kubectl:1.28
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  echo "Rolling restart of sync workers..."
+                  kubectl rollout restart statefulset/synapse-sync-worker -n matrix
+                  kubectl rollout status statefulset/synapse-sync-worker -n matrix --timeout=10m
+
+                  echo "Rolling restart of generic workers..."
+                  kubectl rollout restart statefulset/synapse-generic-worker -n matrix
+                  kubectl rollout status statefulset/synapse-generic-worker -n matrix --timeout=10m
+
+                  echo "Rolling restart of event persisters..."
+                  kubectl rollout restart statefulset/synapse-event-persister -n matrix
+                  kubectl rollout status statefulset/synapse-event-persister -n matrix --timeout=10m
+
+                  echo "Rolling restart of federation senders..."
+                  kubectl rollout restart statefulset/synapse-federation-sender -n matrix
+                  kubectl rollout status statefulset/synapse-federation-sender -n matrix --timeout=10m
+
+                  echo "All workers restarted successfully!"
+
+---
+# ============================================================================
+# RBAC: ServiceAccount for Worker Restart CronJob
+# ============================================================================
+
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: synapse-worker-restart-sa
+  namespace: matrix
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: synapse-worker-restart-role
+  namespace: matrix
+rules:
+  - apiGroups: ["apps"]
+    resources: ["statefulsets"]
+    verbs: ["get", "list", "patch"]
+  - apiGroups: ["apps"]
+    resources: ["statefulsets/status"]
+    verbs: ["get"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: synapse-worker-restart-binding
+  namespace: matrix
+subjects:
+  - kind: ServiceAccount
+    name: synapse-worker-restart-sa
+    namespace: matrix
+roleRef:
+  kind: Role
+  name: synapse-worker-restart-role
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# ============================================================================
+# SERVICEMONITOR: Prometheus Monitoring for All Workers
+# ============================================================================
+
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: synapse-workers
+  namespace: matrix
+  labels:
+    app: synapse
+spec:
+  selector:
+    matchLabels:
+      app: synapse
+  namespaceSelector:
+    matchNames:
+      - matrix
+  endpoints:
+    - port: metrics
+      interval: 30s
+      path: /_synapse/metrics
+
+---
+# ============================================================================
+# USAGE NOTES
+# ============================================================================
+# After deploying workers:
+#
+# 1. Update main homeserver.yaml with instance_map and stream_writers:
+#    kubectl edit configmap synapse-config -n matrix
+#    # Merge content from synapse-worker-instance-map ConfigMap
+#
+# 2. Restart main process to pickup new configuration:
+#    kubectl rollout restart deployment/synapse-main -n matrix
+#
+# 3. Check worker status:
+#    kubectl get pods -n matrix -l app=synapse
+#
+# 4. View worker logs:
+#    kubectl logs -n matrix synapse-sync-worker-0 --tail=100
+#
+# 5. Test worker routing (requires Ingress with load balancing):
+#    curl -H "Host: chat.z3r0d3v.com" http://WORKER_IP:8083/_matrix/client/v3/sync
+#
+# 6. Monitor worker metrics:
+#    kubectl port-forward -n matrix synapse-sync-worker-0 9000:9000
+#    curl http://localhost:9000/_synapse/metrics | grep synapse
+#
+# 7. Worker resource usage:
+#    kubectl top pods -n matrix -l app=synapse
+#
+# 8. Scaling workers:
+#    # Sync and generic workers can scale freely
+#    kubectl scale statefulset synapse-sync-worker --replicas=12 -n matrix
+#
+#    # Event persisters and federation senders require config update
+#    # Edit instance_map and stream_writers in homeserver.yaml first
+#
+# ============================================================================

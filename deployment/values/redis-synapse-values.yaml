@@ -1,0 +1,191 @@
+# Redis Sentinel for Synapse - Helm Values
+# Matrix/Synapse Production Deployment (Scalable 100 CCU - 20K+ CCU)
+# Version: 2.1 - Scale-aware configuration
+
+# ============================================================================
+# CRITICAL: Synapse has dedicated Redis instance (NOT shared with LiveKit)
+# Rationale:
+# - Synapse doesn't support Redis Sentinel natively (requires stable Service)
+# - Continuous pub/sub traffic for worker replication
+# - Independent scaling and failure isolation
+# ============================================================================
+
+# ============================================================================
+# INSTALLATION
+# ============================================================================
+# helm repo add bitnami https://charts.bitnami.com/bitnami
+# helm install redis-synapse bitnami/redis \
+#   --namespace matrix \
+#   --create-namespace \
+#   --values redis-synapse-values.yaml
+
+# ============================================================================
+# ARCHITECTURE
+# ============================================================================
+
+architecture: replication  # Master-replica with Sentinel
+
+# ============================================================================
+# AUTHENTICATION
+# ============================================================================
+
+auth:
+  enabled: false  # Internal cluster communication, can enable with password
+  # password: ""  # CHANGE_TO_SECURE_PASSWORD if enabled
+  # sentinel: false
+
+# ============================================================================
+# SENTINEL CONFIGURATION (HA)
+# ============================================================================
+
+sentinel:
+  enabled: true  # Enable Redis Sentinel for automatic failover
+
+  # Quorum: minimum sentinels that must agree for failover
+  # With 3 sentinels, quorum=2 means 2 must agree (majority)
+  quorum: 2
+
+  # Downtime before considering master down
+  downAfterMilliseconds: 5000  # 5 seconds
+
+  # Failover timeout
+  failoverTimeout: 10000  # 10 seconds
+
+  # Parallel sync during failover
+  parallelSyncs: 1
+
+  # Resources for Sentinel pods
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 100m
+      memory: 128Mi
+
+# ============================================================================
+# MASTER CONFIGURATION
+# ============================================================================
+
+master:
+  count: 1  # Always 1 master in replication mode
+
+  # Redis persistence (for cache, can be disabled for pure cache usage)
+  persistence:
+    enabled: true  # Enable for Synapse worker replication data
+    size: 10Gi
+    storageClass: ""  # CHANGE_TO_YOUR_STORAGE_CLASS (e.g., local-path, ceph-block)
+
+  # Resource allocation for master
+  resources:
+    requests:
+      cpu: 100m
+      memory: 512Mi
+    limits:
+      cpu: 500m
+      memory: 2Gi
+
+  # Pod anti-affinity to spread across nodes
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: redis
+              app.kubernetes.io/instance: redis-synapse
+          topologyKey: kubernetes.io/hostname
+
+# ============================================================================
+# REPLICA CONFIGURATION
+# ============================================================================
+
+replica:
+  replicaCount: 3  # 3 replicas for HA (1 master + 3 replicas = 4 total nodes)
+
+  # Persistence for replicas
+  persistence:
+    enabled: true
+    size: 10Gi
+    storageClass: ""  # CHANGE_TO_YOUR_STORAGE_CLASS
+
+  # Resource allocation for replicas
+  resources:
+    requests:
+      cpu: 100m
+      memory: 512Mi
+    limits:
+      cpu: 500m
+      memory: 2Gi
+
+  # Pod anti-affinity
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: redis
+              app.kubernetes.io/instance: redis-synapse
+          topologyKey: kubernetes.io/hostname
+
+# ============================================================================
+# METRICS (Prometheus)
+# ============================================================================
+
+metrics:
+  enabled: true
+
+  # Prometheus ServiceMonitor
+  serviceMonitor:
+    enabled: true
+    namespace: monitoring
+    interval: 30s
+
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 100m
+      memory: 128Mi
+
+# ============================================================================
+# NETWORK POLICY
+# ============================================================================
+
+networkPolicy:
+  enabled: false  # Enable if using network policies
+  # allowExternal: false
+
+# ============================================================================
+# SYNAPSE CONFIGURATION REFERENCE
+# ============================================================================
+# In Synapse homeserver.yaml, connect using stable Service name:
+#
+# redis:
+#   enabled: true
+#   host: redis-synapse-master.matrix.svc.cluster.local
+#   port: 6379
+#   # password: REDIS_PASSWORD  # If auth enabled
+#   dbid: 0
+#
+# IMPORTANT: Synapse uses stable Service name (redis-synapse-master) which
+# automatically points to current master after Sentinel failover.
+# This is a WORKAROUND since Synapse doesn't support Sentinel directly.
+# ============================================================================
+
+# ============================================================================
+# SCALING NOTES
+# ============================================================================
+# Redis RAM requirements by scale (see SCALING-GUIDE.md Section 9.3):
+# - 100 CCU:   1GB RAM sufficient
+# - 1K CCU:    2GB RAM sufficient
+# - 5K CCU:    4GB RAM recommended
+# - 10K CCU:   8GB RAM recommended
+# - 20K CCU:   24GB RAM recommended
+#
+# Current config (2Gi RAM) sufficient for up to 1K CCU.
+# Adjust master.resources and replica.resources based on your scale.
+# Monitor memory usage; scale if >80% consistently.
+# ============================================================================

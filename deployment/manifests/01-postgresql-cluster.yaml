@@ -1,0 +1,396 @@
+# CloudNativePG PostgreSQL Cluster
+# Matrix/Synapse Production Deployment
+# Version: 2.1 - Scale-aware configuration
+
+# ============================================================================
+# SCALING NOTICE: Configuration Depends on Your Scale
+# ============================================================================
+# 📊 Current values are EXAMPLES for mid-scale (~5K CCU).
+# See SCALING-GUIDE.md Section 9.2 for your scale:
+#
+# - 100 CCU:  3 instances, 200 max_connections, 4 vCPU, 16GB RAM, 500GB storage
+# - 1K CCU:   3 instances, 300 max_connections, 8 vCPU, 32GB RAM, 1TB storage
+# - 5K CCU:   3 instances, 450 max_connections, 16 vCPU, 64GB RAM, 2TB storage
+# - 10K CCU:  5 instances, 550 max_connections, 24 vCPU, 96GB RAM, 3TB storage
+# - 20K CCU:  5 instances, 600 max_connections, 32 vCPU, 128GB RAM, 4TB storage
+#
+# CRITICAL CORRECTIONS:
+# - switchoverDelay: 300 (was 40000000 - FIXED!)
+# - dataDurability: required (explicit in v1.25+)
+# - synchronous: ANY 1 (zero data loss on failover)
+# - PgBouncer in session mode (required for Synapse)
+# ============================================================================
+
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: synapse-postgres
+  namespace: matrix
+spec:
+  # Number of instances (1 primary + N replicas)
+  # ADJUST: 3 for <10K CCU, 5 for 10K+ CCU (see header for guidance)
+  instances: 3
+
+  # CORRECTED: 5 minutes graceful shutdown before forced failover
+  # Previous value of 40000000 seconds (463 days) was CRITICAL ERROR
+  switchoverDelay: 300
+
+  # Primary update strategy
+  primaryUpdateStrategy: unsupervised
+
+  # PostgreSQL version
+  imageName: ghcr.io/cloudnative-pg/postgresql:16.2
+
+  # ============================================================================
+  # BOOTSTRAP (Initial setup)
+  # ============================================================================
+  bootstrap:
+    initdb:
+      database: synapse
+      owner: synapse
+      secret:
+        name: synapse-postgres-credentials
+      encoding: UTF8
+      localeCollate: C
+      localeCType: C
+      # Synapse-specific initialization
+      postInitSQL:
+        - CREATE EXTENSION IF NOT EXISTS pg_trgm;
+        - CREATE EXTENSION IF NOT EXISTS btree_gin;
+
+  # ============================================================================
+  # STORAGE (ADJUST based on scale - see header for guidance)
+  # ============================================================================
+  storage:
+    storageClass: ""  # CHANGE_TO_YOUR_STORAGE_CLASS (e.g., local-path, ceph-block)
+    size: 500Gi  # Example for 100 CCU. Scale: 1TB (1K), 2TB (5K), 3TB (10K), 4TB (20K)
+    # Resize in place (if storage class supports it)
+    resizeInUseVolumes: true
+
+  # WAL storage (for better I/O performance)
+  walStorage:
+    storageClass: ""  # CHANGE_TO_YOUR_STORAGE_CLASS (prefer fast SSD/NVMe)
+    size: 50Gi  # 10% of main storage typically sufficient
+    resizeInUseVolumes: true
+
+  # ============================================================================
+  # RESOURCES (ADJUST based on scale - see header for guidance)
+  # ============================================================================
+  resources:
+    requests:
+      cpu: 4000m      # Example for 100 CCU. Scale: 8 (1K), 16 (5K), 24 (10K), 32 (20K)
+      memory: 16Gi    # Example for 100 CCU. Scale: 32 (1K), 64 (5K), 96 (10K), 128 (20K)
+    limits:
+      cpu: 8000m      # 2× requests for burst capacity
+      memory: 32Gi    # 2× requests for burst capacity
+
+  # ============================================================================
+  # POSTGRESQL CONFIGURATION
+  # ============================================================================
+  postgresql:
+    # PostgreSQL parameters
+    parameters:
+      # Connection settings (ADJUST based on worker count - see SCALING-GUIDE.md Section 9.2)
+      max_connections: "500"  # Example for ~5K CCU (adjust for your scale)
+      superuser_reserved_connections: "3"
+
+      # Memory settings (ADJUST based on your instance RAM - see header)
+      shared_buffers: "8GB"  # 25% of RAM (adjust for your instance size)
+      effective_cache_size: "24GB"  # 75% of RAM (adjust for your instance size)
+      maintenance_work_mem: "2GB"
+      work_mem: "32MB"  # (RAM - shared_buffers) / (max_connections * 3)
+
+      # WAL settings
+      wal_level: "replica"
+      max_wal_senders: "10"
+      max_replication_slots: "10"
+      wal_keep_size: "1GB"
+      min_wal_size: "2GB"
+      max_wal_size: "8GB"
+
+      # Checkpoint settings
+      checkpoint_timeout: "15min"
+      checkpoint_completion_target: "0.9"
+
+      # Query planner
+      random_page_cost: "1.1"  # For SSD/NVMe
+      effective_io_concurrency: "200"
+
+      # Parallel query
+      max_parallel_workers_per_gather: "4"
+      max_parallel_maintenance_workers: "4"
+      max_parallel_workers: "8"
+
+      # Logging (for debugging)
+      log_line_prefix: "%t [%p]: [%l-1] user=%u,db=%d,app=%a,client=%h "
+      log_checkpoints: "on"
+      log_lock_waits: "on"
+      log_temp_files: "0"
+      log_autovacuum_min_duration: "0"
+      log_min_duration_statement: "1000"  # Log queries >1s
+
+      # Autovacuum tuning for high-write workload (Synapse)
+      autovacuum_max_workers: "4"
+      autovacuum_naptime: "20s"
+      autovacuum_vacuum_cost_delay: "10ms"
+      autovacuum_vacuum_cost_limit: "1000"
+
+      # Synapse-specific optimizations
+      default_statistics_target: "100"
+      track_io_timing: "on"
+
+    # ============================================================================
+    # SYNCHRONOUS REPLICATION (CORRECTED for v1.25+)
+    # ============================================================================
+    synchronous:
+      # Require at least 1 of 2 replicas to confirm write (quorum)
+      method: any
+      number: 1
+
+      # Explicit data durability (v1.25+ requirement)
+      # Ensures zero data loss on failover
+      dataDurability: required
+
+    # pg_hba.conf rules (optional, for custom access)
+    # pg_hba:
+    #   - host all all 10.0.0.0/8 md5
+
+  # ============================================================================
+  # BACKUP CONFIGURATION
+  # ============================================================================
+  backup:
+    # Barman object store backup
+    barmanObjectStore:
+      # S3-compatible storage (MinIO)
+      destinationPath: s3://postgres-backups/synapse-postgres
+      endpointURL: http://minio.minio.svc.cluster.local:9000
+
+      # S3 credentials
+      s3Credentials:
+        accessKeyId:
+          name: minio-backup-credentials
+          key: ACCESS_KEY_ID
+        secretAccessKey:
+          name: minio-backup-credentials
+          key: SECRET_ACCESS_KEY
+
+      # Backup retention
+      retentionPolicy: "30d"
+
+      # WAL archiving
+      wal:
+        compression: gzip
+        maxParallel: 8
+
+      # Data backup
+      data:
+        compression: gzip
+        jobs: 4
+
+    # ============================================================================
+    # BACKUP SCHEDULE
+    # ============================================================================
+    # Full backup daily at 2 AM
+    # Incremental backups every 6 hours
+    volumeSnapshot:
+      className: ""  # CHANGE_TO_YOUR_SNAPSHOT_CLASS (if using volume snapshots)
+
+  # ============================================================================
+  # MONITORING
+  # ============================================================================
+  monitoring:
+    enabled: true
+    # Prometheus PodMonitor created automatically
+
+  # ============================================================================
+  # AFFINITY (Spread instances across nodes)
+  # ============================================================================
+  affinity:
+    topologyKey: kubernetes.io/hostname
+    podAntiAffinityType: required
+
+  # ============================================================================
+  # PGBOUNCER POOLER (Connection pooling)
+  # ============================================================================
+  # Note: PgBouncer deployed as separate Pooler resource (see next manifest)
+  # CloudNativePG Pooler integrates seamlessly with Cluster
+
+---
+# ============================================================================
+# PGBOUNCER POOLER
+# ============================================================================
+# CRITICAL: Use session mode (NOT transaction mode) for Synapse
+# Synapse requires connection parameters to persist across queries
+
+apiVersion: postgresql.cnpg.io/v1
+kind: Pooler
+metadata:
+  name: synapse-postgres-pooler
+  namespace: matrix
+spec:
+  # Reference to PostgreSQL cluster
+  cluster:
+    name: synapse-postgres
+
+  # Pooler instances (HA)
+  instances: 3
+
+  # PgBouncer type: rw (read-write to primary)
+  type: rw
+
+  # ============================================================================
+  # CRITICAL: session mode for Synapse
+  # ============================================================================
+  pgbouncer:
+    # Pool mode: session (required for Synapse)
+    # DO NOT use transaction mode - will break Synapse!
+    poolMode: session
+
+    # Connection pool parameters
+    parameters:
+      # Max connections per pool
+      max_client_conn: "1000"  # Total client connections
+      default_pool_size: "25"  # Connections to PostgreSQL per user/db pair
+      reserve_pool_size: "25"  # Reserved connections
+      reserve_pool_timeout: "5"
+
+      # Server connection lifetime
+      server_lifetime: "3600"  # 1 hour
+      server_idle_timeout: "600"  # 10 minutes
+
+      # Query timeout
+      query_timeout: "0"  # No timeout
+      query_wait_timeout: "120"  # Wait 2 minutes for connection
+
+      # Server reset query (cleanup between sessions)
+      server_reset_query: "DISCARD ALL"
+
+      # CRITICAL: Synapse compatibility - always reset connection state
+      # GitHub Issue #4473: Synapse sets REPEATABLE READ isolation level
+      # PgBouncer must ensure connection state is properly reset
+      server_reset_query_always: "1"
+
+      # Logging
+      log_connections: "0"
+      log_disconnections: "0"
+      log_pooler_errors: "1"
+
+  # Resources for PgBouncer
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+  # High availability
+  ha:
+    enabled: true
+
+  # Service template
+  template:
+    metadata:
+      labels:
+        app: pgbouncer
+        cluster: synapse-postgres
+    spec:
+      type: ClusterIP
+
+---
+# ============================================================================
+# SCHEDULED BACKUP
+# ============================================================================
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: synapse-postgres-backup
+  namespace: matrix
+spec:
+  # Schedule: Daily at 2 AM
+  schedule: "0 2 * * *"
+
+  # Backup to S3
+  backupOwnerReference: self
+
+  # Reference to cluster
+  cluster:
+    name: synapse-postgres
+
+  # Immediate backup (for testing)
+  immediate: false
+
+---
+# ============================================================================
+# POSTGRES CREDENTIALS SECRET
+# ============================================================================
+# Generate strong password:
+# openssl rand -base64 32
+
+apiVersion: v1
+kind: Secret
+metadata:
+  name: synapse-postgres-credentials
+  namespace: matrix
+type: kubernetes.io/basic-auth
+stringData:
+  username: synapse
+  password: "CHANGE_TO_SECURE_PASSWORD"  # CRITICAL: Generate secure password!
+
+---
+# ============================================================================
+# MINIO BACKUP CREDENTIALS SECRET
+# ============================================================================
+apiVersion: v1
+kind: Secret
+metadata:
+  name: minio-backup-credentials
+  namespace: matrix
+type: Opaque
+stringData:
+  ACCESS_KEY_ID: "CHANGE_TO_MINIO_ACCESS_KEY"
+  SECRET_ACCESS_KEY: "CHANGE_TO_MINIO_SECRET_KEY"
+
+---
+# ============================================================================
+# USAGE NOTES
+# ============================================================================
+# After deployment:
+#
+# 1. Check cluster status:
+#    kubectl get cluster -n matrix
+#    kubectl describe cluster synapse-postgres -n matrix
+#
+# 2. Connect to primary:
+#    kubectl cnpg psql synapse-postgres -n matrix
+#
+# 3. View backup status:
+#    kubectl get backup -n matrix
+#
+# 4. Trigger manual backup:
+#    kubectl cnpg backup synapse-postgres -n matrix
+#
+# 5. Check PgBouncer status:
+#    kubectl get pooler -n matrix
+#    kubectl logs -n matrix -l cnpg.io/poolerName=synapse-postgres-pooler
+#
+# 6. Connection strings:
+#    - Direct to PostgreSQL primary:
+#      postgresql://synapse:PASSWORD@synapse-postgres-rw.matrix.svc:5432/synapse
+#
+#    - Via PgBouncer (RECOMMENDED for Synapse):
+#      postgresql://synapse:PASSWORD@synapse-postgres-pooler-rw.matrix.svc:5432/synapse
+#
+# 7. Synapse should use PgBouncer connection string for better pooling
+#
+# 8. Failover testing:
+#    kubectl cnpg promote synapse-postgres 2 -n matrix
+#    (Promotes replica 2 to primary)
+#
+# 9. Monitor metrics in Grafana:
+#    - Database size, connections, queries/sec
+#    - Replication lag
+#    - Cache hit ratio
+#
+# ============================================================================

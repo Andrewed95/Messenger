@@ -1,0 +1,198 @@
+# Redis Sentinel for LiveKit - Helm Values
+# Matrix/Synapse Production Deployment (Scalable 100 CCU - 20K+ CCU)
+# Version: 2.0 - CORRECTED: Separate Redis for LiveKit
+
+# ============================================================================
+# CRITICAL: LiveKit has dedicated Redis instance (NOT shared with Synapse)
+# Rationale:
+# - LiveKit supports Redis Sentinel natively (transparent failover)
+# - Bursty traffic pattern (room routing, participant tracking)
+# - Independent scaling and failure isolation
+# ============================================================================
+
+# ============================================================================
+# INSTALLATION
+# ============================================================================
+# helm repo add bitnami https://charts.bitnami.com/bitnami
+# helm install redis-livekit bitnami/redis \
+#   --namespace livekit \
+#   --create-namespace \
+#   --values redis-livekit-values.yaml
+
+# ============================================================================
+# ARCHITECTURE
+# ============================================================================
+
+architecture: replication  # Master-replica with Sentinel
+
+# ============================================================================
+# AUTHENTICATION
+# ============================================================================
+
+auth:
+  enabled: false  # Internal cluster communication, can enable with password
+  # password: ""  # CHANGE_TO_SECURE_PASSWORD if enabled
+  # sentinel: false
+
+# ============================================================================
+# SENTINEL CONFIGURATION (HA)
+# ============================================================================
+
+sentinel:
+  enabled: true  # Enable Redis Sentinel for automatic failover
+
+  # Quorum for failover decisions
+  quorum: 2
+
+  # Downtime before considering master down
+  downAfterMilliseconds: 5000  # 5 seconds
+
+  # Failover timeout
+  failoverTimeout: 10000  # 10 seconds
+
+  # Parallel sync during failover
+  parallelSyncs: 1
+
+  # Resources for Sentinel pods
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 100m
+      memory: 128Mi
+
+# ============================================================================
+# MASTER CONFIGURATION
+# ============================================================================
+
+master:
+  count: 1  # Always 1 master
+
+  # Persistence (LiveKit room data is transient but coordination data persists)
+  persistence:
+    enabled: true  # Enable for room state persistence
+    size: 5Gi
+    storageClass: ""  # CHANGE_TO_YOUR_STORAGE_CLASS
+
+  # Resource allocation
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
+
+  # Pod anti-affinity
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: redis
+              app.kubernetes.io/instance: redis-livekit
+          topologyKey: kubernetes.io/hostname
+
+# ============================================================================
+# REPLICA CONFIGURATION
+# ============================================================================
+
+replica:
+  replicaCount: 3  # 3 replicas for HA
+
+  # Persistence
+  persistence:
+    enabled: true
+    size: 5Gi
+    storageClass: ""  # CHANGE_TO_YOUR_STORAGE_CLASS
+
+  # Resource allocation
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
+
+  # Pod anti-affinity
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: redis
+              app.kubernetes.io/instance: redis-livekit
+          topologyKey: kubernetes.io/hostname
+
+# ============================================================================
+# METRICS (Prometheus)
+# ============================================================================
+
+metrics:
+  enabled: true
+
+  serviceMonitor:
+    enabled: true
+    namespace: monitoring
+    interval: 30s
+
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 100m
+      memory: 128Mi
+
+# ============================================================================
+# NETWORK POLICY
+# ============================================================================
+
+networkPolicy:
+  enabled: false  # Enable if using network policies
+
+# ============================================================================
+# LIVEKIT CONFIGURATION REFERENCE
+# ============================================================================
+# In LiveKit config.yaml, use native Sentinel support:
+#
+# redis:
+#   sentinel_master_name: mymaster
+#   sentinel_addresses:
+#     - redis-livekit-node-0.redis-livekit-headless.livekit.svc.cluster.local:26379
+#     - redis-livekit-node-1.redis-livekit-headless.livekit.svc.cluster.local:26379
+#     - redis-livekit-node-2.redis-livekit-headless.livekit.svc.cluster.local:26379
+#   sentinel_username: ""  # If Sentinel auth enabled
+#   sentinel_password: ""  # If Sentinel auth enabled
+#   username: ""  # If Redis auth enabled
+#   password: ""  # If Redis auth enabled
+#   db: 0
+#
+# IMPORTANT: LiveKit natively supports Sentinel and will automatically
+# connect to current master. No stable Service workaround needed.
+# ============================================================================
+
+# ============================================================================
+# SERVICE DISCOVERY
+# ============================================================================
+# Sentinel addresses use headless service for stable pod DNS:
+# - redis-livekit-node-0.redis-livekit-headless.livekit.svc.cluster.local
+# - redis-livekit-node-1.redis-livekit-headless.livekit.svc.cluster.local
+# - redis-livekit-node-2.redis-livekit-headless.livekit.svc.cluster.local
+#
+# Each Sentinel runs on port 26379
+# ============================================================================
+
+# ============================================================================
+# SCALING NOTES
+# ============================================================================
+# For 20K CCU with 4 LiveKit SFU nodes:
+# - Current config (1Gi RAM) sufficient for room coordination
+# - LiveKit uses Redis for: room routing, distributed state, stats
+# - Monitor memory; typical usage: 20-30% for 100+ concurrent rooms
+# - Can increase replicaCount if needed for read scaling
+# ============================================================================

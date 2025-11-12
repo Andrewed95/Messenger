@@ -1,0 +1,320 @@
+# LiveKit SFU Helm Values
+# Matrix/Synapse Production Deployment (Scalable 100 CCU - 20K+ CCU)
+# Version: 2.1 - Scale-aware configuration
+
+# ============================================================================
+# CRITICAL: LiveKit provides Selective Forwarding Unit for group video
+# - Element Call backend for multi-party video conferences
+# - Distributed mesh with Redis coordination
+# - UDP traffic via hostNetwork DaemonSet
+# - Native Redis Sentinel support
+# ============================================================================
+
+# ============================================================================
+# INSTALLATION
+# ============================================================================
+# helm repo add livekit https://helm.livekit.io
+# helm install livekit livekit/livekit-server \
+#   --namespace livekit \
+#   --create-namespace \
+#   --values livekit-values.yaml
+
+# ============================================================================
+# IMAGE
+# ============================================================================
+
+image:
+  repository: livekit/livekit-server
+  tag: v1.7.2  # CHANGE_TO_LATEST_STABLE
+  pullPolicy: IfNotPresent
+
+# ============================================================================
+# REPLICA CONFIGURATION
+# ============================================================================
+
+# Number of LiveKit SFU instances (see SCALING-GUIDE.md Section 9.5)
+# - 100 CCU:  2 instances (HA minimum)
+# - 1K CCU:   2 instances
+# - 5K CCU:   2 instances
+# - 10K CCU:  3 instances
+# - 20K CCU:  4 instances
+# Each instance handles 50-100 concurrent rooms
+replicaCount: 2  # Adjust based on your scale
+
+# ============================================================================
+# DEPLOYMENT STRATEGY
+# ============================================================================
+# CRITICAL: Use DaemonSet with hostNetwork for UDP performance
+# This bypasses kube-proxy and provides direct kernel-level UDP handling
+
+# Use DaemonSet instead of Deployment
+kind: DaemonSet  # Set via --set kind=DaemonSet during install
+
+# Host network mode (required for WebRTC UDP)
+hostNetwork: true
+dnsPolicy: ClusterFirstWithHostNet
+
+# Node selector to control which nodes run LiveKit
+# IMPORTANT: Label 4 nodes as livekit nodes:
+# kubectl label node <node-name> livekit=true
+nodeSelector:
+  livekit: "true"
+
+# ============================================================================
+# RESOURCES
+# ============================================================================
+
+resources:
+  requests:
+    cpu: 2000m
+    memory: 4Gi
+  limits:
+    cpu: 8000m
+    memory: 16Gi
+
+# ============================================================================
+# LIVEKIT CONFIGURATION
+# ============================================================================
+
+livekit:
+  # Domain configuration
+  # CHANGE_TO_YOUR_DOMAIN
+  domain: chat.z3r0d3v.com
+
+  # API keys and secrets
+  # Generate with: livekit-server generate-keys
+  # Or use: openssl rand -base64 32
+  apiKey: "CHANGE_TO_GENERATED_API_KEY"  # CRITICAL: Generate secure key
+  apiSecret: "CHANGE_TO_GENERATED_API_SECRET"  # CRITICAL: Generate secure secret
+
+  # Ports
+  port: 7880  # HTTP API
+  rtc:
+    port_range_start: 50100
+    port_range_end: 50200
+    use_external_ip: true  # Use node IP as external IP
+
+  # Redis configuration (SEPARATE instance for LiveKit)
+  redis:
+    # Native Sentinel support
+    sentinel:
+      master_name: mymaster
+      sentinel_addresses:
+        - redis-livekit-node-0.redis-livekit-headless.livekit.svc.cluster.local:26379
+        - redis-livekit-node-1.redis-livekit-headless.livekit.svc.cluster.local:26379
+        - redis-livekit-node-2.redis-livekit-headless.livekit.svc.cluster.local:26379
+      # Credentials if Redis auth enabled
+      # sentinel_username: ""
+      # sentinel_password: ""
+    # Redis auth
+    # username: ""
+    # password: ""
+    db: 0
+
+  # Turn servers (coturn)
+  turn:
+    enabled: true
+    servers:
+      # CHANGE_TO_YOUR_COTURN_IPS
+      - host: 192.168.1.100  # coturn instance 1
+        port: 3478
+        protocol: udp
+        username: "CHANGE_TO_COTURN_SHARED_SECRET"
+        credential: "CHANGE_TO_COTURN_SHARED_SECRET"
+
+      - host: 192.168.1.101  # coturn instance 2
+        port: 3478
+        protocol: udp
+        username: "CHANGE_TO_COTURN_SHARED_SECRET"
+        credential: "CHANGE_TO_COTURN_SHARED_SECRET"
+
+  # Logging
+  log_level: info  # Options: debug, info, warn, error
+
+  # Room settings
+  room:
+    # Auto create rooms
+    auto_create: true
+    # Max participants per room (per SFU instance)
+    max_participants: 100
+    # Empty room timeout (in seconds)
+    empty_timeout: 300  # 5 minutes
+
+  # Node configuration
+  node:
+    # Node IP discovery method
+    # Options: auto, manual
+    ip: auto
+
+  # Region (for multi-region deployments)
+  region: us-east-1  # CHANGE_TO_YOUR_REGION
+
+# ============================================================================
+# SERVICE CONFIGURATION
+# ============================================================================
+
+service:
+  type: ClusterIP  # Use ClusterIP since we're using hostNetwork
+  port: 7880
+
+  # Additional ports
+  additionalPorts:
+    - name: rtc-tcp
+      port: 7881
+      protocol: TCP
+    - name: rtc-udp
+      port: 7882
+      protocol: UDP
+
+# ============================================================================
+# SERVICE MONITOR (Prometheus)
+# ============================================================================
+
+serviceMonitor:
+  enabled: true
+  namespace: monitoring
+  interval: 30s
+  path: /metrics
+
+# ============================================================================
+# INGRESS (for HTTP API)
+# ============================================================================
+
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    # Increase timeouts for long-lived WebSocket connections
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+
+  hosts:
+    - host: livekit.CHANGE_TO_YOUR_DOMAIN  # e.g., livekit.chat.z3r0d3v.com
+      paths:
+        - path: /
+          pathType: Prefix
+
+  tls:
+    - secretName: livekit-tls
+      hosts:
+        - livekit.CHANGE_TO_YOUR_DOMAIN
+
+# ============================================================================
+# SECURITY CONTEXT
+# ============================================================================
+
+securityContext:
+  capabilities:
+    add:
+      - NET_ADMIN  # Required for network operations
+
+podSecurityContext:
+  runAsUser: 0  # Required for hostNetwork binding
+  runAsGroup: 0
+
+# ============================================================================
+# AFFINITY & TOLERATIONS
+# ============================================================================
+
+# Ensure each LiveKit instance runs on different node
+affinity:
+  podAntiAffinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+      - labelSelector:
+          matchExpressions:
+            - key: app.kubernetes.io/name
+              operator: In
+              values:
+                - livekit-server
+        topologyKey: kubernetes.io/hostname
+
+# Tolerations for dedicated nodes
+tolerations: []
+
+# ============================================================================
+# CONFIGMAP OVERRIDE (Advanced)
+# ============================================================================
+
+# If you need full control over config.yaml, provide it here
+# configMap:
+#   config.yaml: |
+#     port: 7880
+#     ...full config...
+
+# ============================================================================
+# FIREWALL REQUIREMENTS
+# ============================================================================
+# Required ports on LiveKit nodes:
+# - 7880/TCP: HTTP API (internal only)
+# - 7881/TCP: WebRTC TCP fallback
+# - 7882/UDP: WebRTC signaling
+# - 50100-50200/UDP: RTC media traffic (UDP hole punching)
+#
+# These ports must be accessible from client networks
+# ============================================================================
+
+# ============================================================================
+# NODE LABELING
+# ============================================================================
+# Before deployment, label nodes for LiveKit:
+#
+# kubectl label nodes node1 livekit=true
+# kubectl label nodes node2 livekit=true
+# kubectl label nodes node3 livekit=true
+# kubectl label nodes node4 livekit=true
+#
+# This ensures DaemonSet deploys exactly 4 LiveKit instances
+# ============================================================================
+
+# ============================================================================
+# INTEGRATION WITH LK-JWT-SERVICE
+# ============================================================================
+# LiveKit requires JWT authentication for Matrix integration
+# lk-jwt-service acts as bridge between Matrix and LiveKit
+#
+# Configuration reference:
+# - lk-jwt-service deployed separately
+# - Uses LiveKit API key/secret to generate tokens
+# - Element Call → lk-jwt-service → LiveKit
+# - See lk-jwt-service manifest for integration details
+# ============================================================================
+
+# ============================================================================
+# CAPACITY PLANNING
+# ============================================================================
+# Concurrent video calls by scale (see SCALING-GUIDE.md Section 9.5):
+# - 100 CCU:   5-10 users in calls, 2-5 rooms, 2 instances
+# - 1K CCU:    50-100 users in calls, 10-20 rooms, 2 instances
+# - 5K CCU:    100-200 users in calls, 20-40 rooms, 2 instances
+# - 10K CCU:   200-400 users in calls, 30-60 rooms, 3 instances
+# - 20K CCU:   400-800 users in calls, 50-100 rooms, 4 instances
+#
+# Per instance capacity: ~25-50 concurrent rooms
+#
+# Scaling triggers:
+# - CPU >70% sustained: Add more LiveKit nodes
+# - Packet loss >1%: Check network capacity
+# - Connection failures: Check TURN server capacity
+# ============================================================================
+
+# ============================================================================
+# TROUBLESHOOTING
+# ============================================================================
+# View LiveKit logs:
+# kubectl logs -n livekit -l app.kubernetes.io/name=livekit-server
+#
+# Check Redis connectivity:
+# kubectl exec -n livekit <livekit-pod> -- redis-cli -h redis-livekit-master ping
+#
+# Test API endpoint:
+# curl http://livekit.chat.z3r0d3v.com/
+#
+# View active rooms:
+# livekit-cli room list --url ws://livekit:7880 --api-key <key> --api-secret <secret>
+#
+# Monitor metrics:
+# kubectl port-forward -n livekit svc/livekit 7880:7880
+# curl http://localhost:7880/metrics
+# ============================================================================

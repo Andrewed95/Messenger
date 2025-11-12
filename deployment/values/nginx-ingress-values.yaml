@@ -1,0 +1,296 @@
+# NGINX Ingress Controller Helm Values
+# Matrix/Synapse Production Deployment (Scalable 100 CCU - 20K+ CCU)
+# Version: 2.0 - CORRECTED: externalTrafficPolicy: Local for IP preservation
+
+# ============================================================================
+# CRITICAL: NGINX Ingress handles HTTP/HTTPS traffic
+# - Main entry point for web clients (Element Web)
+# - Matrix federation (port 8448)
+# - Admin interfaces
+# - externalTrafficPolicy: Local preserves client IPs for whitelisting
+# ============================================================================
+
+# ============================================================================
+# INSTALLATION
+# ============================================================================
+# helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+# helm install nginx-ingress ingress-nginx/ingress-nginx \
+#   --namespace ingress-nginx \
+#   --create-namespace \
+#   --values nginx-ingress-values.yaml
+
+# ============================================================================
+# CONTROLLER CONFIGURATION
+# ============================================================================
+
+controller:
+  # Controller name
+  name: controller
+
+  # Image
+  image:
+    registry: registry.k8s.io
+    image: ingress-nginx/controller
+    tag: "v1.9.6"
+    digest: ""
+
+  # Replica count for HA
+  replicaCount: 3
+
+  # ============================================================================
+  # SERVICE CONFIGURATION (CRITICAL CORRECTION)
+  # ============================================================================
+  service:
+    enabled: true
+    type: LoadBalancer
+
+    # CRITICAL: Preserve client IP for security (whitelisting, logging)
+    # Without this, all traffic appears to come from cluster nodes
+    externalTrafficPolicy: Local  # CORRECTED in v2.0
+
+    # Load balancer source ranges (optional firewall at LB level)
+    # loadBalancerSourceRanges: []
+
+    # Annotations for MetalLB (or cloud provider)
+    annotations:
+      metallb.universe.tf/address-pool: main-pool
+      # metallb.universe.tf/allow-shared-ip: "true"  # If sharing IP with other services
+
+    # External IPs (if not using LoadBalancer)
+    # externalIPs: []
+
+    # Ports
+    ports:
+      http: 80
+      https: 443
+
+    targetPorts:
+      http: http
+      https: https
+
+    # Additional ports for Matrix federation
+    # Federation uses port 8448
+    # We'll handle this via Ingress annotations and server-alias
+
+  # ============================================================================
+  # RESOURCES
+  # ============================================================================
+  resources:
+    requests:
+      cpu: 500m
+      memory: 512Mi
+    limits:
+      cpu: 2000m
+      memory: 2Gi
+
+  # ============================================================================
+  # AUTOSCALING
+  # ============================================================================
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 80
+    targetMemoryUtilizationPercentage: 80
+
+  # ============================================================================
+  # POD ANTI-AFFINITY (Spread across nodes)
+  # ============================================================================
+  affinity:
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: ingress-nginx
+              app.kubernetes.io/instance: nginx-ingress
+              app.kubernetes.io/component: controller
+          topologyKey: kubernetes.io/hostname
+
+  # ============================================================================
+  # CONFIGURATION
+  # ============================================================================
+  config:
+    # Allow snippets (required for custom configurations)
+    allow-snippet-annotations: "true"
+
+    # Client body size (for file uploads in Matrix)
+    proxy-body-size: "500m"  # Allow up to 500MB uploads
+
+    # Timeouts for long-polling /sync endpoint
+    proxy-connect-timeout: "60"
+    proxy-send-timeout: "90"
+    proxy-read-timeout: "90"
+
+    # Proxy buffer size (for large responses)
+    proxy-buffer-size: "16k"
+    proxy-buffers-number: "8"
+
+    # Keep-alive settings
+    keep-alive: "75"
+    keep-alive-requests: "100"
+
+    # SSL settings
+    ssl-protocols: "TLSv1.2 TLSv1.3"
+    ssl-ciphers: "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384"
+    ssl-prefer-server-ciphers: "on"
+
+    # Real IP settings (CRITICAL for IP whitelisting)
+    use-forwarded-headers: "true"
+    compute-full-forwarded-for: "true"
+    use-proxy-protocol: "false"  # Enable if load balancer uses PROXY protocol
+
+    # Logging
+    log-format-escape-json: "true"
+    log-format-upstream: '{"time": "$time_iso8601", "remote_addr": "$remote_addr", "x_forwarded_for": "$proxy_add_x_forwarded_for", "request_id": "$req_id", "remote_user": "$remote_user", "bytes_sent": $bytes_sent, "request_time": $request_time, "status": $status, "vhost": "$host", "request_proto": "$server_protocol", "path": "$uri", "request_query": "$args", "request_length": $request_length, "duration": $request_time,"method": "$request_method", "http_referrer": "$http_referer", "http_user_agent": "$http_user_agent"}'
+
+    # Rate limiting (for DDoS protection)
+    limit-req-status-code: "429"
+    limit-conn-status-code: "429"
+
+  # ============================================================================
+  # METRICS (Prometheus)
+  # ============================================================================
+  metrics:
+    enabled: true
+
+    serviceMonitor:
+      enabled: true
+      namespace: monitoring
+
+    prometheusRule:
+      enabled: true
+      namespace: monitoring
+      rules:
+        - alert: NGINXConfigFailed
+          expr: count(nginx_ingress_controller_config_last_reload_successful == 0) > 0
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: "NGINX configuration reload failed"
+            description: "NGINX Ingress controller configuration reload has failed"
+
+        - alert: NGINXTooMany500s
+          expr: 100 * ( sum( nginx_ingress_controller_requests{status=~"5.+"} ) / sum(nginx_ingress_controller_requests) ) > 5
+          for: 1m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Too many 5xxs"
+            description: "More than 5% of all requests returned 5xx"
+
+  # ============================================================================
+  # ADMISSION WEBHOOKS
+  # ============================================================================
+  admissionWebhooks:
+    enabled: true
+    failurePolicy: Fail
+
+    # Patch job for certificate generation
+    patch:
+      enabled: true
+
+  # ============================================================================
+  # POD SECURITY
+  # ============================================================================
+  podSecurityPolicy:
+    enabled: false  # PSP deprecated in K8s 1.25+
+
+  # SecurityContext
+  containerSecurityContext:
+    allowPrivilegeEscalation: true  # Required for binding to ports 80/443
+
+# ============================================================================
+# DEFAULT BACKEND (Optional 404 page)
+# ============================================================================
+
+defaultBackend:
+  enabled: true
+
+  replicaCount: 2
+
+  resources:
+    requests:
+      cpu: 10m
+      memory: 20Mi
+    limits:
+      cpu: 50m
+      memory: 50Mi
+
+# ============================================================================
+# RBAC
+# ============================================================================
+
+rbac:
+  create: true
+
+serviceAccount:
+  create: true
+  name: ""
+
+# ============================================================================
+# INGRESS CLASS
+# ============================================================================
+
+ingressClassResource:
+  name: nginx
+  enabled: true
+  default: true  # Make this the default ingress class
+
+# ============================================================================
+# USAGE WITH MATRIX FEDERATION
+# ============================================================================
+# Matrix federation requires port 8448. Two approaches:
+#
+# Option 1: Server Alias (Recommended)
+# - Configure DNS: chat.z3r0d3v.com → LoadBalancer IP
+# - Matrix will check /.well-known/matrix/server for delegation
+# - Serve /.well-known/matrix/server with: {"m.server": "chat.z3r0d3v.com:443"}
+# - Federation works over port 443 with delegation
+#
+# Option 2: Dedicated Port 8448
+# - Modify LoadBalancer service to expose port 8448
+# - Add to controller.service.ports:
+#     matrix-federation: 8448
+# - Target port: https (same as 443)
+# - Requires firewall rule for port 8448
+#
+# This configuration uses Option 1 (server delegation via /.well-known)
+# ============================================================================
+
+# ============================================================================
+# CLIENT IP PRESERVATION NOTES
+# ============================================================================
+# With externalTrafficPolicy: Local:
+# - Traffic routes ONLY to node where NGINX pod runs
+# - Client IP preserved without X-Forwarded-For manipulation
+# - Cost: Potential imbalanced traffic (not across all nodes)
+# - Benefit: True source IP for security
+#
+# Without (externalTrafficPolicy: Cluster):
+# - Traffic can route to any node, then internal routing
+# - Client IP replaced with cluster node IP
+# - X-Forwarded-For can be spoofed by malicious clients
+# - Cannot trust source IP for security decisions
+#
+# For production with IP whitelisting: MUST use Local
+# ============================================================================
+
+# ============================================================================
+# TROUBLESHOOTING
+# ============================================================================
+# View NGINX logs:
+# kubectl logs -n ingress-nginx -l app.kubernetes.io/component=controller
+#
+# Check LoadBalancer IP assignment:
+# kubectl get svc -n ingress-nginx
+#
+# Test configuration reload:
+# kubectl exec -n ingress-nginx <pod> -- nginx -t
+#
+# View Ingress resources:
+# kubectl get ingress -A
+#
+# Describe specific Ingress:
+# kubectl describe ingress <name> -n <namespace>
+# ============================================================================

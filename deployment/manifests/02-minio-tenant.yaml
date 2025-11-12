@@ -1,0 +1,287 @@
+# MinIO Tenant for Synapse Media Storage
+# Matrix/Synapse Production Deployment
+# Version: 2.1 - Scale-aware configuration
+
+# ============================================================================
+# SCALING NOTICE: Storage Depends on Your Scale
+# ============================================================================
+# 📊 See SCALING-GUIDE.md Section 9.4 for media storage sizing at your scale:
+# - 100 CCU:  4 servers (1 pool), 1TB raw, ~750GB usable
+# - 1K CCU:   4 servers (1 pool), 4TB raw, ~3TB usable
+# - 5K CCU:   8 servers (2 pools), 12TB raw, ~9TB usable
+# - 10K CCU:  8 servers (2 pools), 20TB raw, ~15TB usable
+# - 20K CCU: 12 servers (3 pools), 40TB raw, ~30TB usable
+#
+# CURRENT CONFIGURATION: 4 servers (1 pool) - Example for 100-1K CCU
+# - 4 servers × 4 drives = 16 drives (single erasure set)
+# - Erasure coding EC:4 (12 data + 4 parity shards)
+# - Can lose up to 4 drives and remain operational
+# - 75% usable capacity after EC
+# ============================================================================
+
+---
+apiVersion: minio.min.io/v2
+kind: Tenant
+metadata:
+  name: synapse-media
+  namespace: minio
+  labels:
+    app: minio
+    purpose: synapse-media-storage
+spec:
+  # ============================================================================
+  # STORAGE POOLS
+  # ============================================================================
+  pools:
+    - name: pool-0
+      # 4 MinIO servers
+      servers: 4
+
+      # 4 drives per server (16 total drives = 1 erasure set)
+      volumesPerServer: 4
+
+      # Volume claim template for each drive
+      volumeClaimTemplate:
+        metadata:
+          name: data
+        spec:
+          storageClassName: ""  # CHANGE_TO_YOUR_STORAGE_CLASS
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 1Ti  # 1TB per drive × 4 drives × 4 servers = 4TB raw
+
+      # Resources per MinIO server
+      resources:
+        requests:
+          cpu: 1000m
+          memory: 4Gi
+        limits:
+          cpu: 4000m
+          memory: 16Gi
+
+      # Pod anti-affinity (spread across nodes)
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchExpressions:
+                  - key: v1.min.io/tenant
+                    operator: In
+                    values:
+                      - synapse-media
+                  - key: v1.min.io/pool
+                    operator: In
+                    values:
+                      - pool-0
+              topologyKey: kubernetes.io/hostname
+
+      # Node selector (optional, for dedicated storage nodes)
+      # nodeSelector:
+      #   storage: minio
+
+      # Tolerations (optional)
+      # tolerations: []
+
+  # ============================================================================
+  # MINIO CONFIGURATION
+  # ============================================================================
+  configuration:
+    name: synapse-media-env-configuration
+
+  # ============================================================================
+  # BUCKETS
+  # ============================================================================
+  buckets:
+    - name: synapse-media  # Bucket for Synapse media uploads
+      objectLock: false
+      region: us-east-1
+
+    - name: postgres-backups  # Bucket for PostgreSQL backups
+      objectLock: false
+      region: us-east-1
+
+  # ============================================================================
+  # USERS
+  # ============================================================================
+  users:
+    - name: synapse  # User for Synapse S3 access
+
+  # ============================================================================
+  # SERVICE
+  # ============================================================================
+  # MinIO Console (web UI) service
+  features:
+    enableSFTP: false
+
+  # Expose MinIO API service
+  exposeServices:
+    minio: true
+    console: true
+
+  # ============================================================================
+  # IMAGE
+  # ============================================================================
+  image: minio/minio:RELEASE.2024-01-01T00-00-00Z  # CHANGE_TO_LATEST_STABLE
+
+  # Certificate request (if using cert-manager)
+  requestAutoCert: false  # Set to true if using cert-manager for TLS
+
+  # ============================================================================
+  # MONITORING
+  # ============================================================================
+  # Prometheus metrics
+  prometheusOperator: true
+
+---
+# ============================================================================
+# MINIO CONFIGURATION SECRET
+# ============================================================================
+apiVersion: v1
+kind: Secret
+metadata:
+  name: synapse-media-env-configuration
+  namespace: minio
+type: Opaque
+stringData:
+  config.env: |
+    export MINIO_ROOT_USER="CHANGE_TO_MINIO_ROOT_USER"
+    export MINIO_ROOT_PASSWORD="CHANGE_TO_SECURE_PASSWORD"
+    export MINIO_BROWSER="on"
+    export MINIO_PROMETHEUS_AUTH_TYPE="public"
+    export MINIO_STORAGE_CLASS_STANDARD="EC:4"
+    # Healing settings
+    export MINIO_HEAL_MAX_SLEEP="1s"
+    export MINIO_HEAL_MAX_IO="100"
+
+---
+# ============================================================================
+# SERVICE for MinIO API (Optional explicit service)
+# ============================================================================
+# MinIO Operator creates services automatically, but you can customize:
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio-api
+  namespace: minio
+  labels:
+    app: minio
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 9000
+      targetPort: 9000
+      protocol: TCP
+  selector:
+    v1.min.io/tenant: synapse-media
+
+---
+# ============================================================================
+# INGRESS for MinIO Console (Optional)
+# ============================================================================
+# Enable if you want web UI access from outside cluster
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: minio-console
+  namespace: minio
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    # IP whitelist for admin access only
+    nginx.ingress.kubernetes.io/whitelist-source-range: "10.0.0.0/8,CHANGE_TO_YOUR_ADMIN_IP/32"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - minio.CHANGE_TO_YOUR_DOMAIN
+      secretName: minio-console-tls
+  rules:
+    - host: minio.CHANGE_TO_YOUR_DOMAIN
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: synapse-media-console
+                port:
+                  number: 9001
+
+---
+# ============================================================================
+# RETRIEVE CREDENTIALS AFTER DEPLOYMENT
+# ============================================================================
+# After MinIO tenant is deployed, retrieve S3 credentials for Synapse:
+#
+# 1. Get Synapse user credentials:
+#    kubectl get secret synapse-media-user-1 -n minio -o jsonpath='{.data.CONSOLE_ACCESS_KEY}' | base64 -d
+#    kubectl get secret synapse-media-user-1 -n minio -o jsonpath='{.data.CONSOLE_SECRET_KEY}' | base64 -d
+#
+# 2. Use these credentials in Synapse configuration:
+#    s3_storage_provider_config.access_key_id
+#    s3_storage_provider_config.secret_access_key
+#
+# 3. Endpoint URL for Synapse:
+#    http://minio-api.minio.svc.cluster.local:9000
+#
+# 4. Bucket name:
+#    synapse-media
+#
+# 5. Test S3 access from Synapse pod:
+#    kubectl run -n matrix s3-test --rm -i --tty --image=amazon/aws-cli -- \
+#      aws --endpoint-url=http://minio-api.minio.svc.cluster.local:9000 \
+#      s3 ls s3://synapse-media \
+#      --access-key=<ACCESS_KEY> \
+#      --secret-key=<SECRET_KEY>
+
+---
+# ============================================================================
+# CAPACITY & SCALING NOTES
+# ============================================================================
+# Current configuration (Example for 100-1K CCU):
+# - Raw capacity: 4 servers × 4 drives × 1TB = 16TB
+# - Erasure coding EC:4 overhead: 25%
+# - Usable capacity: ~12TB
+#
+# Media growth rates by scale (see SCALING-GUIDE.md Section 9.4):
+# - 100 CCU:  ~20GB/day, 1TB lasts ~50 days
+# - 1K CCU:   ~200GB/day, 4TB lasts ~20 days
+# - 5K CCU:   ~1TB/day, 12TB lasts ~12 days
+# - 10K CCU:  ~2TB/day, 20TB lasts ~10 days
+# - 20K CCU:  ~4TB/day, 40TB lasts ~10 days
+# Plan expansion when 70% full.
+#
+# Scaling options:
+# 1. Add more drives per server (expand volumesPerServer)
+# 2. Replace drives with larger capacity
+# 3. Add new pool (distributed setup) - REQUIRED for 5K+ CCU
+#
+# To expand storage:
+# 1. kubectl edit tenant synapse-media -n minio
+# 2. Increase storage size in volumeClaimTemplate
+# 3. MinIO automatically heals and rebalances
+#
+# Monitor storage:
+# kubectl exec -n minio synapse-media-pool-0-0 -- mc admin info myminio
+# ============================================================================
+
+---
+# ============================================================================
+# BACKUP STRATEGY
+# ============================================================================
+# MinIO itself is resilient (EC:4), but consider:
+#
+# 1. Bucket replication to secondary MinIO cluster (DR)
+# 2. Periodic snapshots of volume claims
+# 3. Object versioning (if enabled in bucket)
+#
+# For critical media backup:
+# - Enable versioning on synapse-media bucket
+# - Configure lifecycle policy to retain versions
+# - Replicate to secondary site if multi-DC deployment
+# ============================================================================

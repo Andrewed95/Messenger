@@ -1,0 +1,277 @@
+# Element Web - Matrix Web Client
+# Matrix/Synapse Production Deployment - 20K CCU
+# Version: 2.0
+
+# ============================================================================
+# Element Web is the official web client for Matrix
+# Provides browser-based access to the Matrix homeserver
+# ============================================================================
+
+---
+# ============================================================================
+# CONFIGMAP: Element Web Configuration
+# ============================================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: element-web-config
+  namespace: matrix
+data:
+  config.json: |
+    {
+      "default_server_config": {
+        "m.homeserver": {
+          "base_url": "https://chat.z3r0d3v.com",
+          "server_name": "chat.z3r0d3v.com"
+        },
+        "m.identity_server": {
+          "base_url": "https://vector.im"
+        }
+      },
+      "brand": "Element",
+      "integrations_ui_url": "https://scalar.vector.im/",
+      "integrations_rest_url": "https://scalar.vector.im/api",
+      "integrations_widgets_urls": [
+        "https://scalar.vector.im/_matrix/integrations/v1",
+        "https://scalar.vector.im/api",
+        "https://scalar-staging.vector.im/_matrix/integrations/v1",
+        "https://scalar-staging.vector.im/api",
+        "https://scalar-staging.riot.im/scalar/api"
+      ],
+      "default_country_code": "US",
+      "show_labs_settings": false,
+      "features": {
+        "feature_pinning": "labs",
+        "feature_custom_status": "labs",
+        "feature_custom_tags": "labs",
+        "feature_state_counters": "labs",
+        "feature_many_integration_managers": "labs",
+        "feature_mjolnir": "labs",
+        "feature_dm_verification": "labs",
+        "feature_bridge_state": "labs",
+        "feature_presence_in_room_list": "labs",
+        "feature_custom_themes": "labs"
+      },
+      "default_theme": "light",
+      "room_directory": {
+        "servers": [
+          "chat.z3r0d3v.com"
+        ]
+      },
+      "enable_presence_by_hs_url": {
+        "https://chat.z3r0d3v.com": false
+      },
+      "setting_defaults": {
+        "breadcrumbs": true
+      },
+      "jitsi": {
+        "preferred_domain": "meet.jit.si"
+      },
+      "element_call": {
+        "url": "https://call.element.io",
+        "use_exclusively": false,
+        "participant_limit": 8,
+        "brand": "Element Call"
+      },
+      "map_style_url": "https://api.maptiler.com/maps/streets/style.json?key=fU3vlMsMn4Jb6dnEIFsx"
+    }
+
+---
+# ============================================================================
+# DEPLOYMENT: Element Web
+# ============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: element-web
+  namespace: matrix
+  labels:
+    app: element-web
+    component: web-client
+spec:
+  replicas: 3  # HA with multiple replicas
+
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+
+  selector:
+    matchLabels:
+      app: element-web
+      component: web-client
+
+  template:
+    metadata:
+      labels:
+        app: element-web
+        component: web-client
+      annotations:
+        # Force rolling update on config change
+        checksum/config: "{{ .Values.config | sha256sum }}"
+
+    spec:
+      # Pod anti-affinity for HA
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: element-web
+                topologyKey: kubernetes.io/hostname
+
+      containers:
+        - name: element-web
+          image: vectorim/element-web:v1.11.50  # CHANGE_TO_LATEST_STABLE
+          imagePullPolicy: IfNotPresent
+
+          ports:
+            - name: http
+              containerPort: 80
+              protocol: TCP
+
+          volumeMounts:
+            - name: config
+              mountPath: /app/config.json
+              subPath: config.json
+              readOnly: true
+
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 101  # nginx user
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: false  # nginx needs write to /tmp
+
+      volumes:
+        - name: config
+          configMap:
+            name: element-web-config
+
+---
+# ============================================================================
+# SERVICE: Element Web
+# ============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: element-web
+  namespace: matrix
+  labels:
+    app: element-web
+    component: web-client
+spec:
+  type: ClusterIP
+  selector:
+    app: element-web
+    component: web-client
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+      protocol: TCP
+
+---
+# ============================================================================
+# HPA: Horizontal Pod Autoscaler (Optional)
+# ============================================================================
+# Uncomment if you expect traffic spikes requiring auto-scaling
+
+# apiVersion: autoscaling/v2
+# kind: HorizontalPodAutoscaler
+# metadata:
+#   name: element-web
+#   namespace: matrix
+# spec:
+#   scaleTargetRef:
+#     apiVersion: apps/v1
+#     kind: Deployment
+#     name: element-web
+#   minReplicas: 3
+#   maxReplicas: 10
+#   metrics:
+#     - type: Resource
+#       resource:
+#         name: cpu
+#         target:
+#           type: Utilization
+#           averageUtilization: 70
+#     - type: Resource
+#       resource:
+#         name: memory
+#         target:
+#           type: Utilization
+#           averageUtilization: 80
+
+---
+# ============================================================================
+# USAGE NOTES
+# ============================================================================
+# After deployment:
+#
+# 1. Check status:
+#    kubectl get pods -n matrix -l app=element-web
+#    kubectl logs -n matrix -l app=element-web
+#
+# 2. Test locally:
+#    kubectl port-forward -n matrix svc/element-web 8080:80
+#    Open browser: http://localhost:8080
+#
+# 3. Configuration changes:
+#    # Edit config.json
+#    kubectl edit configmap element-web-config -n matrix
+#
+#    # Restart pods to pickup changes
+#    kubectl rollout restart deployment/element-web -n matrix
+#
+# 4. Update Element Web version:
+#    kubectl set image deployment/element-web \
+#      element-web=vectorim/element-web:v1.11.51 -n matrix
+#
+# 5. Custom branding:
+#    # Mount custom themes, logos via additional ConfigMaps/Volumes
+#    # See Element Web documentation for branding guide
+#
+# 6. Security considerations:
+#    # Element Web is static content - served via nginx in container
+#    # All API calls go to Synapse homeserver
+#    # Ensure proper CSP headers via Ingress annotations
+#
+# 7. For air-gapped deployment:
+#    # Pull and push to private registry
+#    docker pull vectorim/element-web:v1.11.50
+#    docker tag vectorim/element-web:v1.11.50 your-registry.com/element-web:v1.11.50
+#    docker push your-registry.com/element-web:v1.11.50
+#
+# ============================================================================
