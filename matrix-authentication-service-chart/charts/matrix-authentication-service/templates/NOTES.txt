@@ -1,0 +1,3 @@
+{{- if .Release.IsInstall }}
+small-hack/matrix-authentication-service-chart has been installed!
+{{- end }}

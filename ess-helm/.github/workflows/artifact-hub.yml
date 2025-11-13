@@ -1,0 +1,40 @@
+# Copyright 2025 New Vector Ltd
+# Copyright 2025 Element Creations Ltd
+#
+# SPDX-License-Identifier: AGPL-3.0-only
+
+name: Artifact Hub Metadata
+
+on:
+  push:
+    branches:
+    - main
+  workflow_dispatch:
+
+jobs:
+  artifact-hub:
+    permissions:
+      contents: read
+      packages: write
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5
+
+    - uses: oras-project/setup-oras@22ce207df3b08e061f537244349aac6ae1d214f6  # v1
+
+    - name: ORAS Login
+      env:
+        ORAS_USERNAME: ${{ github.actor }}
+        ORAS_PASSWORD: ${{ github.token }}
+      run: |
+          oras login ghcr.io -u "$ORAS_USERNAME" -p "$ORAS_PASSWORD"
+
+    - name: Push artifact-hub
+      env:
+        GITHUB_REPOSITORY: ${{ github.repository }}
+      run: |
+        oras push \
+          "ghcr.io/${GITHUB_REPOSITORY}/matrix-stack:artifacthub.io" \
+          --config /dev/null:application/vnd.cncf.artifacthub.config.v1+yaml \
+          artifacthub-repo.yaml:application/vnd.cncf.artifacthub.repository-metadata.layer.v1.yaml

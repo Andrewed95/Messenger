@@ -1,0 +1,34 @@
+name: "install-deps"
+description: "Install deps required for metallb CI"
+
+runs:
+  using: "composite"
+  steps:
+    - uses: actions/setup-go@v5
+      with:
+        go-version-file: "go.mod"
+        cache: true
+
+    - name: Install Dependencies
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install python3-pip arping ndisc6
+        sudo pip3 install -r dev-env/requirements.txt
+        GO111MODULE="on" go get sigs.k8s.io/kind@v0.19.0
+        go install sigs.k8s.io/controller-tools/cmd/controller-gen@v0.7.0
+        #NOTE: This pulls the ginkgo version that is pinned in go.mod
+        go install github.com/onsi/ginkgo/v2/ginkgo
+
+    - name: Download MetalLB images
+      uses: actions/download-artifact@v4
+      with:
+        path: metallb-images
+
+    - name: Load MetalLB images
+      shell: bash
+      working-directory: metallb-images
+      run: |
+        docker load -i image-tar-speaker/speaker.tar
+        docker load -i image-tar-controller/controller.tar
+        docker load -i image-tar-configmaptocrs/configmaptocrs.tar

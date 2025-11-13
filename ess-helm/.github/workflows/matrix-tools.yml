@@ -1,0 +1,123 @@
+# Copyright 2025 New Vector Ltd
+# Copyright 2025 Element Creations Ltd
+#
+# SPDX-License-Identifier: AGPL-3.0-only
+
+name: matrix-tools linting and building
+
+on:
+  pull_request:
+  push:
+    branches:
+    - main
+    tags:
+    - 'matrix-tools-*'
+  workflow_dispatch:
+
+env:
+  REGISTRY_IMAGE: ghcr.io/${{ github.repository }}/matrix-tools
+  GO_VERSION: "1.24"
+
+jobs:
+  gofmt:
+    permissions:
+      contents: read
+      packages: read
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5
+
+    - uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00  # v6
+      with:
+        go-version: "${{ env.GO_VERSION }}"
+
+    - name: gofmt check
+      run: |
+        unformatted_files="$(gofmt -l matrix-tools)"
+        if [ "$unformatted_files" != "" ]; then
+          echo "There are .go files that aren't formatted correctly:"
+          echo "$unformatted_files"
+          exit 1
+        fi
+
+  tests:
+    permissions:
+      contents: read
+      packages: read
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5
+
+    - uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00  # v6
+      with:
+        go-version: "${{ env.GO_VERSION }}"
+
+    - uses: golangci/golangci-lint-action@4afd733a84b1f43292c63897423277bb7f4313a9  # v8
+      with:
+        working-directory: matrix-tools
+        args: -v --show-stats --no-config --modules-download-mode readonly
+
+    - uses: GoTestTools/gotestfmt-action@8b4478c7019be847373babde9300210e7de34bfb  # v2
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Run tests
+      run: cd matrix-tools && go test -v  -json ./... 2>&1 | gotestfmt
+
+  # Build our application docker images in parallel.
+  docker-build-and-push:
+    permissions:
+      contents: read
+      packages: write
+    name: Build matrix-tools container image
+    needs:
+    - tests
+    runs-on: ubuntu-latest
+    steps:
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435  # v3
+
+    - name: Checkout Repository
+      uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5
+
+    - name: Login to GHCR
+      if: ${{ github.ref_type == 'tag' }}
+      uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef  # v3
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Get Release Tag
+      if: github.ref_type == 'tag' # Only for GitHub releases
+      run: |
+        echo "Converting $GITHUB_REF to tags"
+        echo "VERSION=${GITHUB_REF#refs\/tags\/matrix-tools-}" >> "$GITHUB_ENV"
+
+    - name: Docker meta
+      id: meta
+      uses: docker/metadata-action@c1e51972afc2121e065aed6d45c65596fe445f3f  # v5
+      with:
+        images: |
+          ${{ env.REGISTRY_IMAGE }}
+        flavor: |
+          latest=false
+        tags: |
+          type=raw,value=${{ env.VERSION }},enable=${{ github.ref_type == 'tag' }}
+          type=sha,prefix=sha-,format=short
+        labels: |
+          org.opencontainers.image.licenses=AGPL-3.0-only
+        annotations: |
+          org.opencontainers.image.licenses=AGPL-3.0-only
+
+    - name: Build and Push Image
+      uses: docker/bake-action@3acf805d94d93a86cce4ca44798a76464a75b88c  # v6
+      with:
+        push: ${{ github.ref_type == 'tag' }}
+        files: |
+          docker-bake.hcl
+          cwd://${{ steps.meta.outputs.bake-file }}
+        targets: matrix-tools
+        set: |
+          *.output=type=image
+          *.platform=linux/amd64,linux/arm64

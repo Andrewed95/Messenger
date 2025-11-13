@@ -1,0 +1,92 @@
+{{- if and .Values.taskrunner.enabled (semverCompare ">=0.19" (.Values.backend.image.tag | default .Values.image.tag | default .Chart.AppVersion)) }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "lemmy.fullname" . }}-taskrunner
+  labels:
+    {{- include "lemmy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "lemmy.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: taskrunner
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/secret-configuration.yaml") . | sha256sum }}
+      {{- with .Values.taskrunner.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "lemmy.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: taskrunner
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "lemmy.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.taskrunner.podSecurityContext | nindent 8 }}
+      containers:
+        - name: {{ .Chart.Name }}
+          args:
+            - --disable-http-server
+            - --disable-activity-sending
+          securityContext:
+            {{- toYaml .Values.taskrunner.securityContext | nindent 12 }}
+          image: "{{ .Values.taskrunner.image.repository | default .Values.image.repository }}:{{ .Values.taskrunner.image.tag | default .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.taskrunner.image.pullPolicy | default .Values.image.pullPolicy }}
+          {{- if or (not .Values.postgresql.auth.password) .Values.taskrunner.env }}
+          env:
+            {{- if not .Values.postgresql.auth.password }}
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+              {{- if .Values.postgresql.auth.existingSecret }}
+                  key: {{ .Values.postgresql.auth.secretKeys.userPasswordKey | default "password" }}
+                  name: {{ .Values.postgresql.auth.existingSecret }}
+              {{- else }}
+                  key: password
+                  name: {{ include "lemmy.postgresql.secret" . }}
+              {{- end }}
+            {{- end }}
+            {{- with .Values.taskrunner.env }}
+              {{- range $key, $value := . }}
+            - name: {{ $key }}
+              value: {{ $value | toString | quote }}
+              {{- end }}
+            {{- end }}
+          {{- end }}
+          {{- with .Values.taskrunner.envFrom }}
+          envFrom:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.taskrunner.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /config/config.hjson
+              subPath: config.hjson
+      {{- with .Values.taskrunner.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.taskrunner.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.taskrunner.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      volumes:
+        - name: config
+          secret:
+            secretName: {{ include "lemmy.fullname" . }}
+{{- end }}

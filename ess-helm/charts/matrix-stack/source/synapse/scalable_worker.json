@@ -1,0 +1,30 @@
+{
+  "required": [
+    "replicas"
+  ],
+  "properties": {
+    "enabled": {
+      "type": "boolean"
+    },
+    "replicas": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "resources": {
+      "$ref": "file://common/resources.json"
+    },
+    "topologySpreadConstraints": {
+      "$ref": "file://common/topologySpreadConstraints.json"
+    },
+    "livenessProbe": {
+      "$ref": "file://common/probe.json"
+    },
+    "readinessProbe": {
+      "$ref": "file://common/probe.json"
+    },
+    "startupProbe": {
+      "$ref": "file://common/probe.json"
+    }
+  },
+  "type": "object"
+}

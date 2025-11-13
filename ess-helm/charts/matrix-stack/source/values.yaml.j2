@@ -1,0 +1,51 @@
+{#
+Copyright 2024-2025 New Vector Ltd
+Copyright 2025 Element Creations Ltd
+
+SPDX-License-Identifier: AGPL-3.0-only
+#}
+
+{%- import 'sub_schema_values.yaml.j2' as sub_schema_values -%}
+{{ sub_schema_values.generatedFileWarning() }}
+{{ sub_schema_values.ess() }}
+
+## Components
+initSecrets:
+  {% macro initSecrestValues() %}{% include 'init-secrets.yaml.j2'%}{% endmacro %}
+  {{- initSecrestValues() | trim | indent(2) }}
+
+deploymentMarkers:
+  {% macro deploymentMarkersValues() %}{% include 'deployment-markers.yaml.j2'%}{% endmacro %}
+  {{- deploymentMarkersValues() | trim | indent(2) }}
+
+matrixRTC:
+  {% macro matrixRTCValues() %}{% include 'matrix-rtc.yaml.j2'%}{% endmacro %}
+  {{- matrixRTCValues() | trim | indent(2) }}
+
+elementAdmin:
+  {% macro elementAdminValues() %}{% include 'element-admin.yaml.j2'%}{% endmacro %}
+  {{- elementAdminValues() | trim | indent(2) }}
+
+elementWeb:
+  {% macro elementWebValues() %}{% include 'element-web.yaml.j2'%}{% endmacro %}
+  {{- elementWebValues() | trim | indent(2) }}
+
+haproxy:
+  {% macro haproxyValues() %}{% include 'haproxy.yaml.j2'%}{% endmacro %}
+  {{- haproxyValues() | trim | indent(2) }}
+
+matrixAuthenticationService:
+  {% macro matrixAuthenticationServiceValues() %}{% include 'matrixAuthenticationService.yaml.j2'%}{% endmacro %}
+  {{- matrixAuthenticationServiceValues() | trim | indent(2) }}
+
+postgres:
+  {% macro postgresValues() %}{% include 'postgres.yaml.j2'%}{% endmacro %}
+  {{- postgresValues() | trim | indent(2) }}
+
+synapse:
+  {% macro synapseValues() %}{% include 'synapse.yaml.j2'%}{% endmacro %}
+  {{- synapseValues() | trim | indent(2) }}
+
+wellKnownDelegation:
+  {% macro wellKnownDelegationValues() %}{% include 'wellKnownDelegation.yaml.j2'%}{% endmacro %}
+  {{- wellKnownDelegationValues() | trim | indent(2) }}

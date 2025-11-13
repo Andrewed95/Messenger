@@ -1,0 +1,158 @@
+# Copyright 2024-2025 New Vector Ltd
+# Copyright 2025 Element Creations Ltd
+#
+# SPDX-License-Identifier: AGPL-3.0-only
+
+name: Helm Chart packaging and releasing
+on:
+  pull_request:
+  push:
+    branches:
+    - main
+    tags:
+    - '[0-9]+.[0-9]+.[0-9]+'
+  workflow_dispatch:
+
+jobs:
+  helm-package:
+    permissions:
+      contents: read
+      packages: write
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5
+
+    - uses: matrix-org/setup-python-poetry@5bbf6603c5c930615ec8a29f1b5d7d258d905aa4  # v2
+      with:
+        python-version: "3.x"
+
+    - name: Load poetry path
+      run: |
+        echo "$(poetry env info -p)/bin" >> "${GITHUB_PATH}"
+
+    - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4  # v4.3.1
+
+    - name: Set version
+      run: |
+        if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+          scripts/check_semver.py "$GITHUB_REF_NAME"
+          scripts/set_chart_version.sh "$GITHUB_REF_NAME"
+        elif [ "$GITHUB_EVENT_NAME" = "pull_request" ] || [ "$GITHUB_EVENT_NAME" = "pull_request_target" ]; then
+            actual_pr_head_commit=$(yq --input-format json -r '.pull_request.head.sha' "$GITHUB_EVENT_PATH")
+            version=$(yq '.version' charts/matrix-stack/Chart.yaml | sed "s/-dev/-sha$actual_pr_head_commit/")
+            scripts/set_chart_version.sh "$version"
+        elif [ "$GITHUB_EVENT_NAME" != "main" ]; then
+            version=$(yq '.version' charts/matrix-stack/Chart.yaml | sed "s/-dev/-sha$GITHUB_SHA/")
+            scripts/set_chart_version.sh "$version"
+        else
+          echo "Did not set chart version on event $GITHUB_EVENT_NAME: $GITHUB_REF_TYPE/$GITHUB_REF_NAME"
+        fi
+
+    - name: Login to GitHub Container Registry
+      if: ${{ github.event_name != 'pull_request' }}
+      uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef  # v3
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ github.token }}
+
+    - name: Set helm changes annotations
+      run: |
+        scripts/towncrier_to_helm_annotation.py charts/matrix-stack
+
+    - name: Generate changelog
+      run: |
+        version=$(yq '.version' charts/matrix-stack/Chart.yaml)
+        # Add changes to CHANGELOG.md, keep files to generate CHANGELOG.latest.md
+        towncrier build --version "$version" --keep
+        # in empty file
+        sed -i "s/CHANGELOG.md/CHANGELOG.latest.md/" pyproject.toml
+        towncrier build --version "$version" --yes
+        sed -i "s/CHANGELOG.latest.md/CHANGELOG.md/" pyproject.toml
+
+    - name: Helm package
+      run: |
+        cd charts/matrix-stack
+        helm package .
+
+    - name: Helm push
+      if: ${{ github.event_name != 'pull_request' }}
+      run: helm push charts/matrix-stack/matrix-stack-*.tgz oci://ghcr.io/${{ github.repository }}
+
+    - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v4
+      with:
+        name: helm-package
+        path: |
+          charts/matrix-stack/*.tgz*
+          CHANGELOG.md
+          CHANGELOG.latest.md
+        retention-days: 1
+
+  release:
+    if: ${{ !failure() && !cancelled() && startsWith(github.ref, 'refs/tags/') }}
+    permissions:
+      contents: write
+      packages: read
+      pull-requests: write
+    needs:
+    - helm-package
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5
+
+    - name: Grab packaged chart
+      uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53  # v4
+      with:
+        name: helm-package
+        path: ./
+
+    - uses: matrix-org/setup-python-poetry@5bbf6603c5c930615ec8a29f1b5d7d258d905aa4  # v2
+      with:
+        python-version: "3.x"
+
+    - name: Load poetry path
+      run: |
+        echo "$(poetry env info -p)/bin" >> "${GITHUB_PATH}"
+
+    - name: Calculate versions
+      id: versions
+      run: |
+        this_version=$(find charts/matrix-stack -name 'matrix-stack-*.tgz' | sed 's/.*matrix-stack-//;s/.tgz//')
+        next_version=$(echo "$this_version" | sed 's/-dev//' | awk -F'[ .]' '{print $1"."$2"."$3+1"-dev"}')
+        scripts/set_chart_version.sh "$next_version"
+
+        echo "this-version=$this_version" >> "$GITHUB_OUTPUT"
+        echo "next-version=$next_version" >> "$GITHUB_OUTPUT"
+
+    - name: Release
+      uses: softprops/action-gh-release@6da8fa9354ddfdc4aeace5fc48d7f679b5214090  # v2
+      with:
+        draft: true
+        body_path: CHANGELOG.latest.md
+        files: charts/matrix-stack/matrix-stack*.tgz*
+        fail_on_unmatched_files: true
+        # This could simply be omitted if we didn't want to test without a tag
+        tag_name: "${{ steps.versions.outputs.this-version }}"
+
+    - name: Remove latest changelog
+      run: |
+        rm CHANGELOG.latest.md
+        rm newsfragments/*.md
+        touch newsfragments/.gitkeep
+
+    - name: Create PR for next patch version
+      uses: peter-evans/create-pull-request@271a8d0340265f705b14b6d32b9829c1cb33d45e  # v7
+      with:
+        branch: "gha/bump-to-${{ steps.versions.outputs.next-version }}"
+        base: "main"
+        commit-message: "Bump chart version to ${{ steps.versions.outputs.next-version }}"
+        title: "Bump chart version to ${{ steps.versions.outputs.next-version }} after release"
+        labels: automated,version-bump
+        body: |
+          ${{ steps.versions.outputs.this-version }} has just been released.
+          This PR prepares the chart & dependencies for the next release:
+          ${{ steps.versions.outputs.next-version }}.
+
+          The target branch may be wrong. In which case this PR should be taken over and manually adjusted.

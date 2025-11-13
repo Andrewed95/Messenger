@@ -1,0 +1,49 @@
+{{- range $_,$i :=  .Apps }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: http-echo-{{$i}}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: http-echo-{{$i}}
+  template:
+    metadata:
+      labels:
+        app: http-echo-{{$i}}
+    spec:
+      containers:
+        - name: http-echo-{{$i}}
+          image: haproxytech/http-echo:latest
+          imagePullPolicy: Never
+          args:
+          - --default-response=hostname
+          ports:
+          - name: http
+            containerPort: 8888
+            protocol: TCP
+          - name: https
+            containerPort: 8443
+            protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: http-echo-{{$i}}
+spec:
+  ipFamilyPolicy: RequireDualStack
+  type: ClusterIP
+  ports:
+    - name: http
+      protocol: TCP
+      port: 80
+      targetPort: http
+    - name: https
+      protocol: TCP
+      port: 443
+      targetPort: https
+  selector:
+    app: http-echo-{{$i}}
+{{- end }}

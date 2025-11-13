@@ -1,0 +1,16 @@
+tcpmodel:
+  name: service3
+  frontend:
+    frontendbase:
+      name: fe3
+    binds:
+      acceptproxy:
+        port: 3
+        accept_proxy: true
+      other:
+        port: 33
+  service:
+    name: service3
+    port: 443
+namespace: ns
+creation_timestamp: 2024-05-16T11:45:26.371Z

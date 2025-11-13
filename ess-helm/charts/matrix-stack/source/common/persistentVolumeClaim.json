@@ -1,0 +1,21 @@
+{
+  "type": "object",
+  "properties": {
+    "existingClaim": {
+      "type": "string"
+    },
+    "size": {
+      "type": "string"
+    },
+    "storageClassName": {
+      "type": "string"
+    },
+    "resourcePolicy": {
+      "type": "string",
+      "enum": [
+        "keep",
+        "delete"
+      ]
+    }
+  }
+}

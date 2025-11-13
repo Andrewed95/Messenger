@@ -1,0 +1,39 @@
+apiVersion: kind.x-k8s.io/v1alpha4
+networking:
+  ipFamily: dual
+  apiServerAddress: "127.0.0.1"
+  apiServerPort: 6443
+kind: Cluster
+nodes:
+  - role: control-plane
+    image: kindest/node:v1.33.1
+    extraPortMappings:
+      - hostPort: 30080
+        containerPort: 30080
+        #listenAddress: "0.0.0.0" # Optional, defaults to "0.0.0.0"
+        #protocol: udp # Optional, defaults to tcp
+      - hostPort: 30443
+        containerPort: 30443
+      - hostPort: 31024
+        containerPort: 31024
+      - hostPort: 32766
+        containerPort: 32766
+      - hostPort: 32767
+        containerPort: 32767
+      - hostPort: 32765 # gwapi
+        containerPort: 32765
+      - hostPort: 32060 # admin port
+        containerPort: 32060
+    kubeadmConfigPatches:
+    - |
+      kind: ClusterConfiguration
+      controllerManager:
+          extraArgs:
+            max-endpoints-per-slice: "5"
+            node-cidr-mask-size-ipv4: "21"
+    - |
+      apiVersion: kubelet.config.k8s.io/v1beta1
+      kind: KubeletConfiguration
+      metadata:
+              name: config
+      maxPods: 2048

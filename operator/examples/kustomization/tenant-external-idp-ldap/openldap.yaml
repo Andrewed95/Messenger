@@ -1,0 +1,48 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: openldap
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: openldap
+  template:
+    metadata:
+      labels:
+        app: openldap
+    spec:
+      containers:
+        - name: openldap
+          image: quay.io/minio/openldap:latest
+          env:
+            - name: LDAP_ORGANIZATION
+              value: "MinIO Inc."
+            - name: LDAP_DOMAIN
+              value: "min.io"
+            - name: LDAP_ADMIN_PASSWORD
+              value: "admin"
+          imagePullPolicy: "IfNotPresent"
+          ports:
+            - containerPort: 389
+              name: tcp-ldap
+            - containerPort: 636
+              name: tcp-ldap2
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: openldap
+  labels:
+    name: openldap
+spec:
+  ports:
+    - name: tcp-ldap
+      port: 389
+      targetPort: tcp-ldap
+    - name: tcp-ldap2
+      port: 636
+      targetPort: tcp-ldap2
+  selector:
+    app: openldap

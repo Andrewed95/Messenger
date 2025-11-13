@@ -1,0 +1,84 @@
+# Copyright 2025 New Vector Ltd
+# Copyright 2025 Element Creations Ltd
+#
+# SPDX-License-Identifier: AGPL-3.0-only
+
+name: GitHub Actions linting
+
+on:
+  pull_request:
+  push:
+    branches:
+    - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  action-validator:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5
+
+    - name: Install action-validator with asdf
+      uses: asdf-vm/actions/install@1902764435ca0dd2f3388eea723a4f92a4eb8302  # v4
+      with:
+        tool_versions: |
+          action-validator 0.6.0
+
+    - name: Lint Actions
+      run: |
+        find .github/workflows -type f \( -iname \*.yaml -o -iname \*.yml \) -print0 \
+          | xargs -0 -I {} action-validator --verbose {}
+
+  actionlint:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5
+
+    - name: Check workflow files
+      uses: docker://rhysd/actionlint@sha256:887a259a5a534f3c4f36cb02dca341673c6089431057242cdc931e9f133147e9  # 1.7.7
+      with:
+        args: -color
+
+  pinned-actions:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5
+
+    - name: Find unpinned actions
+      run: |
+        # Find all actions that aren't docker images by digest or aren't GitHub commits by id
+        # All with digest/commit ids also need comments
+        unpinned_actions=$(
+          find .github/workflows -type f \( -iname \*.yaml -o -iname \*.yml \) -print0 \
+            | xargs -0 -I {} grep -E 'use[s]:' {} \
+            | grep -vE 'use[s]:\s+docker://[^#]*@sha256:[a-f0-9]{64}\s+#\s' \
+            | grep -vE 'use[s]:\s+[^#]*@[a-f0-9]{40}\s+#\s' || true)
+        if [ "$unpinned_actions" != "" ]; then
+          echo "There are unpinned actions:"
+          echo "$unpinned_actions"
+          exit 1
+        fi
+
+  explicit-permissions:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5
+
+    - name: Find workflows that have jobs that rely on the default permissions
+      run: |
+        workflows_with_implicit_permissions=$(
+          find .github/workflows -type f \( -iname \*.yaml -o -iname \*.yml \) -print0 \
+            | xargs -0 -I {} yq '{filename: ([.jobs.* | has("permissions")] | all) or (. | has("permissions"))}' {} \
+            | grep -E 'false$' || true)
+        if [ "$workflows_with_implicit_permissions" != "" ]; then
+          echo "There are workflows that have not set permissions either globally or for all jobs:"
+          echo "$workflows_with_implicit_permissions"
+          exit 1
+        fi

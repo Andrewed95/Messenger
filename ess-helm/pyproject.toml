@@ -1,0 +1,124 @@
+# Copyright 2024-2025 New Vector Ltd
+# Copyright 2025 Element Creations Ltd
+#
+# SPDX-License-Identifier: AGPL-3.0-only
+
+[tool.poetry]
+description = ""
+license = "AGPL-3.0-Only, Element Commercial"
+readme = "README.md"
+package-mode = false
+
+[tool.poetry.dependencies]
+python = ">=3.12,<4.0"
+
+[tool.poetry.group.dev.dependencies]
+# For https://github.com/azimuth-cloud/pyhelm3/pull/36 & https://github.com/azimuth-cloud/pyhelm3/pull/37
+pyhelm3 = {git = "https://github.com/element-hq/pyhelm3.git", rev = "788ac4c1f"}
+lightkube = "^0.17.2"
+pytz = "^2025.2"
+cryptography = "^46.0.3"
+platformdirs = "^4.5.0"
+python-on-whales = "^0.79.0"
+aiohttp = "^3.13.2"
+yamale = "^6.0.0"
+typer = "^0.20.0"
+pytest = "^8.4.2"
+ruff = "^0.14.3"
+jinja2 = "^3.1.6"
+checkov = "^3.2.489"
+reuse = "^6.2.0"
+signedjson = "^1.1.4"
+aiohttp-retry = "^2.9.1"
+ruamel-yaml = "^0.18.16"
+pytest-kubernetes = "^0.7.2"
+pytest-asyncio-cooperative = "^0.40.0"
+towncrier = "^25.8.0"
+spdx-tools = "^0.8.3"
+types-pytz = "^2025.2.0.20250809"
+mypy = "^1.18.2"
+types-pyyaml = "^6.0.12.20250915"
+semver = "^3.0.4"
+prometheus-client = "^0.23.1"
+yamllint = "^1.37.1"
+
+[build-system]
+requires = ["poetry-core>=2.1.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.pytest.ini_options]
+# we use asyncio-cooperative
+addopts = "-p no:asyncio --strict-markers"
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+select = [
+    # pycodestyle
+    "E",
+    # Pyflakes
+    "F",
+    # pyupgrade
+    "UP",
+    # flake8-bugbear
+    "B",
+    # flake8-simplify
+    "SIM",
+    # isort
+    "I",
+    # flake8-pytest-style
+    "PT",
+]
+
+[tool.towncrier]
+package = ""
+name = "ESS Community Helm Chart"
+filename = "CHANGELOG.md"
+
+# See artifacthub changes kinds https://artifacthub.io/docs/topics/annotations/helm/
+# "When using the list of objects option the valid supported kinds are added, changed, deprecated, removed, fixed and security."
+
+[[tool.towncrier.type]]
+directory = "security"
+name = "Security"
+showcontent = true
+
+[[tool.towncrier.type]]
+directory = "removed"
+name = "Removed / Breaking Changes"
+showcontent = true
+
+[[tool.towncrier.type]]
+directory = "deprecated"
+name = "Deprecated"
+showcontent = true
+
+[[tool.towncrier.type]]
+directory = "added"
+name = "Added"
+showcontent = true
+
+[[tool.towncrier.type]]
+directory = "changed"
+name = "Changed"
+showcontent = true
+
+[[tool.towncrier.type]]
+directory = "fixed"
+name = "Fixed"
+showcontent = true
+
+[[tool.towncrier.type]]
+directory = "doc"
+name = "Documentation"
+showcontent = true
+
+[[tool.towncrier.type]]
+directory = "internal"
+name = "Internal"
+showcontent = true
+
+[[tool.mypy.overrides]]
+module = ["pyhelm3.*", "pytest_kubernetes.*"]
+follow_untyped_imports = true

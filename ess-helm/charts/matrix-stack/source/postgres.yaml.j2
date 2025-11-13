@@ -1,0 +1,39 @@
+{#
+Copyright 2024-2025 New Vector Ltd
+Copyright 2025 Element Creations Ltd
+
+SPDX-License-Identifier: AGPL-3.0-only
+#}
+enabled: true
+
+postgresExporter:
+  {{- sub_schema_values.image(registry='docker.io', repository='prometheuscommunity/postgres-exporter', tag='v0.18.1') | indent(2) }}
+  {{- sub_schema_values.resources(requests_memory='10Mi', requests_cpu='10m', limits_memory='500Mi')| indent(2) }}
+  {{- sub_schema_values.containersSecurityContext() | indent(2) }}
+  {{- sub_schema_values.extraEnv() | indent(2) }}
+  {{- sub_schema_values.probe("liveness", periodSeconds=6, timeoutSeconds=2) | indent(2) }}
+  {{- sub_schema_values.probe("readiness", periodSeconds=2, successThreshold=2, timeoutSeconds=2) | indent(2) }}
+  {{- sub_schema_values.probe("startup", failureThreshold=20, periodSeconds=2) | indent(2) }}
+
+{{- sub_schema_values.credential("Postgres Admin Password", "adminPassword", initIfAbsent=true) }}
+
+essPasswords:
+  {{- sub_schema_values.credential("Synapse DB Password", "synapse", initIfAbsent=true) | indent(2) }}
+  {{- sub_schema_values.credential("Matrix Authentication Service DB Password", "matrixAuthenticationService", initIfAbsent=true) | indent(2) }}
+
+{{- sub_schema_values.persistentVolumeClaim("storage") }}
+{{- sub_schema_values.image(registry='docker.io', repository='postgres', tag='17-alpine') }}
+{{- sub_schema_values.extraEnv() }}
+{{- sub_schema_values.labels() }}
+{{- sub_schema_values.workloadAnnotations() }}
+{{- sub_schema_values.containersSecurityContext() }}
+{{- sub_schema_values.nodeSelector() }}
+{{- sub_schema_values.podSecurityContext(user_id='10091', group_id='10091') }}
+{{- sub_schema_values.resources(requests_memory='100Mi', requests_cpu='100m', limits_memory='4Gi') }}
+{{- sub_schema_values.serviceAccount() }}
+{{- sub_schema_values.serviceMonitors() }}
+{{- sub_schema_values.tolerations() }}
+{{- sub_schema_values.topologySpreadConstraints() }}
+{{- sub_schema_values.probe("liveness", timeoutSeconds=2) }}
+{{- sub_schema_values.probe("readiness", timeoutSeconds=2) }}
+{{- sub_schema_values.probe("startup", failureThreshold=8) }}

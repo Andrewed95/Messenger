@@ -1,0 +1,28 @@
+/*
+ * Copyright 2024 New Vector Ltd.
+ *
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
+ */
+
+package io.element.android.libraries.mediaviewer.api
+
+import com.bumble.appyx.core.modality.BuildContext
+import com.bumble.appyx.core.node.Node
+import com.bumble.appyx.core.plugin.Plugin
+import io.element.android.libraries.architecture.FeatureEntryPoint
+import io.element.android.libraries.matrix.api.core.EventId
+
+interface MediaGalleryEntryPoint : FeatureEntryPoint {
+    fun createNode(
+        parentNode: Node,
+        buildContext: BuildContext,
+        callback: Callback,
+    ): Node
+
+    interface Callback : Plugin {
+        fun onBackClick()
+        fun viewInTimeline(eventId: EventId)
+        fun forward(eventId: EventId, fromPinnedEvents: Boolean)
+    }
+}

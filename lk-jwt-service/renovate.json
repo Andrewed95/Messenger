@@ -1,0 +1,25 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    "schedule:monthly",
+    "helpers:pinGitHubActionDigestsToSemver",
+    ":enableVulnerabilityAlertsWithLabel(security)"
+  ],
+  "addLabels": ["dependencies"],
+  "vulnerabilityAlerts": {
+    "schedule": [
+      "at any time"
+    ],
+    "prHourlyLimit": 0,
+    "minimumReleaseAge": null
+  },
+  "packageRules": [
+    {
+      "groupName": "GitHub Actions",
+      "matchDepTypes": ["action"],
+      "pinDigests": true
+    }
+  ],
+  "minimumReleaseAge": "5 days"  
+}

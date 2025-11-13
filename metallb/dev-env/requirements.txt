@@ -1,0 +1,6 @@
+# non-version specific
+invoke
+semver
+PyYAML
+black
+Jinja2

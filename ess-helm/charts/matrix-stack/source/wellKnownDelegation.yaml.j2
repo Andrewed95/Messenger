@@ -1,0 +1,26 @@
+{#
+Copyright 2024-2025 New Vector Ltd
+Copyright 2025 Element Creations Ltd
+
+SPDX-License-Identifier: AGPL-3.0-only
+#}
+
+{% import 'sub_schema_values.yaml.j2' as sub_schema_values -%}
+enabled: true
+
+{{ sub_schema_values.labels() }}
+{{ sub_schema_values.ingress() }}
+
+## If ElementWeb is deployed, the base domain will redirect to it's ingress host by default
+## If ElementWeb is not deployed or this is disabled, no base domain URL redirect will be set.
+baseDomainRedirect:
+  enabled: true
+  ## You can override with another redirect URL here.
+  url: ""
+
+## Additional configuration to provide to all WellKnown static file
+## Configuration should be provided as JSON strings
+additional:
+  client: "{}"
+  server: "{}"
+  support: "{}"

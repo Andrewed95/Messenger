@@ -1,0 +1,20 @@
+/.idea
+/.venv
+*.egg-info
+/.envrc
+/.tox
+_trial_temp
+__pycache__
+/dist
+config.yaml
+/build
+/.vscode
+mcs_pickle.txt
+pickle
+
+# Poetry will create a setup.py, which we don't want to include.
+/setup.py
+
+# rust
+/target/
+/src/matrix_content_scanner/*.so

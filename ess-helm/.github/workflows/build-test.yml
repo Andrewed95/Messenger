@@ -1,0 +1,95 @@
+# Copyright 2024-2025 New Vector Ltd
+# Copyright 2025 Element Creations Ltd
+#
+# SPDX-License-Identifier: AGPL-3.0-only
+
+name: Helm Chart Building tests
+on:
+  pull_request:
+  push:
+    branches:
+    - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # We build from source and commit all generated file changes so that we can see the impact in PRs
+  # We want to ensure that the commit of built changes does happen, so fail if building creates changes
+  # If this gets problematic we change to not committing the built schemas/values to git
+  no-changes-after-building:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5
+
+    - uses: matrix-org/setup-python-poetry@5bbf6603c5c930615ec8a29f1b5d7d258d905aa4  # v2
+      with:
+        python-version: "3.x"
+
+    - name: Load poetry path
+      run: |
+        echo "$(poetry env info -p)/bin" >> "${GITHUB_PATH}"
+
+    - name: Build and check for changes
+      run: |
+        git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+        # Ensure all JSON files are consistently formatted
+        for file in $(git ls-files | grep -E "json$"); do yq -iP --indent 2 -o json '.' "$file"; done
+
+        # Rebuild the charts & test values files with from the current source
+        scripts/assemble_ci_values_files_from_fragments.sh
+        version=$(yq '.version' charts/matrix-stack/Chart.yaml)
+        scripts/assemble_helm_charts_from_fragments.sh
+        scripts/set_chart_version.sh "$version"
+
+        git diff --exit-code
+
+  helm-lint:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5
+
+    - name: Set up chart-testing
+      uses: helm/chart-testing-action@0d28d3144d3a25ea2cc349d6e59901c4ff469b3b  # v2.7.0
+
+    - name: Run chart-testing (lint)
+      run: |
+        git config --global --add safe.directory "$GITHUB_WORKSPACE"
+        scripts/ct-lint.sh --config ct.yaml
+
+    - uses: matrix-org/setup-python-poetry@5bbf6603c5c930615ec8a29f1b5d7d258d905aa4  # v2
+      with:
+        python-version: "3.x"
+
+    - name: Load poetry path
+      run: |
+        echo "$(poetry env info -p)/bin" >> "${GITHUB_PATH}"
+
+    - name: Set up Kubeconform
+      uses: bmuschko/setup-kubeconform@5ccaecbbf012bcb1eeeab66e649db64a477ade8f  # v1
+
+    - name: Run kubeconform
+      run: |
+        for values in charts/matrix-stack/ci/*values.yaml; do
+          echo "Testing matrix-stack with $values";
+          helm template \
+              -n ess-ci \
+              -a monitoring.coreos.com/v1/ServiceMonitor \
+              -f "$values" charts/matrix-stack \
+            | kubeconform \
+              -schema-location default \
+              -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
+              -strict \
+              -summary
+        done
+
+    - name: Run checkov
+      run: |
+        checkov --version
+        for checkov_values in charts/matrix-stack/ci/*checkov*values.yaml; do
+          scripts/checkov.sh "$checkov_values"
+        done

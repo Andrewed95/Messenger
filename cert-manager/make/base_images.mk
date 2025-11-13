@@ -1,0 +1,11 @@
+# +skip_license_check
+STATIC_BASE_IMAGE_amd64 := gcr.io/distroless/static-debian12@sha256:6ceafbc2a9c566d66448fb1d5381dede2b29200d1916e03f5238a1c437e7d9ea
+STATIC_BASE_IMAGE_arm64 := gcr.io/distroless/static-debian12@sha256:ed92139a33080a51ac2e0607c781a67fb3facf2e6b3b04a2238703d8bcf39c40
+STATIC_BASE_IMAGE_s390x := gcr.io/distroless/static-debian12@sha256:0f30716c69ea9a9f62484fe3b284300ae67d136135312ee6d0f794c470b4fa27
+STATIC_BASE_IMAGE_arm   := gcr.io/distroless/static-debian12@sha256:9b9ebe0472d908cc5f8ca03e437dd82f0984cc254eee59effd52aa539fe8a3d8
+STATIC_BASE_IMAGE_ppc64le := gcr.io/distroless/static-debian12@sha256:17274770d835d14eddc4070a12bdbcf746991125b70acffbd65935d9d88ab2ac
+DYNAMIC_BASE_IMAGE_amd64 := gcr.io/distroless/base-debian12@sha256:689fe8afc6077bec0fa17e674cce6525f9a230e01680d4112eda88e36e711012
+DYNAMIC_BASE_IMAGE_arm64 := gcr.io/distroless/base-debian12@sha256:d1fa441d279fb67b1d48ae7e36a9d2be56f6b55a835ffe741240e23ca7573ae7
+DYNAMIC_BASE_IMAGE_s390x := gcr.io/distroless/base-debian12@sha256:459ca2c7b6100bfed200811efaaed2964ebf4710918d31e71756d5d74d8b0759
+DYNAMIC_BASE_IMAGE_arm   := gcr.io/distroless/base-debian12@sha256:f0f38e9d78351ba31073e23f70070acfdeaad7b36d07aa8ecea650aa26d5804b
+DYNAMIC_BASE_IMAGE_ppc64le := gcr.io/distroless/base-debian12@sha256:3d994ef3b6f81e73d15865d539ae0b0fb6c4b2899f588d429c496011a69da7d1

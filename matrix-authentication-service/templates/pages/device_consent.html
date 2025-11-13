@@ -1,0 +1,162 @@
+{#
+Copyright 2024, 2025 New Vector Ltd.
+Copyright 2023, 2024 The Matrix.org Foundation C.I.C.
+
+SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+Please see LICENSE files in the repository root for full details.
+-#}
+
+{% set consent_page = true %}
+
+{% extends "base.html" %}
+
+{% block content %}
+  {% set client_name = client.client_name or client.client_id %}
+  {% set user_agent = grant.user_agent | parse_user_agent() %}
+
+  {% if grant.state == "pending" %}
+    <header class="page-heading">
+      {% if client.logo_uri %}
+        <img class="consent-client-icon image" referrerpolicy="no-referrer" src="{{ client.logo_uri }}" />
+      {% else %}
+      <div class="consent-client-icon generic">
+        {{ icon.web_browser() }}
+      </div>
+      {% endif %}
+
+      <div class="header">
+        <h1 class="title">{{ _("mas.consent.heading") }}</h1>
+
+        <div class="session-card my-4">
+          <div class="card-header" {%- if user_agent %} title="{{ user_agent.raw }}"{% endif %}>
+            <div class="device-type-icon">
+              {% if user_agent.device_type == "mobile" %}
+                {{ icon.mobile() }}
+              {% elif user_agent.device_type == "tablet" %}
+                {{ icon.web_browser() }}
+              {% elif user_agent.device_type == "pc" %}
+                {{ icon.computer() }}
+              {% else %}
+                {{ icon.unknown_solid() }}
+              {% endif %}
+            </div>
+
+            <div class="content auto">
+              {% if user_agent.model %}
+                <div>{{ user_agent.model }}</div>
+              {% endif %}
+
+              {% if user_agent.os %}
+                <div>
+                  {{ user_agent.os }}
+                  {% if user_agent.os_version %}
+                    {{ user_agent.os_version }}
+                  {% endif %}
+                </div>
+              {% endif %}
+
+              {# If we haven't detected a model, it's probably a browser, so show the name #}
+              {% if not user_agent.model and user_agent.name %}
+                <div>
+                  {{ user_agent.name }}
+                  {% if user_agent.version %}
+                    {{ user_agent.version }}
+                  {% endif %}
+                </div>
+              {% endif %}
+
+              {# If we couldn't detect anything, show a generic "Device" #}
+              {% if not user_agent.model and not user_agent.name and not user_agent.os %}
+              <div>{{ _("mas.device_card.generic_device") }}</div>
+              {% endif %}
+            </div>
+          </div>
+          <div class="metadata">
+            {% if grant.ip_address %}
+              <div>
+                <div class="key">{{ _("mas.device_card.ip_address") }}</div>
+                <div class="value">{{ grant.ip_address }}</div>
+              </div>
+            {% endif %}
+            <div>
+              <div class="key">{{ _("mas.device_card.access_requested") }}</div>
+              <div class="value">{{ _.relative_date(grant.created_at) | title }} {{ _.short_time(grant.created_at) }}</div>
+            </div>
+            <div>
+              <div class="key">{{ _("mas.device_card.device_code") }}</div>
+              <div class="value">{{ grant.user_code }}</div>
+            </div>
+          </div>
+        </div>
+
+        <p class="text [&>span]:whitespace-nowrap">
+          {{ _("mas.device_consent.another_device_access") }}
+          {{ _("mas.consent.this_will_allow", client_name=client_name) }}
+        </p>
+      </div>
+    </header>
+
+    <section class="consent-scope-list">
+      {{ scope.list(scopes=grant.scope) }}
+    </section>
+
+    <section class="text-center text-balance cpd-text-secondary cpd-text-body-md-regular [&>span]:whitespace-nowrap">
+      <strong class="font-semibold cpd-text-primary [&>span]:whitespace-nowrap">{{ _("mas.consent.make_sure_you_trust", client_name=client_name) }}</strong>
+      {{ _("mas.consent.you_may_be_sharing") }}
+      {% if client.policy_uri or client.tos_uri %}
+        Find out how <span>{{ client_name }}</span> will handle your data by reviewing its
+        {% if client.policy_uri %}
+          <a target="_blank" href="{{ client.policy_uri }}" class="cpd-link" data-kind="primary">privacy policy</a>{% if not client.tos_uri %}.{% endif %}
+        {% endif %}
+        {% if client.policy_uri and client.tos_uri%}
+          and
+        {% endif %}
+        {% if client.tos_uri %}
+          <a target="_blank" href="{{ client.tos_uri }}" class="cpd-link" data-kind="primary">terms of service</a>.
+        {% endif %}
+      {% endif %}
+    </section>
+
+    <section class="flex flex-col gap-6">
+      <form method="POST" class="cpd-form-root">
+        <input type="hidden" name="csrf" value="{{ csrf_token }}" />
+        <button type="submit" name="action" value="consent" class="cpd-button" data-kind="primary" data-size="lg">
+          {{ _("action.continue") }}
+        </button>
+        <button type="submit" name="action" value="reject" class="cpd-button destructive" data-kind="secondary" data-size="lg">
+          {{ _("action.cancel") }}
+        </button>
+      </form>
+
+      <div class="flex gap-1 justify-center items-center">
+        <p class="cpd-text-secondary cpd-text-body-md-regular">
+          {{ _("mas.not_you", username=current_session.user.username) }}
+        </p>
+
+        {{ logout.button(text=_("action.sign_out"), csrf_token=csrf_token, post_logout_action=action, as_link=true) }}
+      </div>
+    </section>
+  {% elif grant.state == "rejected" %}
+    <header class="page-heading">
+      <div class="icon invalid">
+        {{ icon.block() }}
+      </div>
+
+      <div class="header">
+        <h1 class="title">{{ _("mas.device_consent.denied.heading") }}</h1>
+        <p class="text">{{ _("mas.device_consent.denied.description", client_name=client_name) }}</p>
+      </div>
+    </header>
+  {% else %}
+    <header class="page-heading">
+      <div class="icon success">
+        {{ icon.check() }}
+      </div>
+
+      <div class="header">
+        <h1 class="title">{{ _("mas.device_consent.granted.heading") }}</h1>
+        <p class="text">{{ _("mas.device_consent.granted.description", client_name=client_name) }}</p>
+      </div>
+    </header>
+  {% endif %}
+{% endblock content %}

@@ -1,0 +1,13 @@
+{
+  "$id": "file://matrix-stack/charts/element-web",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "merged": {
+      "$ref": "file://sub_schema1.json"
+    },
+    "presentDirectly": {
+      "type": "object"
+    }
+  }
+}

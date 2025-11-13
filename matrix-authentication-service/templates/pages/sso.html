@@ -1,0 +1,48 @@
+{#
+Copyright 2024, 2025 New Vector Ltd.
+Copyright 2022-2024 The Matrix.org Foundation C.I.C.
+
+SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+Please see LICENSE files in the repository root for full details.
+-#}
+
+{% extends "base.html" %}
+
+{% block content %}
+  {% set client_name = login.redirect_uri | simplify_url %}
+
+  <header class="page-heading">
+    <div class="consent-client-icon generic">
+      {{ icon.web_browser() }}
+    </div>
+
+    <div class="header">
+      <h1 class="title">Allow access to your account?</h1>
+      <p class="text"><span class="whitespace-nowrap">{{ client_name }}</span> wants to access your account. This will allow <span class="whitespace-nowrap">{{ client_name }}</span> to:</p>
+    </div>
+  </header>
+
+  <section class="consent-scope-list">
+    {{ scope.list(scopes="openid urn:matrix:client:api:*") }}
+  </section>
+
+  <section class="text-center cpd-text-secondary cpd-text-body-md-regular">
+    <span class="font-semibold cpd-text-primary">Make sure that you trust <span class="whitespace-nowrap">{{ client_name }}</span>.</span>
+    You may be sharing sensitive information with this site or app.
+  </section>
+
+  <section class="flex flex-col gap-6">
+    <form method="POST" class="cpd-form-root">
+      <input type="hidden" name="csrf" value="{{ csrf_token }}" />
+      {{ button.button(text=_("action.continue")) }}
+    </form>
+
+    <div class="flex gap-1 justify-center items-center">
+      <p class="cpd-text-secondary cpd-text-body-md-regular">
+        {{ _("mas.not_you", username=current_session.user.username) }}
+      </p>
+
+      {{ logout.button(text=_("action.sign_out"), csrf_token=csrf_token, post_logout_action=action, as_link=true) }}
+    </div>
+  </section>
+{% endblock content %}

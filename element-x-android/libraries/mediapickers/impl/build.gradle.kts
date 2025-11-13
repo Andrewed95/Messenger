@@ -1,0 +1,24 @@
+import extension.setupDependencyInjection
+
+/*
+ * Copyright 2023, 2024 New Vector Ltd.
+ *
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
+ */
+
+plugins {
+    id("io.element.android-compose-library")
+}
+
+setupDependencyInjection()
+
+android {
+    namespace = "io.element.android.libraries.mediapickers.impl"
+}
+
+dependencies {
+    implementation(projects.libraries.core)
+    implementation(projects.libraries.di)
+    api(projects.libraries.mediapickers.api)
+}

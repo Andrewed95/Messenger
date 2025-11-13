@@ -1,0 +1,94 @@
+{{- if and .Values.federationsender.enabled (semverCompare ">=0.19" (.Values.backend.image.tag | default .Values.image.tag | default .Chart.AppVersion)) }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "lemmy.fullname" . }}-federationsender
+  labels:
+    {{- include "lemmy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "lemmy.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: federationsender
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/secret-configuration.yaml") . | sha256sum }}
+      {{- with .Values.federationsender.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "lemmy.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: federationsender
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "lemmy.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.federationsender.podSecurityContext | nindent 8 }}
+      containers:
+        - name: {{ .Chart.Name }}
+          args:
+            - --disable-http-server
+            - --disable-scheduled-tasks
+            - --federate-process-index=1
+            - --federate-process-count=1
+          securityContext:
+            {{- toYaml .Values.federationsender.securityContext | nindent 12 }}
+          image: "{{ .Values.federationsender.image.repository | default .Values.image.repository }}:{{ .Values.federationsender.image.tag | default .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.federationsender.image.pullPolicy | default .Values.image.pullPolicy }}
+          {{- if or (not .Values.postgresql.auth.password) .Values.federationsender.env }}
+          env:
+            {{- if not .Values.postgresql.auth.password }}
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+              {{- if .Values.postgresql.auth.existingSecret }}
+                  key: {{ .Values.postgresql.auth.secretKeys.userPasswordKey | default "password" }}
+                  name: {{ .Values.postgresql.auth.existingSecret }}
+              {{- else }}
+                  key: password
+                  name: {{ include "lemmy.postgresql.secret" . }}
+              {{- end }}
+            {{- end }}
+            {{- with .Values.federationsender.env }}
+              {{- range $key, $value := . }}
+            - name: {{ $key }}
+              value: {{ $value | toString | quote }}
+              {{- end }}
+            {{- end }}
+          {{- end }}
+          {{- with .Values.federationsender.envFrom }}
+          envFrom:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.federationsender.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /config/config.hjson
+              subPath: config.hjson
+      {{- with .Values.federationsender.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.federationsender.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.federationsender.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      volumes:
+        - name: config
+          secret:
+            secretName: {{ include "lemmy.fullname" . }}
+{{- end }}

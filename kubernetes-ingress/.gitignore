@@ -1,0 +1,12 @@
+.vscode/*
+.idea/*
+.test/*
+kubernetes-ingress
+dist/
+.code-generator/
+bin/golangci-lint
+bin/check-commit
+.local/*
+__debug_bin*
+pkg/protection/libblock_secrets.so
+pkg/protection/haproxy_wrapper

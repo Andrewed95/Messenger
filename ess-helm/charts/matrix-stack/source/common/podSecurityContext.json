@@ -1,0 +1,63 @@
+{
+  "properties": {
+    "fsGroup": {
+      "format": "int64",
+      "type": "integer"
+    },
+    "fsGroupChangePolicy": {
+      "type": "string"
+    },
+    "runAsGroup": {
+      "format": "int64",
+      "type": "integer"
+    },
+    "runAsNonRoot": {
+      "type": "boolean"
+    },
+    "runAsUser": {
+      "format": "int64",
+      "type": "integer"
+    },
+    "seLinuxOptions": {
+      "properties": {
+        "level": {
+          "type": "string"
+        },
+        "role": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        },
+        "user": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "seccompProfile": {
+      "properties": {
+        "localhostProfile": {
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "RuntimeDefault",
+            "Unconfined",
+            "Localhost"
+          ],
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "supplementalGroups": {
+      "items": {
+        "format": "int64",
+        "type": "integer"
+      },
+      "type": "array"
+    }
+  },
+  "type": "object"
+}

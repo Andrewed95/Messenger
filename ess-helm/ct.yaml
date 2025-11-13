@@ -1,0 +1,13 @@
+# Copyright 2024 New Vector Ltd
+# Copyright 2025 Element Creations Ltd
+#
+# SPDX-License-Identifier: AGPL-3.0-only
+
+---
+all: true
+chart-dirs:
+- charts
+check-version-increment: false
+helm-dependency-extra-args:
+- --skip-refresh
+validate-maintainers: false

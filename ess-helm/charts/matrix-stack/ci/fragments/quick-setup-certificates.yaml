@@ -1,0 +1,28 @@
+# Copyright 2025 New Vector Ltd
+# Copyright 2025 Element Creations Ltd
+#
+# SPDX-License-Identifier: AGPL-3.0-only
+
+elementAdmin:
+  ingress:
+    tlsSecret: ess-admin-certificate
+
+elementWeb:
+  ingress:
+    tlsSecret: ess-chat-certificate
+
+matrixAuthenticationService:
+  ingress:
+    tlsSecret: ess-auth-certificate
+
+matrixRTC:
+  ingress:
+    tlsSecret: ess-mrtc-certificate
+
+synapse:
+  ingress:
+    tlsSecret: ess-matrix-certificate
+
+wellKnownDelegation:
+  ingress:
+    tlsSecret: ess-well-known-certificate

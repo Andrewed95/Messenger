@@ -1,0 +1,29 @@
+---
+apiVersion: v2
+name: netbox
+description: |
+  An IP address management (IPAM) and data center infrastructure management (DCIM) tool.
+
+  Important; With chart version 4.0.0 there are major upgrades to the packaged Redis and Postgres,
+  as well as a major version bump of Netbox that introduces housekeeping. Take care when upgrading.
+
+  NB; Support for this chart will end this year, migrate to the official chart instead, located at
+  https://github.com/netbox-community/netbox-chart
+icon: https://raw.githubusercontent.com/netbox-community/netbox/develop/netbox/project-static/img/netbox_icon.svg
+appVersion: 4.4.5
+
+type: application
+version: 6.2.2
+maintainers:
+  - name: Alexander Olofsson
+    email: ace@haxalot.com
+
+dependencies:
+  - name: postgresql
+    version: ^12.1.4
+    repository: https://charts.bitnami.com/bitnami
+    condition: postgresql.enabled
+  - name: redis
+    version: ^17.3.17
+    repository: https://charts.bitnami.com/bitnami
+    condition: redis.enabled

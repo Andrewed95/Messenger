@@ -1,0 +1,87 @@
+apiVersion: ingress.v3.haproxy.org/v3
+kind: Backend
+metadata:
+  creationTimestamp: null
+  name: backends-test
+spec:
+  accept_invalid_http_response: enabled
+  adv_check: ssl-hello-chk
+  allbackups: enabled
+  check_timeout: 0
+  checkcache: enabled
+  compression:
+    algorithms:
+    - ""
+    types:
+    - ""
+  connect_timeout: 0
+  cookie:
+    attr:
+    - value: aword
+    domain:
+    - value: aword
+    name: anicename
+    type: rewrite
+  error_files:
+  - code: 200
+  errorfiles_from_http_errors:
+  - codes:
+    - 0
+  errorloc302:
+    code: 200
+    url: ""
+  errorloc303:
+    code: 400
+    url: ""
+  force_persist:
+    cond: if
+    cond_test: ""
+  fullconn: 0
+  h1_case_adjust_bogus_server: enabled
+  hash_type:
+    function: {{ .BackendHashTypeFunction }}
+    method: consistent
+    modifier: avalanche
+  http_connection_mode: httpclose
+  http_keep_alive_timeout: 0
+  http_proxy: enabled
+  http_request_timeout: 0
+  http_reuse: aggressive
+  http_send_name_header: ""
+  httpchk_params:
+    method: GET
+  id: 0
+  ignore_persist:
+    cond: if
+    cond_test: ""
+  load_server_state_from_file: local
+  log_health_checks: enabled
+  log_tag: aword
+  max_keep_alive_queue: 0
+  mode: http
+  name: anicename
+  nolinger: disabled
+  persist_rule:
+    rdp_cookie_name: aword
+    type: rdp-cookie
+  pgsql_check_params: {}
+  prefer_last_server: enabled
+  queue_timeout: 0
+  redispatch:
+    enabled: enabled
+  retries: 0
+  server_fin_timeout: 0
+  server_timeout: 0
+  smtpchk_params: {}
+  source:
+    address: ""
+    port: 1
+    port_second: 2
+    usesrc: client
+  srvtcpka: enabled
+  srvtcpka_cnt: 0
+  srvtcpka_idle: 0
+  srvtcpka_intvl: 0
+  tarpit_timeout: 0
+  tcp_smart_connect: enabled
+  tunnel_timeout: 0

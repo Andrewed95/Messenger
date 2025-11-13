@@ -1,0 +1,17 @@
+---
+tcpmodel:
+  name: service1CollFeName
+  frontend:
+    frontendbase:
+      name: fe1
+    binds:
+      acceptproxy:
+        port: 100
+        accept_proxy: true
+      other:
+        port: 101
+  service:
+    name: service1
+    port: 443
+namespace: ns
+creation_timestamp: 2024-07-16T11:45:26.371Z

@@ -1,0 +1,38 @@
+{
+  "type": "object",
+  "required": [
+    "host",
+    "user",
+    "database"
+  ],
+  "properties": {
+    "host": {
+      "type": "string"
+    },
+    "port": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 65535
+    },
+    "user": {
+      "type": "string"
+    },
+    "database": {
+      "type": "string"
+    },
+    "sslMode": {
+      "type": "string",
+      "enum": [
+        "disable",
+        "allow",
+        "prefer",
+        "require",
+        "verify-ca",
+        "verify-full"
+      ]
+    },
+    "password": {
+      "$ref": "file://common/credential.json"
+    }
+  }
+}

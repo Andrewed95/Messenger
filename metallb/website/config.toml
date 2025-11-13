@@ -1,0 +1,39 @@
+baseurl = "/"
+languageCode = "en-us"
+DefaultContentLanguage = "en"
+
+title = "MetalLB, bare metal load-balancer for Kubernetes"
+theme = "hugo-theme-relearn"
+
+[params]
+	# General information
+    editURL = "https://github.com/metallb/metallb/edit/main/website/content/"
+    description = "MetalLB, bare metal load-balancer for Kubernetes"
+    collapsibleMenu = true
+    landingPageName = "<i class='fa-fw fas fa-home'></i> MetalLB (latest version)"
+
+[outputs]
+home = ['html', 'rss', 'search', 'searchpage']
+
+[[params.themeVariant]]
+    identifier = 'blue'
+
+[[menu.shortcuts]]
+name = "<i class='fab fa-github'></i> GitHub repo"
+url = "https://github.com/metallb/metallb"
+weight = 10
+
+[[menu.shortcuts]]
+name = "<i class='far fa-envelope-open'></i> Mailing list"
+url = "https://groups.google.com/forum/#!forum/metallb-users"
+weight = 20
+
+[[menu.shortcuts]]
+name = "<i class='fab fa-slack-hash'></i> Slack"
+url = "https://kubernetes.slack.com/messages/metallb"
+weight = 30
+
+[[menu.shortcuts]]
+name = "<i class='far fa-copyright'></i> License"
+url = "https://github.com/metallb/metallb/blob/main/LICENSE"
+weight = 40

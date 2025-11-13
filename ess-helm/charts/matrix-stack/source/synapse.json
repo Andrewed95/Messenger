@@ -1,0 +1,300 @@
+{
+  "$id": "file://synapse",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "enabled": {
+      "type": "boolean"
+    },
+    "checkConfigHook": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "annotations": {
+          "$ref": "file://common/workloadAnnotations.json"
+        },
+        "labels": {
+          "$ref": "file://common/labels.json"
+        },
+        "serviceAccount": {
+          "$ref": "file://common/serviceAccount.json"
+        }
+      }
+    },
+    "postgres": {
+      "$ref": "file://common/postgres-libpq.json"
+    },
+    "media": {
+      "type": "object",
+      "properties": {
+        "storage": {
+          "$ref": "file://common/persistentVolumeClaim.json"
+        },
+        "maxUploadSize": {
+          "type": "string",
+          "pattern": "^[0-9]+[MK]$"
+        }
+      }
+    },
+    "macaroon": {
+      "$ref": "file://common/credential.json"
+    },
+    "registrationSharedSecret": {
+      "$ref": "file://common/credential.json"
+    },
+    "signingKey": {
+      "$ref": "file://common/credential.json"
+    },
+    "additional": {
+      "$ref": "file://common/additional.json"
+    },
+    "appservices": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "oneOf": [
+          {
+            "required": [
+              "configMap",
+              "configMapKey"
+            ],
+            "not": {
+              "required": [
+                "secret",
+                "secretKey"
+              ]
+            }
+          },
+          {
+            "required": [
+              "secret",
+              "secretKey"
+            ],
+            "not": {
+              "required": [
+                "configMap",
+                "configMapKey"
+              ]
+            }
+          }
+        ],
+        "properties": {
+          "configMap": {
+            "type": "string"
+          },
+          "configMapKey": {
+            "type": "string"
+          },
+          "secret": {
+            "type": "string"
+          },
+          "secretKey": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "logging": {
+      "type": "object",
+      "properties": {
+        "rootLevel": {
+          "type": "string",
+          "enum": [
+            "CRITICAL",
+            "ERROR",
+            "WARNING",
+            "INFO",
+            "DEBUG"
+          ]
+        },
+        "levelOverrides": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "enum": [
+              "CRITICAL",
+              "ERROR",
+              "WARNING",
+              "INFO",
+              "DEBUG"
+            ]
+          }
+        }
+      }
+    },
+    "extraArgs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "ingress": {
+      "$ref": "file://synapse/ingress_with_additional_paths.json"
+    },
+    "image": {
+      "$ref": "file://common/image.json"
+    },
+    "labels": {
+      "$ref": "file://common/labels.json"
+    },
+    "annotations": {
+      "$ref": "file://common/workloadAnnotations.json"
+    },
+    "containersSecurityContext": {
+      "$ref": "file://common/containersSecurityContext.json"
+    },
+    "extraEnv": {
+      "$ref": "file://common/extraEnv.json"
+    },
+    "hostAliases": {
+      "$ref": "file://common/hostAliases.json"
+    },
+    "nodeSelector": {
+      "$ref": "file://common/nodeSelector.json"
+    },
+    "podSecurityContext": {
+      "$ref": "file://common/podSecurityContext.json"
+    },
+    "resources": {
+      "$ref": "file://common/resources.json"
+    },
+    "serviceAccount": {
+      "$ref": "file://common/serviceAccount.json"
+    },
+    "serviceMonitors": {
+      "$ref": "file://common/serviceMonitors.json"
+    },
+    "tolerations": {
+      "$ref": "file://common/tolerations.json"
+    },
+    "topologySpreadConstraints": {
+      "$ref": "file://common/topologySpreadConstraints.json"
+    },
+    "livenessProbe": {
+      "$ref": "file://common/probe.json"
+    },
+    "readinessProbe": {
+      "$ref": "file://common/probe.json"
+    },
+    "startupProbe": {
+      "$ref": "file://common/probe.json"
+    },
+    "workers": {
+      "type": "object",
+      "properties": {
+        "account-data": {
+          "$ref": "file://synapse/single_worker.json"
+        },
+        "appservice": {
+          "$ref": "file://synapse/single_worker.json"
+        },
+        "background": {
+          "$ref": "file://synapse/single_worker.json"
+        },
+        "client-reader": {
+          "$ref": "file://synapse/scalable_worker.json"
+        },
+        "encryption": {
+          "$ref": "file://synapse/single_worker.json"
+        },
+        "device-lists": {
+          "$ref": "file://synapse/scalable_worker.json"
+        },
+        "event-creator": {
+          "$ref": "file://synapse/scalable_worker.json"
+        },
+        "event-persister": {
+          "$ref": "file://synapse/scalable_worker.json"
+        },
+        "federation-inbound": {
+          "$ref": "file://synapse/scalable_worker.json"
+        },
+        "federation-reader": {
+          "$ref": "file://synapse/scalable_worker.json"
+        },
+        "federation-sender": {
+          "$ref": "file://synapse/scalable_worker.json"
+        },
+        "initial-synchrotron": {
+          "$ref": "file://synapse/scalable_worker.json"
+        },
+        "media-repository": {
+          "$ref": "file://synapse/single_worker.json"
+        },
+        "presence-writer": {
+          "$ref": "file://synapse/single_worker.json"
+        },
+        "push-rules": {
+          "$ref": "file://synapse/single_worker.json"
+        },
+        "pusher": {
+          "$ref": "file://synapse/scalable_worker.json"
+        },
+        "receipts": {
+          "$ref": "file://synapse/scalable_worker.json"
+        },
+        "sliding-sync": {
+          "$ref": "file://synapse/scalable_worker.json"
+        },
+        "sso-login": {
+          "$ref": "file://synapse/single_worker.json"
+        },
+        "synchrotron": {
+          "$ref": "file://synapse/scalable_worker.json"
+        },
+        "typing-persister": {
+          "$ref": "file://synapse/single_worker.json"
+        },
+        "user-dir": {
+          "$ref": "file://synapse/single_worker.json"
+        }
+      }
+    },
+    "redis": {
+      "type": "object",
+      "properties": {
+        "image": {
+          "$ref": "file://common/image.json"
+        },
+        "labels": {
+          "$ref": "file://common/labels.json"
+        },
+        "annotations": {
+          "$ref": "file://common/workloadAnnotations.json"
+        },
+        "extraEnv": {
+          "$ref": "file://common/extraEnv.json"
+        },
+        "containersSecurityContext": {
+          "$ref": "file://common/containersSecurityContext.json"
+        },
+        "nodeSelector": {
+          "$ref": "file://common/nodeSelector.json"
+        },
+        "podSecurityContext": {
+          "$ref": "file://common/podSecurityContext.json"
+        },
+        "resources": {
+          "$ref": "file://common/resources.json"
+        },
+        "serviceAccount": {
+          "$ref": "file://common/serviceAccount.json"
+        },
+        "tolerations": {
+          "$ref": "file://common/tolerations.json"
+        },
+        "livenessProbe": {
+          "$ref": "file://common/probe.json"
+        },
+        "readinessProbe": {
+          "$ref": "file://common/probe.json"
+        },
+        "startupProbe": {
+          "$ref": "file://common/probe.json"
+        }
+      }
+    }
+  }
+}

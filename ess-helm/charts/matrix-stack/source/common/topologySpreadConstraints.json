@@ -1,0 +1,56 @@
+{
+  "type": "array",
+  "items": {
+    "required": [
+      "maxSkew",
+      "topologyKey"
+    ],
+    "properties": {
+      "labelSelector": {
+        "$ref": "file://common/labelSelector.json"
+      },
+      "matchLabelKeys": {
+        "type": [
+          "array",
+          "null"
+        ],
+        "items": {
+          "type": "string"
+        }
+      },
+      "maxSkew": {
+        "type": "integer",
+        "minium": 1
+      },
+      "minDomains": {
+        "type": "integer",
+        "minium": 0
+      },
+      "nodeAffinityPolicy": {
+        "type": "string",
+        "enum": [
+          "Honor",
+          "Ignore"
+        ]
+      },
+      "nodeTaintsPolicy": {
+        "type": "string",
+        "enum": [
+          "Honor",
+          "Ignore"
+        ]
+      },
+      "topologyKey": {
+        "type": "string"
+      },
+      "whenUnsatisfiable": {
+        "type": "string",
+        "enum": [
+          "DoNotSchedule",
+          "ScheduleAnyway"
+        ]
+      }
+    },
+    "type": "object"
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "properties": {
+    "enabled": {
+      "type": "boolean"
+    },
+    "resources": {
+      "$ref": "file://common/resources.json"
+    },
+    "livenessProbe": {
+      "$ref": "file://common/probe.json"
+    },
+    "readinessProbe": {
+      "$ref": "file://common/probe.json"
+    },
+    "startupProbe": {
+      "$ref": "file://common/probe.json"
+    }
+  },
+  "type": "object"
+}

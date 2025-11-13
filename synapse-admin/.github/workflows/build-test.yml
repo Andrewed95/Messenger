@@ -1,0 +1,26 @@
+name: build-test
+
+on:
+  push:
+    branches: ["master"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+      - name: Install dependencies
+        run: yarn --immutable
+      - name: Run checks
+        run: yarn lint
+      - name: Run tests
+        run: yarn test

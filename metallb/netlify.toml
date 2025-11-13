@@ -1,0 +1,13 @@
+[build]
+  base = "website"
+  publish = "public"
+  command = "hugo"
+
+[build.environment]
+  HUGO_VERSION = "0.124.1"
+
+[[redirects]]
+  from = "https://metallb.universe.tf"
+  to = "https://metallb.io"
+  status = 301
+  force = true

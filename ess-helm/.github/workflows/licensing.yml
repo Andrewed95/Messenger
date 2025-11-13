@@ -1,0 +1,69 @@
+# Copyright 2024-2025 New Vector Ltd
+# Copyright 2025 Element Creations Ltd
+#
+# SPDX-License-Identifier: AGPL-3.0-only
+
+name: Licensing & Copyright checks
+
+on:
+  pull_request:
+  push:
+    branches:
+    - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  reuse-licensing-and-copyright-checks:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5
+      with:
+        fetch-depth: 0
+
+    - uses: matrix-org/setup-python-poetry@5bbf6603c5c930615ec8a29f1b5d7d258d905aa4  # v2
+      with:
+        python-version: "3.x"
+
+    - name: Load poetry path
+      run: |
+        echo "$(poetry env info -p)/bin" >> "${GITHUB_PATH}"
+
+    - name: reuse-lint
+      run: |
+        git config --global --add safe.directory "$GITHUB_WORKSPACE"
+        reuse --version
+        reuse lint
+
+    - name: Generate SPDX
+      run: |
+        git config --global --add safe.directory "$GITHUB_WORKSPACE"
+        reuse --version
+        reuse spdx > "$RUNNER_TEMP/reuse.spdx"
+
+    - name: SPDX checks
+      run: |
+        ./scripts/spdx_check_all_files.py "$RUNNER_TEMP/reuse.spdx"
+
+        # `reuse spdx` will coalesce multiple identical copyright headerts
+        if grep -Pzlr '(?s)Copyright \d{4}(-\d{4})? Element Creations Ltd\n.*Copyright \d{4}(-\d{4})? Element Creations Ltd' .; then
+          echo "Some files had more than 1 Element Creations Ltd header"
+          exit 1
+        fi
+
+    - name: Copyright dates
+      if: ${{ github.event_name == 'pull_request' }}
+      env:
+        BASE_REF: ${{ github.event.pull_request.base.sha }}
+        HEAD_REF: ${{ github.event.pull_request.head.sha }}
+      run: |
+        echo "Comparing $BASE_REF against current branch HEAD $(git rev-parse "$HEAD_REF")"
+
+        # Get the list of changed files
+        changed_files=$(git diff --diff-filter=rd --name-only "$BASE_REF...$HEAD_REF")
+        echo "Changed files to verify : $changed_files"
+
+        echo "$changed_files" | xargs ./scripts/spdx_check_changed_file.py "$RUNNER_TEMP/reuse.spdx"

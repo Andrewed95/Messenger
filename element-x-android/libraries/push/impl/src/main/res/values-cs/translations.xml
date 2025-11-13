@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:xliff="urn:oasis:names:tc:xliff:document:1.2">
+  <string name="notification_channel_call">"Hovor"</string>
+  <string name="notification_channel_listening_for_events">"Naslouchání událostem"</string>
+  <string name="notification_channel_noisy">"Hlasitá oznámení"</string>
+  <string name="notification_channel_ringing_calls">"Vyzvánění hovorů"</string>
+  <string name="notification_channel_silent">"Tichá oznámení"</string>
+  <plurals name="notification_compat_summary_line_for_room">
+    <item quantity="one">"%1$s: %2$d zpráva"</item>
+    <item quantity="few">"%1$s: %2$d zprávy"</item>
+    <item quantity="other">"%1$s: %2$d zpráv"</item>
+  </plurals>
+  <plurals name="notification_compat_summary_title">
+    <item quantity="one">"%d oznámení"</item>
+    <item quantity="few">"%d oznámení"</item>
+    <item quantity="other">"%d oznámení"</item>
+  </plurals>
+  <string name="notification_fallback_content">"Oznámení"</string>
+  <string name="notification_incoming_call">"📹 Příchozí hovor"</string>
+  <string name="notification_inline_reply_failed">"** Nepodařilo se odeslat - otevřete prosím místnost"</string>
+  <string name="notification_invitation_action_join">"Vstoupit"</string>
+  <string name="notification_invitation_action_reject">"Odmítnout"</string>
+  <plurals name="notification_invitations">
+    <item quantity="one">"%d pozvánka"</item>
+    <item quantity="few">"%d pozvánky"</item>
+    <item quantity="other">"%d pozvánek"</item>
+  </plurals>
+  <string name="notification_invite_body">"Vás pozval(a) do chatu"</string>
+  <string name="notification_invite_body_with_sender">"%1$s vás pozval(a) do chatu"</string>
+  <string name="notification_mentioned_you_body">"Zmínili vás: %1$s"</string>
+  <string name="notification_new_messages">"Nové zprávy"</string>
+  <plurals name="notification_new_messages_for_room">
+    <item quantity="one">"%d nová zpráva"</item>
+    <item quantity="few">"%d nové zprávy"</item>
+    <item quantity="other">"%d nových zpráv"</item>
+  </plurals>
+  <string name="notification_reaction_body">"Reagoval(a) s %1$s"</string>
+  <string name="notification_room_action_mark_as_read">"Označit jako přečtené"</string>
+  <string name="notification_room_action_quick_reply">"Rychlá odpověď"</string>
+  <string name="notification_room_invite_body">"Vás pozval(a) do místnosti"</string>
+  <string name="notification_room_invite_body_with_sender">"%1$s vás pozval(a) do místnosti"</string>
+  <string name="notification_sender_me">"Já"</string>
+  <string name="notification_sender_mention_reply">"%1$s zmínil(a) nebo odpověděl(a)"</string>
+  <string name="notification_test_push_notification_content">"Prohlížíte si oznámení! Klikněte na mě!"</string>
+  <string name="notification_ticker_text_dm">"%1$s: %2$s"</string>
+  <string name="notification_ticker_text_group">"%1$s: %2$s %3$s"</string>
+  <plurals name="notification_unread_notified_messages">
+    <item quantity="one">"%d nepřečtená oznámená zpráva"</item>
+    <item quantity="few">"%d nepřečtené oznámené zprávy"</item>
+    <item quantity="other">"%d nepřečtených oznámených zpráv"</item>
+  </plurals>
+  <string name="notification_unread_notified_messages_and_invitation">"%1$s a %2$s"</string>
+  <string name="notification_unread_notified_messages_in_room">"%1$s in %2$s"</string>
+  <string name="notification_unread_notified_messages_in_room_and_invitation">"%1$s v %2$s a %3$s"</string>
+  <plurals name="notification_unread_notified_messages_in_room_rooms">
+    <item quantity="one">"%d místnost"</item>
+    <item quantity="few">"%d místnosti"</item>
+    <item quantity="other">"%d místností"</item>
+  </plurals>
+  <string name="push_distributor_background_sync_android">"Synchronizace na pozadí"</string>
+  <string name="push_distributor_firebase_android">"Služby Google"</string>
+  <string name="push_no_valid_google_play_services_apk_android">"Nebyly nalezeny žádné funkční služby Google Play. Oznámení nemusí fungovat správně."</string>
+  <string name="troubleshoot_notifications_test_blocked_users_description">"Kontrola blokovaných uživatelů"</string>
+  <string name="troubleshoot_notifications_test_blocked_users_quick_fix">"Zobrazit blokované uživatele"</string>
+  <string name="troubleshoot_notifications_test_blocked_users_result_none">"Žádní uživatelé nejsou blokováni."</string>
+  <plurals name="troubleshoot_notifications_test_blocked_users_result_some">
+    <item quantity="one">"Zablokovali jste %1$d uživatele. Nebudete dostávat oznámení od tohoto uživatele."</item>
+    <item quantity="few">"Zablokovali jste %1$d uživatele. Nebudete dostávat oznámení od těchto uživatelů."</item>
+    <item quantity="other">"Zablokovali jste %1$d uživatelů. Nebudete dostávat oznámení od těchto uživatelů."</item>
+  </plurals>
+  <string name="troubleshoot_notifications_test_blocked_users_title">"Blokovaní uživatelé"</string>
+  <string name="troubleshoot_notifications_test_current_push_provider_description">"Získat název aktuálního poskytovatele."</string>
+  <string name="troubleshoot_notifications_test_current_push_provider_failure">"Nebyli vybráni žádní push poskytovatelé."</string>
+  <string name="troubleshoot_notifications_test_current_push_provider_failure_distributor_not_found">"Aktuální poskytovatel push oznámení: %1$s a současný distributor: %2$s. Ale distributor %3$s nebyl nalezen. Možná byla aplikace odinstalována?"</string>
+  <string name="troubleshoot_notifications_test_current_push_provider_failure_no_distributor">"Aktuální poskytovatel push oznámení: %1$s , ale nebyli nakonfigurováni žádní distributoři."</string>
+  <string name="troubleshoot_notifications_test_current_push_provider_success">"Aktuální push poskytovatel: %1$s."</string>
+  <string name="troubleshoot_notifications_test_current_push_provider_success_with_distributor">"Aktuální poskytovatel push oznámení: %1$s (%2$s)"</string>
+  <string name="troubleshoot_notifications_test_current_push_provider_title">"Aktuální push poskytovatel"</string>
+  <string name="troubleshoot_notifications_test_detect_push_provider_description">"Ujistěte se, že aplikace má alespoň jednoho push poskytovatele."</string>
+  <string name="troubleshoot_notifications_test_detect_push_provider_failure">"Nebyli nalezeni žádní push poskytovatelé."</string>
+  <plurals name="troubleshoot_notifications_test_detect_push_provider_success">
+    <item quantity="one">"Nalezen %1$d push poskytovatel: %2$s"</item>
+    <item quantity="few">"Nalezeni %1$d push poskytovatelé: %2$s"</item>
+    <item quantity="other">"Nalezeno %1$d push poskytovatelů: %2$s"</item>
+  </plurals>
+  <string name="troubleshoot_notifications_test_detect_push_provider_success_2">"Aplikace byla vytvořena s podporou: %1$s"</string>
+  <string name="troubleshoot_notifications_test_detect_push_provider_title">"Zjistit push poskytovatele"</string>
+  <string name="troubleshoot_notifications_test_display_notification_description">"Zkontrolujte, zda aplikace může zobrazit oznámení."</string>
+  <string name="troubleshoot_notifications_test_display_notification_failure">"Na oznámení nebylo kliknuto."</string>
+  <string name="troubleshoot_notifications_test_display_notification_permission_failure">"Oznámení nelze zobrazit."</string>
+  <string name="troubleshoot_notifications_test_display_notification_success">"Na oznámení bylo kliknuto!"</string>
+  <string name="troubleshoot_notifications_test_display_notification_title">"Zobrazit oznámení"</string>
+  <string name="troubleshoot_notifications_test_display_notification_waiting">"Kliknutím na oznámení pokračujte v testu."</string>
+  <string name="troubleshoot_notifications_test_push_loop_back_description">"Ujistěte se, že aplikace přijímá push."</string>
+  <string name="troubleshoot_notifications_test_push_loop_back_failure_1">"Chyba: pusher odmítl požadavek."</string>
+  <string name="troubleshoot_notifications_test_push_loop_back_failure_2">"Chyba: %1$s."</string>
+  <string name="troubleshoot_notifications_test_push_loop_back_failure_3">"Chyba, nelze otestovat push."</string>
+  <string name="troubleshoot_notifications_test_push_loop_back_failure_4">"Chyba, časový limit čekání na push."</string>
+  <string name="troubleshoot_notifications_test_push_loop_back_success">"Push zpětná smyčka trvala %1$d ms."</string>
+  <string name="troubleshoot_notifications_test_push_loop_back_title">"Otestovat push zpětnou smyčku"</string>
+</resources>

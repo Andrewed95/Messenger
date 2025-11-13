@@ -1,0 +1,109 @@
+package annotations
+
+import (
+	"fmt"
+
+	"github.com/haproxytech/client-native/v6/models"
+
+	v3 "github.com/haproxytech/kubernetes-ingress/crs/api/ingress/v3"
+	"github.com/haproxytech/kubernetes-ingress/pkg/annotations/common"
+	"github.com/haproxytech/kubernetes-ingress/pkg/store"
+)
+
+// ModelBackend takes an annotation holding the path of a backend cr and returns corresponding Backend model
+func ModelBackend(name, defaultNS string, k store.K8s, annotations ...map[string]string) (backend *v3.BackendSpec, err error) {
+	b, modelErr := model(name, defaultNS, 3, k, annotations...)
+	if modelErr != nil {
+		err = modelErr
+		return backend, err
+	}
+	if b != nil {
+		backend = b.(*v3.BackendSpec) //nolint:forcetypeassert
+	}
+	return backend, err
+}
+
+// ModelDefaults takes an annotation holding the path of a defaults cr and returns corresponding Defaults model
+func ModelDefaults(name, defaultNS string, k store.K8s, annotations ...map[string]string) (defaults *models.Defaults, err error) {
+	d, modelErr := model(name, defaultNS, 2, k, annotations...)
+	if modelErr != nil {
+		err = modelErr
+		return defaults, err
+	}
+	if d != nil {
+		defaults = d.(*models.Defaults)
+	}
+	return defaults, err
+}
+
+// ModelGlobal takes an annotation holding the path of a global cr and returns corresponding Global model
+func ModelGlobal(name, defaultNS string, k store.K8s, annotations ...map[string]string) (global *models.Global, err error) {
+	g, modelErr := model(name, defaultNS, 0, k, annotations...)
+	if modelErr != nil {
+		err = modelErr
+		return global, err
+	}
+	if g != nil {
+		global = g.(*models.Global)
+	}
+	return global, err
+}
+
+// ModelLog takes an annotation holding the path of a global cr and returns corresponding LogTargerts model
+func ModelLog(name, defaultNS string, k store.K8s, annotations ...map[string]string) (log models.LogTargets, err error) {
+	l, modelErr := model(name, defaultNS, 1, k, annotations...)
+	if modelErr != nil {
+		err = modelErr
+		return log, err
+	}
+	if l != nil {
+		log = l.(models.LogTargets) //nolint:forcetypeassert
+	}
+	return log, err
+}
+
+func model(name, defaultNS string, crType int, k store.K8s, annotations ...map[string]string) (model interface{}, err error) {
+	var crNS, crName string
+	crNS, crName, err = common.GetK8sPath(name, annotations...)
+	if err != nil {
+		err = fmt.Errorf("annotation '%s': %w", name, err)
+		return model, err
+	}
+	if crName == "" {
+		return model, err
+	}
+	if crNS == "" {
+		crNS = defaultNS
+	}
+	ns, nsOk := k.Namespaces[crNS]
+	if !nsOk {
+		return nil, fmt.Errorf("annotation %s: custom resource '%s/%s' doest not exist, namespace not found", name, crNS, crName)
+	}
+	switch crType {
+	case 0:
+		global, globalOk := ns.CRs.Global[crName]
+		if !globalOk {
+			return nil, fmt.Errorf("annotation %s: custom resource '%s/%s' doest not exist", name, crNS, crName)
+		}
+		return global, nil
+	case 1:
+		global, globalOk := ns.CRs.Global[crName]
+		if !globalOk {
+			return nil, fmt.Errorf("annotation %s: custom resource '%s/%s' doest not exist", name, crNS, crName)
+		}
+		return global.LogTargetList, nil
+	case 2:
+		defaults, defaultsOk := ns.CRs.Defaults[crName]
+		if !defaultsOk {
+			return nil, fmt.Errorf("annotation %s: custom resource '%s/%s' doest not exist", name, crNS, crName)
+		}
+		return defaults, nil
+	case 3:
+		backend, backendOk := ns.CRs.Backends[crName]
+		if !backendOk {
+			return nil, fmt.Errorf("annotation %s: custom resource '%s/%s' doest not exist", name, crNS, crName)
+		}
+		return backend, nil
+	}
+	return nil, nil //nolint:nilnil
+}

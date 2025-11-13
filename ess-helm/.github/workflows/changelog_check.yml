@@ -1,0 +1,65 @@
+# Copyright 2025 New Vector Ltd
+# Copyright 2025 Element Creations Ltd
+#
+# SPDX-License-Identifier: AGPL-3.0-only
+
+name: Changelog
+on:
+  pull_request:
+  push:
+    branches:
+    - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check-newsfile:
+    if: ${{ (github.event_name == 'pull_request') && (github.base_ref == 'main' || contains(github.base_ref, 'release-')) && github.actor != 'dependabot[bot]' && github.actor != 'github-actions[bot]' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5
+        with:
+          fetch-depth: 0
+
+      - uses: matrix-org/setup-python-poetry@5bbf6603c5c930615ec8a29f1b5d7d258d905aa4  # v2
+        with:
+          python-version: "3.x"
+
+      - name: Load poetry path
+        run: |
+          echo "$(poetry env info -p)/bin" >> "${GITHUB_PATH}"
+
+      - name: Run towncrier check
+        env:
+          GHEVENTNUMBER: ${{ github.event.number }}
+        run: |
+          # Fix/workaround for "detected dubious ownership in repository"
+          git config --global --add safe.directory "${GITHUB_WORKSPACE}"
+          scripts/check_newsfragment.sh "${GHEVENTNUMBER}"
+
+  preview-changelog:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5
+
+      - uses: matrix-org/setup-python-poetry@5bbf6603c5c930615ec8a29f1b5d7d258d905aa4  # v2
+        with:
+          python-version: "3.x"
+
+      - name: Load poetry path
+        run: |
+          echo "$(poetry env info -p)/bin" >> "${GITHUB_PATH}"
+
+      - name: Run towncrier build --draft
+        run: |
+          version=$(yq '.version' charts/matrix-stack/Chart.yaml)
+
+          echo "CHANGELOG.md will look like:"
+          towncrier build --draft --version "$version"
+          echo ""
+
+          echo "artifacthub.io's changes will look like:"
+          ./scripts/towncrier_to_helm_annotation.py charts/matrix-stack
+          yq '.annotations["artifacthub.io/changes"]' charts/matrix-stack/Chart.yaml

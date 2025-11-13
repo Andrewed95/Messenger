@@ -1,0 +1,15 @@
+apiVersion: v2
+name: element-call
+description: A Helm chart for Element Call
+icon: https://avatars.githubusercontent.com/u/13446337?s=48&v=4
+type: application
+
+# This version number should be incremented each time you make changes
+# to the chart and its templates, including the app version.
+version: "0.2.2"
+
+# This version number should be incremented each time you make changes
+# to the application.
+# Track the appVersion based on the image:
+# renovate: image=ghcr.io/element-hq/element-call
+appVersion: "v0.5.14"

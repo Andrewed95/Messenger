@@ -1,0 +1,17 @@
+---
+tcpmodel:
+  name: service2
+  frontend:
+    frontendbase:
+      name: fe2
+    binds:
+      acceptproxy:
+        port: 2
+        accept_proxy: true
+      other:
+        port: 22
+  service:
+    name: service2
+    port: 443
+namespace: ns
+creation_timestamp: 2024-05-16T11:45:26.371Z

@@ -1,0 +1,17 @@
+# Copyright 2025 New Vector Ltd
+# Copyright 2025 Element Creations Ltd
+#
+# SPDX-License-Identifier: AGPL-3.0-only
+
+elementAdmin:
+  ingress:
+    host: admin.{{ $.Values.serverName }}
+    tlsSecret: "{{ $.Release.Name }}-element-admin-tls"
+
+  replicas: 2
+
+  annotations:
+    has-no-service-monitor: "true"
+
+  podSecurityContext:
+    runAsGroup: 0

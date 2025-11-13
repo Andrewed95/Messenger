@@ -1,0 +1,112 @@
+{
+  "$id": "file://matrix-stack/",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "global": {
+      "$ref": "file://common/global.json"
+    },
+    "serverName": {
+      "type": "string"
+    },
+    "labels": {
+      "$ref": "file://common/labels.json"
+    },
+    "certManager": {
+      "type": "object",
+      "properties": {
+        "clusterIssuer": {
+          "type": "string"
+        },
+        "issuer": {
+          "type": "string"
+        }
+      }
+    },
+    "matrixTools": {
+      "type": "object",
+      "properties": {
+        "image": {
+          "$ref": "file://common/image.json"
+        }
+      }
+    },
+    "imagePullSecrets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "image": {
+      "type": "object",
+      "properties": {
+        "pullPolicy": {
+          "type": "string",
+          "enum": [
+            "Always",
+            "IfNotPresent",
+            "Never"
+          ]
+        },
+        "pullSecrets": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "ingress": {
+      "$ref": "file://common/ingress_global.json"
+    },
+    "tolerations": {
+      "$ref": "file://common/tolerations.json"
+    },
+    "topologySpreadConstraints": {
+      "$ref": "file://common/topologySpreadConstraints.json"
+    },
+    "clusterDomain": {
+      "type": "string"
+    },
+    "deploymentMarkers": {
+      "$ref": "file://deployment-markers.json"
+    },
+    "initSecrets": {
+      "$ref": "file://init-secrets.json"
+    },
+    "matrixRTC": {
+      "$ref": "file://matrix-rtc.json"
+    },
+    "elementAdmin": {
+      "$ref": "file://element-admin.json"
+    },
+    "elementWeb": {
+      "$ref": "file://element-web.json"
+    },
+    "haproxy": {
+      "$ref": "file://haproxy.json"
+    },
+    "matrixAuthenticationService": {
+      "$ref": "file://matrixAuthenticationService.json"
+    },
+    "postgres": {
+      "$ref": "file://postgres.json"
+    },
+    "synapse": {
+      "$ref": "file://synapse.json"
+    },
+    "wellKnownDelegation": {
+      "$ref": "file://wellKnownDelegation.json"
+    }
+  }
+}
