@@ -1,19 +1,14 @@
 # -*- coding: utf-8 -*-
-# Copyright 2014 OpenMarket Ltd
-# Copyright 2017 Vector Creations Ltd
-# Copyright 2019-2020 The Matrix.org Foundation C.I.C.
+# Copyright 2025 New Vector Ltd.
+# Copyright 2019, 2020 The Matrix.org Foundation C.I.C.
+# Copyright 2017 Vector Creations Ltd.
+# Copyright 2014 OpenMarket Ltd.
 #
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
+# SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+# Please see LICENSE files in the repository root for full details.
 #
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# Originally licensed under the Apache License, Version 2.0:
+# <http://www.apache.org/licenses/LICENSE-2.0>.
 import asyncio
 import base64
 import copy
@@ -111,6 +106,7 @@ class ApnsPushkin(ConcurrencyLimitedPushkin):
         "topic",
         "push_type",
         "convert_device_token_to_hex",
+        "send_badge_counts",
     } | ConcurrencyLimitedPushkin.UNDERSTOOD_CONFIG_FIELDS
 
     APNS_PUSH_TYPES = {
@@ -318,12 +314,16 @@ class ApnsPushkin(ConcurrencyLimitedPushkin):
                     )
                     return [device.pushkey]
 
+            send_badge_counts = self.get_config("send_badge_counts", bool, True)
+
             if n.event_id and not n.type:
                 payload: Optional[Dict[str, Any]] = self._get_payload_event_id_only(
-                    n, default_payload
+                    n,
+                    default_payload,
+                    send_badge_counts,
                 )
             else:
-                payload = self._get_payload_full(n, device, log)
+                payload = self._get_payload_full(n, device, log, send_badge_counts)
 
             if payload is None:
                 # Nothing to do
@@ -386,7 +386,10 @@ class ApnsPushkin(ConcurrencyLimitedPushkin):
             raise NotificationDispatchException("Retried too many times.")
 
     def _get_payload_event_id_only(
-        self, n: Notification, default_payload: Dict[str, Any]
+        self,
+        n: Notification,
+        default_payload: Dict[str, Any],
+        send_badge_counts: bool,
     ) -> Dict[str, Any]:
         """
         Constructs a payload for a notification where we know only the event ID.
@@ -394,6 +397,7 @@ class ApnsPushkin(ConcurrencyLimitedPushkin):
             n: The notification to construct a payload for.
             device: Device information to which the constructed payload
             will be sent.
+            send_badge_counts: if `True`, the `unread_count` and `missed_calls` fields will be included.
 
         Returns:
             The APNs payload as a nested dicts.
@@ -407,15 +411,20 @@ class ApnsPushkin(ConcurrencyLimitedPushkin):
         if n.event_id:
             payload["event_id"] = n.event_id
 
-        if n.counts.unread is not None:
-            payload["unread_count"] = n.counts.unread
-        if n.counts.missed_calls is not None:
-            payload["missed_calls"] = n.counts.missed_calls
+        if send_badge_counts:
+            if n.counts.unread is not None:
+                payload["unread_count"] = n.counts.unread
+            if n.counts.missed_calls is not None:
+                payload["missed_calls"] = n.counts.missed_calls
 
         return payload
 
     def _get_payload_full(
-        self, n: Notification, device: Device, log: NotificationLoggerAdapter
+        self,
+        n: Notification,
+        device: Device,
+        log: NotificationLoggerAdapter,
+        send_badge_counts: bool,
     ) -> Optional[Dict[str, Any]]:
         """
         Constructs a payload for a notification.
@@ -528,12 +537,13 @@ class ApnsPushkin(ConcurrencyLimitedPushkin):
             loc_args = [from_display]
 
         badge = None
-        if n.counts.unread is not None:
-            badge = n.counts.unread
-        if n.counts.missed_calls is not None:
-            if badge is None:
-                badge = 0
-            badge += n.counts.missed_calls
+        if send_badge_counts:
+            if n.counts.unread is not None:
+                badge = n.counts.unread
+            if n.counts.missed_calls is not None:
+                if badge is None:
+                    badge = 0
+                badge += n.counts.missed_calls
 
         if loc_key is None and badge is None:
             log.info("Nothing to do for alert of type %s", n.type)

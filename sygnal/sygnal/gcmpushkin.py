@@ -1,19 +1,13 @@
 # -*- coding: utf-8 -*-
+# Copyright 2017-2025 New Vector Ltd.
+# Copyright 2019, 2020 The Matrix.org Foundation C.I.C.
 # Copyright 2014 Leon Handreke
-# Copyright 2017 New Vector Ltd
-# Copyright 2019-2020 The Matrix.org Foundation C.I.C.
 #
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
+# SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+# Please see LICENSE files in the repository root for full details.
 #
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# Originally licensed under the Apache License, Version 2.0:
+# <http://www.apache.org/licenses/LICENSE-2.0>.
 import asyncio
 import json
 import logging
@@ -132,6 +126,7 @@ class GcmPushkin(ConcurrencyLimitedPushkin):
         "max_connections",
         "project_id",
         "service_account_file",
+        "send_badge_counts",
     } | ConcurrencyLimitedPushkin.UNDERSTOOD_CONFIG_FIELDS
 
     def __init__(self, name: str, sygnal: "Sygnal", config: Dict[str, Any]) -> None:
@@ -544,7 +539,10 @@ class GcmPushkin(ConcurrencyLimitedPushkin):
             # TODO: Implement collapse_key to queue only one message per room.
             failed: List[str] = []
 
-            data = GcmPushkin._build_data(n, device, self.api_version)
+            send_badge_counts = self.get_config("send_badge_counts", bool, True)
+            data = GcmPushkin._build_data(
+                n, device, self.api_version, send_badge_counts
+            )
 
             # Reject pushkey(s) if default_payload is misconfigured
             if data is None:
@@ -553,6 +551,9 @@ class GcmPushkin(ConcurrencyLimitedPushkin):
                     "please ensure that default_payload is a dict."
                 )
                 return pushkeys
+            elif len(data) == 0:
+                log.warning("Discarding notification since it contains no data.")
+                return []
 
             headers = {
                 "User-Agent": ["sygnal"],
@@ -657,6 +658,7 @@ class GcmPushkin(ConcurrencyLimitedPushkin):
         n: Notification,
         device: Device,
         api_version: APIVersion,
+        send_badge_counts: bool,
     ) -> Optional[Dict[str, Any]]:
         """
         Build the payload data to be sent.
@@ -664,9 +666,13 @@ class GcmPushkin(ConcurrencyLimitedPushkin):
             n: Notification to build the payload for.
             device: Device information to which the constructed payload
             will be sent.
+            api_version: API version used by Firebase/GCM.
+            send_badge_counts: If set to `True`, will send the unread and missed_call counts.
 
         Returns:
-            JSON-compatible dict or None if the default_payload is misconfigured
+            JSON-compatible dict. The dict will be empty if the payload was
+            discarded. In this case, the notification should be ignored. Can
+            instead be `None` if the `default_payload` is misconfigured.
         """
         data = {}
         overflow_fields = 0
@@ -693,17 +699,19 @@ class GcmPushkin(ConcurrencyLimitedPushkin):
             "room_id",
         ]:
             if hasattr(n, attr):
-                data[attr] = getattr(n, attr)
+                current = getattr(n, attr)
+                if current is None:
+                    continue
                 # Truncate fields to a sensible maximum length. If the whole
                 # body is too long, GCM will reject it.
-                if data[attr] is not None and isinstance(data[attr], str):
+                if current is not None and isinstance(current, str):
                     # The only `attr` that shouldn't be of type `str` is `content`,
                     # which is handled explicitly later on.
-                    data[attr], truncated = truncate_str(
-                        data[attr], MAX_BYTES_PER_FIELD
-                    )
+                    data[attr], truncated = truncate_str(current, MAX_BYTES_PER_FIELD)
                     if truncated:
                         overflow_fields += 1
+                elif attr == "content" and current is not None:
+                    data["content"] = current
 
         if api_version is APIVersion.V1:
             if isinstance(data.get("content"), dict):
@@ -720,13 +728,28 @@ class GcmPushkin(ConcurrencyLimitedPushkin):
         if n.prio == "low":
             data["prio"] = "normal"
 
-        if getattr(n, "counts", None):
+        counts: Dict[str, Any] = {}
+        if send_badge_counts and getattr(n, "counts", None):
             if api_version is APIVersion.Legacy:
-                data["unread"] = n.counts.unread
-                data["missed_calls"] = n.counts.missed_calls
+                if n.counts.unread:
+                    counts["unread"] = n.counts.unread
+                if n.counts.missed_calls:
+                    counts["missed_calls"] = n.counts.missed_calls
             elif api_version is APIVersion.V1:
-                data["unread"] = str(n.counts.unread)
-                data["missed_calls"] = str(n.counts.missed_calls)
+                if n.counts.unread:
+                    counts["unread"] = str(n.counts.unread)
+                if n.counts.missed_calls:
+                    counts["missed_calls"] = str(n.counts.missed_calls)
+
+        if not data.get("room_id") and not data.get("event_id") and not counts:
+            logger.debug(
+                "Notification is badge-only but contains no badge count values. Discarding data. "
+                + "If this is not intended, check the `send_badge_counts` parameter in the config."
+            )
+            return {}
+
+        # Add count data to the payload data
+        data.update(counts)
 
         if overflow_fields > MAX_NOTIFICATION_OVERFLOW_FIELDS:
             logger.warning(

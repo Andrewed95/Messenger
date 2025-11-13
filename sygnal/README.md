@@ -1,16 +1,7 @@
-Sygnal is now actively maintained at [element-hq/sygnal](https://github.com/element-hq/sygnal)
-=================================================================================================
-
-Sygnal is a reference Push Gateway for [Matrix](https://matrix.org/)
-developed from 2019 through 2025 as part of the Matrix.org Foundation.
-The Matrix.org Foundation is not able to resource maintenance of Sygnal
-and it continues to be developed by Element.
-
-See [The future of Synapse and Dendrite blog post](https://matrix.org/blog/2023/11/06/future-of-synapse-dendrite/) for more information.
-
-
 Introduction
 ============
+
+Sygnal is a reference Push Gateway for [Matrix](https://matrix.org/).
 
 See https://spec.matrix.org/latest/push-gateway-api/#overview for a high
 level overview of how notifications work in Matrix.
@@ -18,6 +9,14 @@ level overview of how notifications work in Matrix.
 The [Matrix Specification](https://spec.matrix.org/latest/push-gateway-api/)
 describes the protocol that Matrix Home Servers use to send notifications to Push
 Gateways such as Sygnal.
+
+Community support and discussion occurs at [#sygnal:matrix.org](https://matrix.to/#/#sygnal:matrix.org).
+
+
+Contributing
+============
+
+Looking to contribute to Sygnal? See [CONTRIBUTING.md](CONTRIBUTING.md)
 
 
 Setup
@@ -194,3 +193,20 @@ More documentation for Sygnal is available in the `docs` directory:
 
 -   [Notes for Application Developers](docs/applications.md)
 -   [Troubleshooting](docs/troubleshooting.md)
+
+
+Copyright and Licensing
+=======================
+
+Copyright 2014-2017 OpenMarket Ltd
+Copyright 2017 Vector Creations Ltd  
+Copyright 2017-2025 The Matrix.org Foundation C.I.C  
+Copyright 2017-2025 New Vector Ltd  
+
+This software is dual licensed by New Vector Ltd (Element). It can be used either:
+
+(1) for free under the terms of the GNU Affero General Public License (as published by the Free Software Foundation, version 3 of the License; OR
+
+(2) under the terms of a paid-for Element Commercial License agreement between you and Element (the terms of which may vary depending on what you and Element have agreed to).
+
+Unless required by applicable law or agreed to in writing, software distributed under the Licenses is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the Licenses for the specific language governing permissions and limitations under the Licenses.

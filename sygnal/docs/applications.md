@@ -1,9 +1,3 @@
-# This documentation is out of date!
-
-This documentation page is for the versions of Sygnal maintained by the _Matrix.org Foundation_ ([github.com/matrix-org/dendrite](https://github.com/matrix-org/dendrite)), available under the Apache 2.0 licence.
-
-If you are interested in the documentation for a later version of Dendrite, please refer to [https://element-hq.github.io/dendrite/](https://element-hq.github.io/dendrite/).
-
 # Notes for application developers
 
 This document aims to illustrate some of the quirks, peculiarities and other
@@ -212,7 +206,7 @@ endpoint in order to trigger the correct type of notification.
 The Notification Service Extension of *Element iOS*, [available here][ElementNSE],
 may be useful for reference.
 
-[ElementNSE]: https://github.com/vector-im/element-ios/blob/034e253fb19092ef16b5262293d5c32db96aec22/RiotNSE/NotificationService.swift
+[ElementNSE]: https://github.com/element-hq/element-ios/blob/034e253fb19092ef16b5262293d5c32db96aec22/RiotNSE/NotificationService.swift
 
 
 ### Firebase Cloud Messaging
