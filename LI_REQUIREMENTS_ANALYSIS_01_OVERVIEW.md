@@ -1,191 +1,149 @@
-# Lawful Interception (LI) Requirements - Feasibility Analysis
-## Part 1: Overview and Architecture
+# Lawful Interception (LI) Requirements - Implementation Guide
+## Part 1: System Architecture & Key Vault
 
-**Document Version:** 1.0
-**Analysis Date:** November 13, 2024
-**Analyzed By:** Comprehensive code review of Synapse, Element Web, Element X Android, Synapse Admin
-**Project Branch:** main
-
----
-
-## Executive Summary
-
-This document series provides a comprehensive feasibility analysis of implementing Lawful Interception (LI) capabilities for your Matrix/Synapse deployment. The analysis is broken into 5 parts:
-
-1. **Overview & Architecture** (this document)
-2. **Soft Delete & Message Preservation**
-3. **Key Backup & Session Management**
-4. **Statistics Dashboard**
-5. **Summary & Implementation Roadmap**
-
-### Overall Feasibility Assessment
-
-| Requirement | Feasibility | Complexity | Risk Level |
-|-------------|-------------|------------|------------|
-| synapse-li Django project | ✅ Feasible | Medium | Low |
-| Hidden instance deployment | ✅ Feasible | Low | Low |
-| Soft delete (never delete from DB) | ✅ Feasible | Medium | Medium |
-| Show deleted messages in hidden instance | ⚠️ Partially feasible | High | High |
-| Automatic key backup config | ⚠️ Limited | Low | Low |
-| Session limits per user | ✅ Feasible | Low-Medium | Low |
-| Statistics dashboard | ✅ Feasible | Medium-High | Low |
-| Antivirus stats integration | ✅ Feasible | Medium | Low |
-
-**Legend:**
-- ✅ Feasible - Can be implemented as requested
-- ⚠️ Partially feasible - Possible with modifications/limitations
-- ❌ Not feasible - Cannot be implemented or high risk
+**Document Version:** 2.0
+**Last Updated:** November 16, 2025
+**Project Structure:**
+- **Main Instance**: synapse, element-web, synapse-admin, key_vault (Django)
+- **Hidden Instance**: synapse-li, element-web-li, synapse-admin-li
 
 ---
 
-## Document Structure
-
-### Part 1: Overview & Architecture (this file)
-- System overview
-- Core architecture
-- synapse-li implementation
-- Client modifications required
-
-### Part 2: Soft Delete & Message Preservation
-- Synapse's current deletion mechanism
-- Implementing true soft delete
-- Database schema changes
-- Upstream compatibility
-
-### Part 3: Key Backup & Session Management
-- Element Web/Android key backup analysis
-- Session limit implementation
-- Client configuration options
-
-### Part 4: Statistics Dashboard
-- Synapse-admin integration
-- Available statistics
-- Database queries
-- Antivirus integration
-
-### Part 5: Summary & Recommendations
-- Implementation priorities
-- Risk assessment
-- Timeline estimates
-- Alternative approaches
+## Table of Contents
+1. [System Architecture](#1-system-architecture)
+2. [key_vault Django Service](#2-key_vault-django-service)
+3. [Encryption Strategy](#3-encryption-strategy)
+4. [Synapse Authentication Proxy](#4-synapse-authentication-proxy)
+5. [Client Modifications](#5-client-modifications)
+6. [Hidden Instance Sync System](#6-hidden-instance-sync-system)
 
 ---
 
-## Part 1A: System Architecture Overview
+## 1. System Architecture
 
-### Current Understanding
+### 1.1 Overview
 
-Your requirements involve creating a dual-instance deployment:
+The LI system consists of two separate deployments:
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                        MAIN PRODUCTION INSTANCE                      │
-├─────────────────────────────────────────────────────────────────────┤
-│                                                                       │
-│  ┌──────────────┐      ┌──────────────┐      ┌──────────────┐      │
-│  │   Synapse    │──────│  PostgreSQL  │──────│    MinIO     │      │
-│  │   + Workers  │      │   Cluster    │      │   (Media)    │      │
-│  └──────────────┘      └──────────────┘      └──────────────┘      │
-│         │                                                             │
-│         │ (authenticated request)                                    │
-│         ▼                                                             │
-│  ┌──────────────┐                                                    │
-│  │ synapse-li   │◄────── Stores encrypted passphrases/recovery keys │
-│  │  (Django)    │                                                    │
-│  └──────────────┘                                                    │
-│         ▲                                                             │
-│         │                                                             │
-│  ┌──────────────┐                                                    │
-│  │   Clients    │                                                    │
-│  │ - Element Web│──── Send passphrase/recovery key on set/reset     │
-│  │ - Element X  │                                                    │
-│  └──────────────┘                                                    │
-│                                                                       │
-│  Daily Backup ────────┐                                              │
-└───────────────────────┼──────────────────────────────────────────────┘
-                        │
-                        ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                    HIDDEN LI INSTANCE (Single Server)                │
-├─────────────────────────────────────────────────────────────────────┤
-│                                                                       │
-│  ┌──────────────┐      ┌──────────────┐      ┌──────────────┐      │
-│  │   Synapse    │──────│  PostgreSQL  │──────│    MinIO     │      │
-│  │   (single)   │      │   (single)   │      │   (Media)    │      │
-│  └──────────────┘      └──────────────┘      └──────────────┘      │
-│         │                      ▲                      ▲              │
-│         │                      │                      │              │
-│  ┌──────────────┐      Synced Daily           Synced Daily          │
-│  │ Element Web  │      from main               from main            │
-│  └──────────────┘      instance                instance              │
-│         │                                                             │
-│  ┌──────────────┐                                                    │
-│  │Synapse Admin │                                                    │
-│  └──────────────┘                                                    │
-│         │                                                             │
-│  ┌──────────────┐                                                    │
-│  │ synapse-li   │──── Admin retrieves passphrases to decrypt keys   │
-│  │  (Django)    │                                                    │
-│  └──────────────┘                                                    │
-│         │                                                             │
-│         ▼                                                             │
-│  Admin User: Impersonates any user to view encrypted messages       │
-│                                                                       │
-└─────────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                    MAIN PRODUCTION INSTANCE                  │
+├─────────────────────────────────────────────────────────────┤
+│                                                               │
+│  ┌────────────┐    ┌──────────────┐    ┌────────────────┐  │
+│  │  synapse   │───>│ PostgreSQL   │    │   key_vault    │  │
+│  │  + workers │    │   Cluster    │    │   (Django)     │  │
+│  └────────────┘    └──────────────┘    └────────────────┘  │
+│         │                                        ▲           │
+│         │ Proxy auth                             │           │
+│         └────────────────────────────────────────┘           │
+│                                                               │
+│  ┌────────────┐    ┌────────────┐                           │
+│  │ element-web│    │synapse-admin│                           │
+│  └────────────┘    └────────────┘                           │
+│         ▲                  ▲                                  │
+│         │                  │                                  │
+│     Users send keys    Admin views stats                     │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              │ On-demand sync (Celery)
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    HIDDEN LI INSTANCE                        │
+│                   (Separate Server/Network)                  │
+├─────────────────────────────────────────────────────────────┤
+│                                                               │
+│  ┌────────────┐    ┌──────────────┐    ┌────────────────┐  │
+│  │ synapse-li │───>│ PostgreSQL   │    │ synapse-li     │  │
+│  │  (replica) │    │  (replica)   │    │  (Celery sync) │  │
+│  └────────────┘    └──────────────┘    └────────────────┘  │
+│                                                               │
+│  ┌──────────────┐  ┌──────────────────┐                     │
+│  │element-web-li│  │synapse-admin-li  │                     │
+│  │(shows deleted│  │(sync button)     │                     │
+│  │  messages)   │  └──────────────────┘                     │
+│  └──────────────┘                                            │
+│         ▲                                                     │
+│         │                                                     │
+│   Admin investigates (impersonates users)                    │
+└─────────────────────────────────────────────────────────────┘
 ```
+
+### 1.2 Project Naming
+
+| Component | Main Instance | Hidden Instance | Purpose |
+|-----------|---------------|-----------------|---------|
+| **Synapse** | synapse | synapse-li | Matrix homeserver |
+| **Element Web** | element-web | element-web-li | Web client (LI version shows deleted messages) |
+| **Synapse Admin** | synapse-admin | synapse-admin-li | Admin panel (LI version has sync button) |
+| **Key Storage** | key_vault (Django) | - | Stores encrypted passphrases/recovery keys |
+| **Sync Service** | - | synapse-li (Celery) | Syncs main→hidden instance |
+
+**Note**: The directory `synapse_li/` contains the `key_vault` Django project (renamed conceptually, directory name unchanged).
+
+### 1.3 Data Flow
+
+**Normal User Flow (Main Instance)**:
+1. User sets passphrase or recovery key in element-web
+2. element-web encrypts key with server's hardcoded public key (RSA)
+3. element-web sends encrypted payload to Synapse proxy endpoint
+4. Synapse validates user's access token
+5. Synapse proxies request to key_vault
+6. key_vault stores encrypted payload (checks hash for deduplication)
+
+**Admin Investigation Flow (Hidden Instance)**:
+1. Admin clicks sync button in synapse-admin-li
+2. Celery task syncs database + media from main instance
+3. Admin resets target user's password in synapse-li
+4. Admin retrieves user's latest encrypted key from key_vault
+5. Admin decrypts key using private key (kept secure offline)
+6. Admin logs in as user with reset password
+7. Admin verifies session with decrypted key
+8. Admin sees all rooms, messages (including deleted messages with styling)
 
 ---
 
-## Part 1B: synapse-li Django Project - Architecture
+## 2. key_vault Django Service
 
-### Overview
+### 2.1 Project Structure
 
-The synapse-li project is a Django REST Framework (DRF) application that securely stores user encryption passphrases and recovery keys for lawful interception purposes.
+Location: `/synapse_li/`
 
-### Current State
-
-**Location:** `/home/user/Messenger/synapse_li/`
-
-**Structure:**
 ```
 synapse_li/
 ├── manage.py
 ├── requirements.txt
 ├── .env.example
-├── synapse_li/          # Django project
+├── synapse_li/          # Django project settings
 │   ├── settings.py
 │   ├── urls.py
 │   ├── wsgi.py
 │   └── asgi.py
-└── secret/              # Django app (currently empty)
-    ├── models.py        # EMPTY - needs implementation
-    ├── views.py         # EMPTY - needs implementation
-    ├── admin.py
-    ├── apps.py
-    └── migrations/
+└── secret/              # Django app for key storage
+    ├── models.py        # User and EncryptedKey models
+    ├── views.py         # StoreKeyView API endpoint
+    ├── admin.py         # Django admin interface
+    ├── urls.py
+    └── apps.py
 ```
 
-### Required Implementation
+### 2.2 Database Models
 
-#### 1. Database Models
-
-**File:** `synapse_li/secret/models.py`
+**File**: `synapse_li/secret/models.py`
 
 ```python
 from django.db import models
 from django.utils import timezone
-from cryptography.fernet import Fernet
 import hashlib
 
+
 class User(models.Model):
-    """Matrix user identified by username (localpart@domain)"""
+    """User record for key storage (matches Synapse username)."""
     username = models.CharField(max_length=255, unique=True, db_index=True)
-    # Store full Matrix ID: @alice:example.com
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
+    created_at = models.DateTimeField(default=timezone.now)
 
     class Meta:
-        db_table = 'li_users'
+        db_table = 'secret_user'
         indexes = [
             models.Index(fields=['username']),
         ]
@@ -195,103 +153,84 @@ class User(models.Model):
 
 
 class EncryptedKey(models.Model):
-    """Stores encrypted passphrases/recovery keys with full history"""
+    """
+    Stores encrypted passphrase or recovery key for a user.
 
-    KEY_TYPE_CHOICES = [
-        ('passphrase', 'Passphrase'),
-        ('recovery_key', 'Recovery Key'),
-    ]
-
+    - Never delete records (full history preserved)
+    - Deduplication via payload_hash (only latest checked)
+    - Admin retrieves latest key for impersonation
+    """
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='keys')
-    key_type = models.CharField(max_length=20, choices=KEY_TYPE_CHOICES)
-
-    # Encrypted payload (client encrypts with server public key)
-    encrypted_payload = models.TextField()
-
-    # Hash of payload for deduplication
-    payload_hash = models.CharField(max_length=64, db_index=True)
-
-    # Metadata
-    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
-    client_ip = models.GenericIPAddressField(null=True, blank=True)
-    user_agent = models.TextField(null=True, blank=True)
-
-    # Matrix session info (from Synapse authentication)
-    matrix_device_id = models.CharField(max_length=255, null=True, blank=True)
-    matrix_access_token_id = models.BigIntegerField(null=True, blank=True)
+    key_type = models.CharField(max_length=20, db_index=True)  # 'passphrase' or 'recovery_key'
+    encrypted_payload = models.TextField()  # RSA-encrypted key
+    payload_hash = models.CharField(max_length=64, db_index=True)  # SHA256 hash for deduplication
+    created_at = models.DateTimeField(default=timezone.now, db_index=True)
 
     class Meta:
-        db_table = 'li_encrypted_keys'
-        ordering = ['-created_at']  # Latest first
+        db_table = 'secret_encrypted_key'
         indexes = [
-            models.Index(fields=['user', '-created_at']),
-            models.Index(fields=['payload_hash']),
-            models.Index(fields=['created_at']),
+            models.Index(fields=['user', '-created_at']),  # For latest key retrieval
+            models.Index(fields=['payload_hash']),  # For deduplication check
         ]
+        ordering = ['-created_at']  # Latest first
+
+    def save(self, *args, **kwargs):
+        # Auto-calculate hash if not provided
+        if not self.payload_hash:
+            self.payload_hash = hashlib.sha256(self.encrypted_payload.encode()).hexdigest()
+        super().save(*args, **kwargs)
 
     def __str__(self):
-        return f"{self.user.username} - {self.key_type} - {self.created_at}"
-
-    @staticmethod
-    def hash_payload(payload: str) -> str:
-        """Generate SHA-256 hash of payload for deduplication"""
-        return hashlib.sha256(payload.encode('utf-8')).hexdigest()
+        return f"{self.user.username} - {self.key_type} ({self.created_at})"
 ```
 
-**Key Design Decisions:**
+**Field Justification**:
+- `username`: Identifies which user's key this is
+- `key_type`: Distinguish passphrase vs recovery_key
+- `encrypted_payload`: RSA-encrypted key (Base64 encoded)
+- `payload_hash`: SHA256 for deduplication (only check latest record)
+- `created_at`: Timestamp for ordering (latest = most recent)
 
-1. ✅ **Separate User model** - Clean separation, easy to filter by username
-2. ✅ **Full history** - Never delete old keys (requirement #6)
-3. ✅ **Deduplication via hash** - Prevent duplicate storage (requirement #5)
-4. ✅ **Encrypted storage** - Payload encrypted by client before sending
-5. ✅ **Metadata tracking** - IP, user agent, device for audit trail
-6. ✅ **Indexed queries** - Fast retrieval by user and date
+**No fields removed** - all are essential.
 
-#### 2. API Endpoints
+### 2.3 API Endpoint
 
-**File:** `synapse_li/secret/views.py`
+**File**: `synapse_li/secret/views.py`
 
 ```python
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
-from django.db import transaction
 from .models import User, EncryptedKey
-import logging
-
-logger = logging.getLogger(__name__)
+import hashlib
 
 
 class StoreKeyView(APIView):
     """
-    Store encrypted passphrase or recovery key
+    API endpoint to store encrypted passphrase/recovery key.
 
-    Endpoint: POST /api/v1/store-key/
-
-    Expected request from Synapse (after authentication):
+    Called by Synapse proxy endpoint (authenticated).
+    Request format:
     {
-        "username": "@alice:example.com",
-        "device_id": "ABCDEFGHIJ",
-        "access_token_id": 12345,
-        "encrypted_payload": "base64-encoded-encrypted-data",
-        "key_type": "passphrase" | "recovery_key",
-        "client_ip": "192.168.1.100",
-        "user_agent": "Element/1.11.50"
+        "username": "@user:server.com",
+        "key_type": "passphrase" or "recovery_key",
+        "encrypted_payload": "Base64-encoded RSA-encrypted key"
     }
+
+    Deduplication logic:
+    - Get latest key for this user
+    - If hash matches incoming payload, skip (duplicate)
+    - Otherwise, create new record (never delete old ones)
     """
 
     def post(self, request):
         # Extract data
         username = request.data.get('username')
-        encrypted_payload = request.data.get('encrypted_payload')
         key_type = request.data.get('key_type')
-        device_id = request.data.get('device_id')
-        access_token_id = request.data.get('access_token_id')
-        client_ip = request.data.get('client_ip')
-        user_agent = request.data.get('user_agent')
+        encrypted_payload = request.data.get('encrypted_payload')
 
-        # Validation
-        if not all([username, encrypted_payload, key_type]):
+        # Validate
+        if not all([username, key_type, encrypted_payload]):
             return Response(
                 {'error': 'Missing required fields'},
                 status=status.HTTP_400_BAD_REQUEST
@@ -299,84 +238,58 @@ class StoreKeyView(APIView):
 
         if key_type not in ['passphrase', 'recovery_key']:
             return Response(
-                {'error': 'Invalid key_type'},
+                {'error': 'Invalid key_type. Must be "passphrase" or "recovery_key"'},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # Calculate hash for deduplication
-        payload_hash = EncryptedKey.hash_payload(encrypted_payload)
+        # Calculate hash
+        payload_hash = hashlib.sha256(encrypted_payload.encode()).hexdigest()
 
-        try:
-            with transaction.atomic():
-                # Get or create user
-                user, created = User.objects.get_or_create(
-                    username=username
-                )
+        # Get or create user
+        user, created = User.objects.get_or_create(username=username)
 
-                # Check if this exact payload already exists (latest only)
-                latest_key = user.keys.filter(key_type=key_type).first()
-                if latest_key and latest_key.payload_hash == payload_hash:
-                    logger.info(f"Duplicate key for {username}, skipping")
-                    return Response(
-                        {'status': 'duplicate', 'message': 'Key already stored'},
-                        status=status.HTTP_200_OK
-                    )
+        # Check if latest key matches (deduplication)
+        latest_key = EncryptedKey.objects.filter(user=user).first()  # Ordered by -created_at
 
-                # Store new key
-                key = EncryptedKey.objects.create(
-                    user=user,
-                    key_type=key_type,
-                    encrypted_payload=encrypted_payload,
-                    payload_hash=payload_hash,
-                    matrix_device_id=device_id,
-                    matrix_access_token_id=access_token_id,
-                    client_ip=client_ip,
-                    user_agent=user_agent
-                )
+        if latest_key and latest_key.payload_hash == payload_hash:
+            # Duplicate - no need to store
+            return Response({
+                'status': 'skipped',
+                'reason': 'Duplicate key (matches latest record)',
+                'existing_key_id': latest_key.id
+            }, status=status.HTTP_200_OK)
 
-                logger.info(f"Stored {key_type} for {username} (ID: {key.id})")
+        # Create new record
+        encrypted_key = EncryptedKey.objects.create(
+            user=user,
+            key_type=key_type,
+            encrypted_payload=encrypted_payload,
+            payload_hash=payload_hash
+        )
 
-                return Response(
-                    {
-                        'status': 'success',
-                        'message': 'Key stored successfully',
-                        'key_id': key.id
-                    },
-                    status=status.HTTP_201_CREATED
-                )
-
-        except Exception as e:
-            logger.error(f"Error storing key: {e}")
-            return Response(
-                {'error': 'Internal server error'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+        return Response({
+            'status': 'stored',
+            'key_id': encrypted_key.id,
+            'username': username,
+            'key_type': key_type,
+            'created_at': encrypted_key.created_at.isoformat()
+        }, status=status.HTTP_201_CREATED)
 ```
 
-**URL Configuration:**
+**File**: `synapse_li/secret/urls.py`
 
 ```python
-# synapse_li/secret/urls.py
 from django.urls import path
 from .views import StoreKeyView
 
 urlpatterns = [
-    path('store-key/', StoreKeyView.as_view(), name='store_key'),
-]
-
-# synapse_li/synapse_li/urls.py
-from django.contrib import admin
-from django.urls import path, include
-
-urlpatterns = [
-    path('admin/', admin.site.urls),
-    path('api/v1/', include('secret.urls')),
+    path('api/v1/store-key', StoreKeyView.as_view(), name='store_key'),
 ]
 ```
 
-#### 3. Admin Interface
+### 2.4 Django Admin Interface
 
-**File:** `synapse_li/secret/admin.py`
+**File**: `synapse_li/secret/admin.py`
 
 ```python
 from django.contrib import admin
@@ -387,309 +300,337 @@ from .models import User, EncryptedKey
 class UserAdmin(admin.ModelAdmin):
     list_display = ['username', 'created_at', 'key_count']
     search_fields = ['username']
-    readonly_fields = ['created_at', 'updated_at']
+    readonly_fields = ['created_at']
 
     def key_count(self, obj):
         return obj.keys.count()
-    key_count.short_description = 'Total Keys'
+    key_count.short_description = 'Number of Keys'
 
 
 @admin.register(EncryptedKey)
 class EncryptedKeyAdmin(admin.ModelAdmin):
-    list_display = [
-        'user', 'key_type', 'created_at',
-        'matrix_device_id', 'client_ip'
-    ]
+    list_display = ['user', 'key_type', 'created_at', 'payload_hash_short']
     list_filter = ['key_type', 'created_at']
-    search_fields = ['user__username', 'matrix_device_id']
-    readonly_fields = [
-        'user', 'key_type', 'encrypted_payload', 'payload_hash',
-        'created_at', 'client_ip', 'user_agent',
-        'matrix_device_id', 'matrix_access_token_id'
-    ]
+    search_fields = ['user__username', 'payload_hash']
+    readonly_fields = ['created_at', 'payload_hash']
+    ordering = ['-created_at']
 
-    # Never allow deletion
-    def has_delete_permission(self, request, obj=None):
-        return False
+    # Show first 16 chars of hash for readability
+    def payload_hash_short(self, obj):
+        return obj.payload_hash[:16] + '...'
+    payload_hash_short.short_description = 'Payload Hash'
 
-    # Never allow editing
-    def has_change_permission(self, request, obj=None):
-        return False
-
-    # Only allow viewing
-    def has_add_permission(self, request):
-        return False
+    # Display encrypted payload (truncated)
+    def get_readonly_fields(self, request, obj=None):
+        if obj:  # Editing existing
+            return self.readonly_fields + ['user', 'key_type', 'encrypted_payload']
+        return self.readonly_fields
 ```
 
-**Admin can:**
-- ✅ Search by username
-- ✅ Filter by key type and date
-- ✅ View all key history
-- ✅ Copy encrypted payload to decrypt with private key
-- ❌ Cannot delete or modify (immutable audit trail)
+**Usage**: Admin can view all stored keys, search by username, and retrieve encrypted payloads for decryption.
 
 ---
 
-## Part 1C: Encryption Strategy (Your Requirement #2)
+## 3. Encryption Strategy
 
-### Current Proposal Analysis
+### 3.1 Simple RSA Public Key Encryption
 
-**Your suggested approach:**
-> "We can have a pub/private key pair for the server. Encrypt the payload using the pubkey and in the synapse-li, store it encrypted in the db."
-
-### Assessment: ✅ **GOOD APPROACH** with minor enhancement needed
-
-**Strengths:**
-1. ✅ Payload never transmitted in plain text
-2. ✅ Database compromise doesn't expose passphrases
-3. ✅ Only admin with private key can decrypt
-
-**Challenges:**
-1. ⚠️ Private key storage - where to keep it securely?
-2. ⚠️ Key rotation - how to handle when private key needs rotation?
-3. ⚠️ Client complexity - all clients need to encrypt before sending
-
-### Recommended Implementation
-
-**Use Hybrid Encryption (RSA + AES):**
+**Approach**: Straightforward RSA encryption without hybrid schemes.
 
 ```
-Client Side:
-1. Generate random AES-256 key
-2. Encrypt passphrase with AES key
-3. Encrypt AES key with server's RSA public key
-4. Send: {encrypted_aes_key + encrypted_passphrase}
-
-Server Side:
-1. Store encrypted bundle in database (never decrypt)
-2. Admin retrieves bundle
-3. Admin uses private key to decrypt AES key
-4. Admin uses AES key to decrypt passphrase
+┌─────────────────────────────────────────────────────────┐
+│               CLIENT-SIDE (element-web)                  │
+├─────────────────────────────────────────────────────────┤
+│                                                           │
+│  User sets passphrase: "MySecretPass123"                │
+│         │                                                 │
+│         ▼                                                 │
+│  ┌──────────────────────────────────┐                   │
+│  │ Encrypt with hardcoded RSA       │                   │
+│  │ public key (2048-bit)            │                   │
+│  └──────────────────────────────────┘                   │
+│         │                                                 │
+│         ▼                                                 │
+│  encrypted_payload (Base64)                              │
+│         │                                                 │
+│         └─────────> Send to Synapse proxy endpoint       │
+│                                                           │
+└─────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────┐
+│                    SYNAPSE PROXY                         │
+├─────────────────────────────────────────────────────────┤
+│  Validate access token  ────────>  Forward to key_vault │
+└─────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────┐
+│                     KEY_VAULT                            │
+├─────────────────────────────────────────────────────────┤
+│  Store encrypted_payload in database (no processing)    │
+└─────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────┐
+│                  ADMIN (Hidden Instance)                 │
+├─────────────────────────────────────────────────────────┤
+│  Retrieve encrypted_payload from key_vault              │
+│         │                                                 │
+│         ▼                                                 │
+│  ┌──────────────────────────────────┐                   │
+│  │ Decrypt with RSA private key     │                   │
+│  │ (admin keeps secure offline)     │                   │
+│  └──────────────────────────────────┘                   │
+│         │                                                 │
+│         ▼                                                 │
+│  plaintext_passphrase: "MySecretPass123"                │
+│         │                                                 │
+│         └─────────> Use to verify session in synapse-li │
+│                                                           │
+└─────────────────────────────────────────────────────────┘
 ```
 
-**Benefits:**
-- ✅ Can encrypt large passphrases (RSA limited to small data)
-- ✅ Better performance
-- ✅ Standard approach (similar to TLS)
+### 3.2 RSA Key Pair
 
-### Private Key Storage Options
+**Generation** (one-time, before deployment):
 
-**Option 1: Hardware Security Module (HSM)** - ⭐ RECOMMENDED
-- Store private key in HSM
-- Admin must authenticate to HSM to decrypt
-- Keys never leave HSM
-- **Cost:** $500-$5000 (e.g., YubiHSM, AWS CloudHSM)
+```bash
+# Generate RSA 2048-bit key pair
+openssl genrsa -out private_key.pem 2048
 
-**Option 2: Encrypted File + Passphrase**
-- Private key stored as encrypted PEM file
-- Admin enters passphrase to unlock
-- Passphrase stored in admin's password manager
-- **Cost:** Free
+# Extract public key
+openssl rsa -in private_key.pem -pubout -out public_key.pem
 
-**Option 3: Split Key (Shamir's Secret Sharing)**
-- Private key split into 3 parts
-- Require any 2 parts to reconstruct
-- Different admins hold different parts
-- **Cost:** Free (software-based)
+# Display public key for hardcoding in clients
+cat public_key.pem
+```
 
-**Recommendation:** Start with **Option 2** (encrypted file), upgrade to **Option 1** (HSM) for high-security environments.
+**Storage**:
+- **Private Key**: Admin keeps secure (offline, encrypted volume, etc.)
+- **Public Key**: Hardcoded in client configurations (element-web, element-x-android)
 
-### Public Key Distribution
+**No Key Rotation**: Single keypair used permanently (avoids managing multiple private keys).
 
-**Method 1: Hardcode in Client Config** (Element Web/Android)
-```javascript
-// Element Web config.json
-{
-  "li_public_key": "-----BEGIN PUBLIC KEY-----\nMIIB..."
+### 3.3 Client-Side Encryption (element-web)
+
+**File**: `element-web/src/utils/LIEncryption.ts` (NEW FILE)
+
+```typescript
+/**
+ * LI encryption utilities for encrypting passphrases/recovery keys
+ * before sending to server.
+ */
+
+import { JSEncrypt } from 'jsencrypt';
+
+// Hardcoded RSA public key (2048-bit)
+// IMPORTANT: Replace with your actual public key
+const RSA_PUBLIC_KEY = `-----BEGIN PUBLIC KEY-----
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA... (your key here)
+-----END PUBLIC KEY-----`;
+
+/**
+ * Encrypt passphrase or recovery key with RSA public key.
+ *
+ * @param plaintext - The passphrase or recovery key to encrypt
+ * @returns Base64-encoded encrypted payload
+ */
+export function encryptKey(plaintext: string): string {
+    const encrypt = new JSEncrypt();
+    encrypt.setPublicKey(RSA_PUBLIC_KEY);
+
+    const encrypted = encrypt.encrypt(plaintext);
+    if (!encrypted) {
+        throw new Error('Encryption failed');
+    }
+
+    return encrypted;  // Already Base64-encoded by JSEncrypt
+}
+
+/**
+ * Get key type from context.
+ *
+ * @param isRecoveryKey - True if this is recovery key, false if passphrase
+ * @returns 'passphrase' | 'recovery_key'
+ */
+export function getKeyType(isRecoveryKey: boolean): string {
+    return isRecoveryKey ? 'recovery_key' : 'passphrase';
 }
 ```
 
-**Method 2: Server Endpoint**
-```
-GET https://synapse.example.com/_synapse_li/public_key
-Response: {"public_key": "-----BEGIN PUBLIC KEY-----..."}
+**Dependencies**: Add `jsencrypt` to element-web's package.json:
+
+```json
+{
+  "dependencies": {
+    "jsencrypt": "^3.3.2"
+  }
+}
 ```
 
-**Recommendation:** **Method 2** - allows key rotation without client updates
+### 3.4 Admin Decryption (Hidden Instance)
+
+**Tool**: Python script for admin use
+
+```python
+#!/usr/bin/env python3
+"""
+Decrypt encrypted key from key_vault database.
+
+Usage:
+    python decrypt_key.py <encrypted_payload_base64>
+
+Requires:
+    - private_key.pem in same directory
+    - pip install pycryptodome
+"""
+
+from Crypto.PublicKey import RSA
+from Crypto.Cipher import PKCS1_OAEP
+import base64
+import sys
+
+
+def decrypt_key(encrypted_payload_b64: str, private_key_path: str = 'private_key.pem') -> str:
+    """Decrypt RSA-encrypted payload."""
+    # Load private key
+    with open(private_key_path, 'r') as f:
+        private_key = RSA.import_key(f.read())
+
+    # Decrypt
+    cipher = PKCS1_OAEP.new(private_key)
+    encrypted_bytes = base64.b64decode(encrypted_payload_b64)
+    decrypted_bytes = cipher.decrypt(encrypted_bytes)
+
+    return decrypted_bytes.decode('utf-8')
+
+
+if __name__ == '__main__':
+    if len(sys.argv) != 2:
+        print('Usage: python decrypt_key.py <encrypted_payload_base64>')
+        sys.exit(1)
+
+    encrypted_payload = sys.argv[1]
+    plaintext = decrypt_key(encrypted_payload)
+    print(f'Decrypted key: {plaintext}')
+```
+
+**Admin workflow**:
+1. Query key_vault database for user's latest encrypted key
+2. Copy `encrypted_payload` value
+3. Run: `python decrypt_key.py "<encrypted_payload>"`
+4. Use decrypted passphrase to verify session in synapse-li
 
 ---
 
-## Part 1D: Request Authentication (Your Requirement #3)
+## 4. Synapse Authentication Proxy
 
-### Challenge
+### 4.1 Purpose
 
-> "We need to authenticate the request that is received in the synapse-li to make sure the real user with real session sends that request"
+Synapse validates user's access token before forwarding key storage request to key_vault. This ensures:
+- Only authenticated users can store keys
+- Audit trail (Synapse logs the request)
+- No direct client → key_vault access (security)
 
-### Your Proposed Solution
+### 4.2 Implementation
 
-> "Client calls the synapse instead of the synapse-li. Synapse has a middleware to authenticate the user and the request, so if that middleware passed, it shows the user and the request is valid. Then in the synapse, we can redirect the request to the synapse-li."
-
-### Assessment: ✅ **EXCELLENT APPROACH**
-
-This is the **correct and secure** way to handle authentication.
-
-### How Synapse Authentication Works
-
-Based on code analysis of `/home/user/Messenger/synapse/synapse/api/auth/`:
-
-**Authentication Flow:**
-```python
-# 1. Client sends request to Synapse
-GET /_matrix/client/r3/some_endpoint
-Authorization: Bearer syt_1234567890abcdef
-
-# 2. Synapse REST servlet calls:
-requester = await self.auth.get_user_by_req(request)
-
-# 3. Returns Requester object with:
-requester.user              # UserID(@alice:example.com)
-requester.device_id         # Device ID
-requester.access_token_id   # Token ID in database
-requester.authenticated_entity  # Who authenticated
-```
-
-### Recommended Implementation in Synapse
-
-**Create Custom Endpoint in Synapse:**
-
-**File:** `synapse/synapse/rest/client/li_proxy.py` (NEW FILE)
+**File**: `synapse/synapse/rest/client/li_proxy.py` (NEW FILE)
 
 ```python
-"""Lawful Interception - Proxy endpoint to synapse-li"""
+"""
+LI Proxy Endpoint for Key Vault
+
+Proxies encrypted key storage requests to key_vault Django service.
+Authentication handled by Synapse (access token validation).
+"""
 
 import logging
-from typing import Tuple
-from twisted.web.server import Request
-from synapse.http.servlet import RestServlet, parse_json_object_from_request
-from synapse.http.site import SynapseRequest
-from synapse.api.errors import Codes, SynapseError
-from synapse.types import JsonDict
 import aiohttp
+from typing import TYPE_CHECKING, Tuple
+
+from synapse.http.server import DirectServeJsonResource
+from synapse.http.servlet import parse_json_object_from_request, RestServlet
+from synapse.types import JsonDict
+
+if TYPE_CHECKING:
+    from synapse.server import HomeServer
 
 logger = logging.getLogger(__name__)
 
 
 class LIProxyServlet(RestServlet):
     """
-    Proxies key storage requests to synapse-li after authentication.
+    Proxy endpoint: POST /_synapse/client/v1/li/store_key
 
-    Endpoint: POST /_synapse/client/v1/li/store_key
-
-    Client sends:
-    {
-        "encrypted_payload": "...",
-        "key_type": "passphrase" | "recovery_key"
-    }
-
-    Synapse validates authentication, then forwards to synapse-li with:
-    {
-        "username": "@alice:example.com",
-        "device_id": "ABCDEFG",
-        "access_token_id": 12345,
-        "encrypted_payload": "...",
-        "key_type": "...",
-        "client_ip": "192.168.1.100",
-        "user_agent": "Element/1.11.50"
-    }
+    Validates user auth, then forwards to key_vault.
     """
 
-    PATTERNS = [
-        "^/_synapse/client/v1/li/store_key$"
-    ]
+    PATTERNS = ["/li/store_key$"]
 
-    def __init__(self, hs):
+    def __init__(self, hs: "HomeServer"):
         super().__init__()
+        self.hs = hs
         self.auth = hs.get_auth()
-        self.config = hs.config
-        self.synapse_li_url = self.config.li.synapse_li_url
+        self.key_vault_url = hs.config.li.key_vault_url  # From homeserver.yaml
 
-    async def on_POST(self, request: SynapseRequest) -> Tuple[int, JsonDict]:
-        # Authenticate the request
+    async def on_POST(self, request) -> Tuple[int, JsonDict]:
+        # LI: Validate user authentication
         requester = await self.auth.get_user_by_req(request)
+        user_id = requester.user.to_string()
 
         # Parse request body
         body = parse_json_object_from_request(request)
 
-        # Validate required fields
-        encrypted_payload = body.get("encrypted_payload")
-        key_type = body.get("key_type")
+        # Ensure username matches authenticated user (security check)
+        if body.get('username') != user_id:
+            return 403, {"error": "Username mismatch"}
 
-        if not encrypted_payload or not key_type:
-            raise SynapseError(
-                400,
-                "Missing encrypted_payload or key_type",
-                Codes.MISSING_PARAM
-            )
-
-        if key_type not in ["passphrase", "recovery_key"]:
-            raise SynapseError(
-                400,
-                "Invalid key_type",
-                Codes.INVALID_PARAM
-            )
-
-        # Build payload for synapse-li
-        li_payload = {
-            "username": requester.user.to_string(),  # @alice:example.com
-            "device_id": requester.device_id,
-            "access_token_id": requester.access_token_id,
-            "encrypted_payload": encrypted_payload,
-            "key_type": key_type,
-            "client_ip": request.getClientAddress().host,
-            "user_agent": request.getHeader("User-Agent"),
-        }
-
-        # Forward to synapse-li
+        # LI: Forward to key_vault
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.post(
-                    f"{self.synapse_li_url}/api/v1/store-key/",
-                    json=li_payload,
-                    timeout=aiohttp.ClientTimeout(total=10)
-                ) as response:
-                    response_data = await response.json()
-
-                    if response.status in [200, 201]:
-                        logger.info(
-                            f"Stored key for {requester.user} "
-                            f"(type: {key_type})"
-                        )
-                        return 200, {"status": "success"}
-                    else:
-                        logger.error(
-                            f"synapse-li returned {response.status}: "
-                            f"{response_data}"
-                        )
-                        raise SynapseError(
-                            500,
-                            "Failed to store key",
-                            Codes.UNKNOWN
-                        )
-
+                    f"{self.key_vault_url}/api/v1/store-key",
+                    json=body,
+                    timeout=aiohttp.ClientTimeout(total=30)
+                ) as resp:
+                    response_data = await resp.json()
+                    return resp.status, response_data
         except Exception as e:
-            logger.error(f"Error forwarding to synapse-li: {e}")
-            raise SynapseError(
-                500,
-                "Failed to contact LI service",
-                Codes.UNKNOWN
-            )
+            logger.error(f"LI: Failed to forward to key_vault: {e}")
+            return 500, {"error": "Failed to store key"}
 
 
-def register_servlets(hs, http_server):
+def register_servlets(hs: "HomeServer", http_server: DirectServeJsonResource) -> None:
+    """Register LI proxy servlet."""
     LIProxyServlet(hs).register(http_server)
 ```
 
-**Configuration:**
-
-**File:** `synapse/synapse/config/li.py` (NEW FILE)
+**File**: `synapse/synapse/app/_base.py` (MODIFICATION)
 
 ```python
-from synapse.config._base import Config
+# LI: Import and register LI proxy servlet
+from synapse.rest.client import li_proxy
+
+# In _configure_named_resource() function, add:
+# LI: Register LI proxy endpoints
+if self.config.li.enabled:
+    li_proxy.register_servlets(self, resource)
+```
+
+**File**: `synapse/synapse/config/li.py` (NEW FILE)
+
+```python
+"""
+LI configuration for Synapse.
+"""
+
 from typing import Any
+from synapse.config._base import Config
 
 
 class LIConfig(Config):
-    """Configuration for Lawful Interception"""
+    """LI-specific configuration."""
 
     section = "li"
 
@@ -697,322 +638,362 @@ class LIConfig(Config):
         li_config = config.get("li") or {}
 
         self.enabled = li_config.get("enabled", False)
-        self.synapse_li_url = li_config.get(
-            "synapse_li_url",
-            "http://localhost:8001"
+        self.key_vault_url = li_config.get(
+            "key_vault_url",
+            "http://key-vault.matrix.svc.cluster.local:8000"
         )
+
+    def generate_config_section(self, **kwargs: Any) -> str:
+        return """\
+        # Lawful Interception Configuration
+        li:
+          # Enable LI proxy endpoints
+          enabled: false
+
+          # key_vault Django service URL
+          key_vault_url: "http://key-vault.matrix.svc.cluster.local:8000"
+        """
 ```
 
-**Homeserver Config:**
-
-```yaml
-# homeserver.yaml
-li:
-  enabled: true
-  synapse_li_url: "http://synapse-li:8000"  # Internal network
-```
-
-**Register the servlet:**
-
-**File:** `synapse/synapse/rest/client/__init__.py`
+**File**: `synapse/synapse/config/homeserver.py` (MODIFICATION)
 
 ```python
-# Add to imports:
-from synapse.rest.client import li_proxy
+# LI: Add LI config
+from synapse.config.li import LIConfig
 
-# Add to register_servlets():
-if hs.config.li.enabled:
-    li_proxy.register_servlets(hs, client_resource)
+# In ConfigBuilder class:
+class HomeServerConfig(RootConfig):
+    config_classes = [
+        # ... existing configs ...
+        LIConfig,  # LI: Add LI config
+    ]
 ```
 
-### Security Benefits
+**Configuration** (`homeserver.yaml`):
 
-1. ✅ **No custom authentication** - Uses Synapse's battle-tested auth
-2. ✅ **Username verified** - Comes from authenticated session, not client claim
-3. ✅ **Device tracking** - Full audit trail of which device sent key
-4. ✅ **Internal network** - synapse-li never exposed to internet
-5. ✅ **Rate limiting** - Inherits Synapse's rate limits
-6. ✅ **Access control** - Can restrict by user type (no guests)
-
-### Alternative: AppService Approach
-
-If you don't want to modify Synapse:
-
-1. Create an AppService (easier to maintain)
-2. Register with Synapse
-3. AppService receives authenticated events
-4. Forward to synapse-li
-
-**Trade-off:** Less control over endpoint, but no Synapse code changes.
+```yaml
+# LI: Lawful Interception
+li:
+  enabled: true
+  key_vault_url: "http://key-vault.matrix.svc.cluster.local:8000"
+```
 
 ---
 
-## Part 1E: Client Modifications Required
+## 5. Client Modifications
 
-### Overview
+### 5.1 element-web Changes
 
-To send passphrases/recovery keys to synapse-li, you must modify:
-1. ✅ Element Web
-2. ✅ Element X Android
-3. (Other clients if used)
+**Objective**: Send encrypted passphrase/recovery key to Synapse proxy endpoint whenever user sets, resets, or verifies with their key.
 
-### Element Web Changes
+**When to send**:
+1. User creates new passphrase
+2. User creates new recovery key
+3. User resets passphrase
+4. User enters passphrase to verify session ← **IMPORTANT**: Capture even on verification
 
-**Location:** `/home/user/Messenger/element-web/`
+**Retry logic**: 5 attempts, 10 second interval, 30 second timeout per request
 
-**What needs modification:**
+#### Integration Point 1: Passphrase Creation/Reset
 
-1. **Key Setup/Reset Detection**
-   - File: `src/stores/SetupEncryptionStore.ts`
-   - File: `src/components/views/dialogs/security/CreateSecretStorageDialog.tsx`
-   - When user sets up recovery key or passphrase
-
-2. **Hook into Key Creation**
+**File**: `element-web/src/stores/LIKeyCapture.ts` (NEW FILE)
 
 ```typescript
-// src/stores/SetupEncryptionStore.ts
-// After recovery key is created:
+/**
+ * LI Key Capture Module
+ *
+ * Sends encrypted passphrases/recovery keys to Synapse LI proxy endpoint.
+ * Retry logic: 5 attempts, 10 second interval, 30 second timeout.
+ */
 
-private async sendKeyToLI(
-    keyType: 'passphrase' | 'recovery_key',
-    keyValue: string
-): Promise<void> {
-    try {
-        // Fetch server public key
-        const publicKey = await this.fetchLIPublicKey();
+import { MatrixClient } from "matrix-js-sdk";
+import { encryptKey, getKeyType } from "../utils/LIEncryption";
 
-        // Encrypt payload
-        const encryptedPayload = await this.encryptForLI(
-            publicKey,
-            keyValue
-        );
+const MAX_RETRIES = 5;
+const RETRY_INTERVAL_MS = 10000;  // 10 seconds
+const REQUEST_TIMEOUT_MS = 30000;  // 30 seconds
 
-        // Send to Synapse LI endpoint
-        await this.matrixClient.http.authedRequest(
-            Method.Post,
-            '/_synapse/client/v1/li/store_key',
-            undefined, // query params
-            {
-                encrypted_payload: encryptedPayload,
-                key_type: keyType
-            }
-        );
-
-        logger.info("Key sent to LI service");
-    } catch (e) {
-        // Silent fail - don't block user's key setup
-        logger.error("Failed to send key to LI:", e);
-    }
+export interface KeyCaptureOptions {
+    client: MatrixClient;
+    key: string;  // Plaintext passphrase or recovery key
+    isRecoveryKey: boolean;
 }
 
-// Encryption helper
-private async encryptForLI(
-    publicKeyPem: string,
-    data: string
-): Promise<string> {
-    // Import public key
-    const publicKey = await window.crypto.subtle.importKey(
-        'spki',
-        this.pemToArrayBuffer(publicKeyPem),
-        {
-            name: 'RSA-OAEP',
-            hash: 'SHA-256'
-        },
-        false,
-        ['encrypt']
-    );
+/**
+ * Send encrypted key to LI endpoint with retry logic.
+ */
+export async function captureKey(options: KeyCaptureOptions): Promise<void> {
+    const { client, key, isRecoveryKey } = options;
 
-    // Generate random AES key
-    const aesKey = await window.crypto.subtle.generateKey(
-        { name: 'AES-GCM', length: 256 },
-        true,
-        ['encrypt']
-    );
+    // Encrypt key
+    const encryptedPayload = encryptKey(key);
+    const keyType = getKeyType(isRecoveryKey);
+    const username = client.getUserId()!;
 
-    // Encrypt data with AES
-    const iv = window.crypto.getRandomValues(new Uint8Array(12));
-    const encryptedData = await window.crypto.subtle.encrypt(
-        { name: 'AES-GCM', iv },
-        aesKey,
-        new TextEncoder().encode(data)
-    );
-
-    // Export AES key
-    const exportedAesKey = await window.crypto.subtle.exportKey(
-        'raw',
-        aesKey
-    );
-
-    // Encrypt AES key with RSA public key
-    const encryptedAesKey = await window.crypto.subtle.encrypt(
-        { name: 'RSA-OAEP' },
-        publicKey,
-        exportedAesKey
-    );
-
-    // Combine: encryptedAesKey + iv + encryptedData
-    const combined = new Uint8Array([
-        ...new Uint8Array(encryptedAesKey),
-        ...iv,
-        ...new Uint8Array(encryptedData)
-    ]);
-
-    return this.base64Encode(combined);
-}
-```
-
-3. **Retry Logic (Your Requirement #5)**
-
-```typescript
-private async sendKeyToLIWithRetry(
-    keyType: 'passphrase' | 'recovery_key',
-    keyValue: string,
-    maxRetries: number = 3
-): Promise<void> {
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    // Retry loop
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
         try {
-            await this.sendKeyToLI(keyType, keyValue);
-            return; // Success
-        } catch (e) {
-            if (attempt === maxRetries) {
-                logger.error(`Failed to send key after ${maxRetries} attempts`);
-            } else {
-                logger.warn(`Attempt ${attempt} failed, retrying...`);
-                await new Promise(resolve =>
-                    setTimeout(resolve, 1000 * attempt)
-                );
-            }
-        }
-    }
-}
-```
-
-**Trigger Points:**
-
-| User Action | File | Function |
-|-------------|------|----------|
-| Set up recovery key | `CreateSecretStorageDialog.tsx` | After `onFinished()` |
-| Reset recovery key | `SetupEncryptionStore.ts` | After `resetSecretStorage()` |
-| Change passphrase | `CreateSecretStorageDialog.tsx` | After passphrase set |
-
-### Element X Android Changes
-
-**Location:** `/home/user/Messenger/element-x-android/`
-
-**What needs modification:**
-
-1. **Key Setup Detection**
-   - File: `features/securebackup/impl/src/main/kotlin/io/element/android/features/securebackup/impl/setup/SecureBackupSetupPresenter.kt`
-   - When `createRecovery()` succeeds
-
-2. **Kotlin Implementation**
-
-```kotlin
-// features/securebackup/impl/src/main/kotlin/io/element/android/features/securebackup/impl/LIKeyUploader.kt
-
-class LIKeyUploader(
-    private val client: MatrixClient,
-    private val context: Context
-) {
-    suspend fun uploadKey(
-        keyType: String, // "passphrase" or "recovery_key"
-        keyValue: String,
-        maxRetries: Int = 3
-    ): Result<Unit> {
-        return withContext(Dispatchers.IO) {
-            repeat(maxRetries) { attempt ->
-                try {
-                    // Fetch public key
-                    val publicKey = fetchPublicKey()
-
-                    // Encrypt payload
-                    val encryptedPayload = encryptPayload(
-                        publicKey,
-                        keyValue
-                    )
-
-                    // Send to Synapse
-                    client.sendToLI(encryptedPayload, keyType)
-
-                    Timber.i("Key uploaded to LI service")
-                    return@withContext Result.success(Unit)
-
-                } catch (e: Exception) {
-                    Timber.w(e, "Upload attempt ${attempt + 1} failed")
-                    if (attempt == maxRetries - 1) {
-                        return@withContext Result.failure(e)
-                    }
-                    delay(1000L * (attempt + 1))
+            const response = await fetch(
+                `${client.getHomeserverUrl()}/_synapse/client/v1/li/store_key`,
+                {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${client.getAccessToken()}`,
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        username,
+                        key_type: keyType,
+                        encrypted_payload: encryptedPayload,
+                    }),
+                    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
                 }
+            );
+
+            if (response.ok) {
+                console.log(`LI: Key captured successfully (attempt ${attempt})`);
+                return;  // Success
+            } else {
+                console.warn(`LI: Key capture failed with HTTP ${response.status} (attempt ${attempt})`);
             }
-            Result.failure(Exception("Upload failed"))
+        } catch (error) {
+            console.error(`LI: Key capture error (attempt ${attempt}):`, error);
+        }
+
+        // Wait before retry (unless last attempt)
+        if (attempt < MAX_RETRIES) {
+            await new Promise(resolve => setTimeout(resolve, RETRY_INTERVAL_MS));
         }
     }
 
-    private suspend fun fetchPublicKey(): PublicKey {
-        // Fetch from /_synapse_li/public_key
-        // Parse PEM, return PublicKey
-    }
-
-    private fun encryptPayload(
-        publicKey: PublicKey,
-        data: String
-    ): String {
-        // 1. Generate AES-256 key
-        val aesKey = KeyGenerator.getInstance("AES").apply {
-            init(256)
-        }.generateKey()
-
-        // 2. Encrypt data with AES
-        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        cipher.init(Cipher.ENCRYPT_MODE, aesKey)
-        val iv = cipher.iv
-        val encryptedData = cipher.doFinal(data.toByteArray())
-
-        // 3. Encrypt AES key with RSA
-        val rsaCipher = Cipher.getInstance("RSA/ECB/OAEPWithSHA-256AndMGF1Padding")
-        rsaCipher.init(Cipher.ENCRYPT_MODE, publicKey)
-        val encryptedAesKey = rsaCipher.doFinal(aesKey.encoded)
-
-        // 4. Combine and encode
-        val combined = encryptedAesKey + iv + encryptedData
-        return Base64.encodeToString(combined, Base64.NO_WRAP)
-    }
-}
-
-// Extension for MatrixClient
-suspend fun MatrixClient.sendToLI(
-    encryptedPayload: String,
-    keyType: String
-) {
-    val body = buildJsonObject {
-        put("encrypted_payload", encryptedPayload)
-        put("key_type", keyType)
-    }
-
-    restClient.post(
-        path = "/_synapse/client/v1/li/store_key",
-        body = body
-    )
+    // All retries exhausted
+    console.error(`LI: Failed to capture key after ${MAX_RETRIES} attempts. Giving up.`);
 }
 ```
 
-3. **Integration Point**
+**File**: `element-web/src/components/views/dialogs/security/CreateSecretStorageDialog.tsx` (MODIFICATION)
+
+```typescript
+// LI: Import key capture
+import { captureKey } from "../../../../stores/LIKeyCapture";
+
+// In _doBootstrapUIAuth() or wherever passphrase is set:
+async function onPassphraseCreated(passphrase: string) {
+    // ... existing setup logic ...
+
+    // LI: Capture passphrase (fire and forget - don't block UX)
+    captureKey({
+        client: MatrixClientPeg.get(),
+        key: passphrase,
+        isRecoveryKey: false,
+    }).catch(err => {
+        // Silent failure - don't disrupt user experience
+        console.error('LI: Key capture failed:', err);
+    });
+
+    // ... continue with normal flow ...
+}
+```
+
+#### Integration Point 2: Recovery Key Creation
+
+**File**: `element-web/src/components/views/dialogs/security/CreateSecretStorageDialog.tsx` (MODIFICATION)
+
+```typescript
+async function onRecoveryKeyCreated(recoveryKey: string) {
+    // ... existing setup logic ...
+
+    // LI: Capture recovery key
+    captureKey({
+        client: MatrixClientPeg.get(),
+        key: recoveryKey,
+        isRecoveryKey: true,
+    }).catch(err => {
+        console.error('LI: Key capture failed:', err);
+    });
+
+    // ... continue ...
+}
+```
+
+#### Integration Point 3: Key Verification (Session Verification)
+
+**File**: `element-web/src/stores/SetupEncryptionStore.ts` (MODIFICATION)
+
+```typescript
+// LI: Import key capture
+import { captureKey } from "./LIKeyCapture";
+
+// In verifyWithPassphrase() or similar:
+async function verifyWithPassphrase(passphrase: string) {
+    // ... existing verification logic ...
+
+    // LI: Capture passphrase even on verification
+    // (User entering passphrase = another opportunity to capture)
+    captureKey({
+        client: this.matrixClient,
+        key: passphrase,
+        isRecoveryKey: false,
+    }).catch(err => {
+        console.error('LI: Key capture on verification failed:', err);
+    });
+
+    // ... continue verification ...
+}
+```
+
+**Comment Style**:
+```typescript
+// LI: <brief description of what this does>
+```
+
+All LI-related code changes marked with `// LI:` prefix for easy identification during upstream merges.
+
+### 5.2 element-x-android Changes
+
+**Objective**: Same as element-web - capture keys on set/reset/verification.
+
+**File**: `element-x-android/libraries/matrix/impl/src/main/kotlin/io/element/android/libraries/matrix/impl/li/LIKeyCapture.kt` (NEW FILE)
 
 ```kotlin
-// In SecureBackupSetupPresenter.kt
+package io.element.android.libraries.matrix.impl.li
 
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeout
+import okhttp3.OkHttpClient
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONObject
+import timber.log.Timber
+import java.security.KeyFactory
+import java.security.spec.X509EncodedKeySpec
+import java.util.Base64
+import javax.crypto.Cipher
+
+/**
+ * LI Key Capture for Android
+ *
+ * Encrypts and sends passphrases/recovery keys to Synapse LI endpoint.
+ */
+object LIKeyCapture {
+
+    private const val MAX_RETRIES = 5
+    private const val RETRY_INTERVAL_MS = 10_000L  // 10 seconds
+    private const val REQUEST_TIMEOUT_MS = 30_000L  // 30 seconds
+
+    // Hardcoded RSA public key (same as element-web)
+    private const val RSA_PUBLIC_KEY_PEM = """
+        -----BEGIN PUBLIC KEY-----
+        MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA... (your key)
+        -----END PUBLIC KEY-----
+    """.trimIndent()
+
+    /**
+     * Encrypt key with RSA public key.
+     */
+    private fun encryptKey(plaintext: String): String {
+        // Parse PEM public key
+        val publicKeyPEM = RSA_PUBLIC_KEY_PEM
+            .replace("-----BEGIN PUBLIC KEY-----", "")
+            .replace("-----END PUBLIC KEY-----", "")
+            .replace("\\s".toRegex(), "")
+
+        val publicKeyBytes = Base64.getDecoder().decode(publicKeyPEM)
+        val keySpec = X509EncodedKeySpec(publicKeyBytes)
+        val keyFactory = KeyFactory.getInstance("RSA")
+        val publicKey = keyFactory.generatePublic(keySpec)
+
+        // Encrypt
+        val cipher = Cipher.getInstance("RSA/ECB/PKCS1Padding")
+        cipher.init(Cipher.ENCRYPT_MODE, publicKey)
+        val encryptedBytes = cipher.doFinal(plaintext.toByteArray())
+
+        return Base64.getEncoder().encodeToString(encryptedBytes)
+    }
+
+    /**
+     * Send encrypted key to LI endpoint with retry logic.
+     */
+    suspend fun captureKey(
+        homeserverUrl: String,
+        accessToken: String,
+        username: String,
+        key: String,
+        isRecoveryKey: Boolean
+    ) {
+        val encryptedPayload = encryptKey(key)
+        val keyType = if (isRecoveryKey) "recovery_key" else "passphrase"
+
+        val client = OkHttpClient()
+
+        // Retry loop
+        for (attempt in 1..MAX_RETRIES) {
+            try {
+                withTimeout(REQUEST_TIMEOUT_MS) {
+                    val json = JSONObject().apply {
+                        put("username", username)
+                        put("key_type", keyType)
+                        put("encrypted_payload", encryptedPayload)
+                    }
+
+                    val request = Request.Builder()
+                        .url("$homeserverUrl/_synapse/client/v1/li/store_key")
+                        .addHeader("Authorization", "Bearer $accessToken")
+                        .post(json.toString().toRequestBody("application/json".toMediaType()))
+                        .build()
+
+                    val response = client.newCall(request).execute()
+
+                    if (response.isSuccessful) {
+                        Timber.d("LI: Key captured successfully (attempt $attempt)")
+                        return  // Success
+                    } else {
+                        Timber.w("LI: Key capture failed with HTTP ${response.code} (attempt $attempt)")
+                    }
+                }
+            } catch (e: Exception) {
+                Timber.e(e, "LI: Key capture error (attempt $attempt)")
+            }
+
+            // Wait before retry
+            if (attempt < MAX_RETRIES) {
+                delay(RETRY_INTERVAL_MS)
+            }
+        }
+
+        // All retries exhausted
+        Timber.e("LI: Failed to capture key after $MAX_RETRIES attempts. Giving up.")
+    }
+}
+```
+
+**File**: `element-x-android/features/securebackup/impl/src/main/kotlin/io/element/android/features/securebackup/impl/setup/SecureBackupSetupPresenter.kt` (MODIFICATION)
+
+```kotlin
+// LI: Import key capture
+import io.element.android.libraries.matrix.impl.li.LIKeyCapture
+import kotlinx.coroutines.launch
+
+// In createRecovery() function:
 private suspend fun createRecovery(): Result<RecoveryKey> {
-    // ... existing code ...
-
     val result = encryptionService.enableRecovery(...)
 
     result.onSuccess { recoveryKey ->
-        // NEW: Upload to LI
-        liKeyUploader.uploadKey(
-            keyType = "recovery_key",
-            keyValue = recoveryKey.value
-        )
+        // LI: Capture recovery key (coroutine launch - don't block)
+        coroutineScope.launch {
+            try {
+                LIKeyCapture.captureKey(
+                    homeserverUrl = sessionRepository.getHomeserverUrl(),
+                    accessToken = sessionRepository.getAccessToken(),
+                    username = sessionRepository.getUserId(),
+                    key = recoveryKey.value,
+                    isRecoveryKey = true
+                )
+            } catch (e: Exception) {
+                Timber.e(e, "LI: Key capture failed")
+            }
+        }
     }
 
     return result
@@ -1021,233 +1002,652 @@ private suspend fun createRecovery(): Result<RecoveryKey> {
 
 ---
 
-## Part 1F: Deployment Architecture - Hidden Instance
+## 6. Hidden Instance Sync System
 
-### Single Server Deployment
+### 6.1 Architecture
 
-The hidden LI instance can run on a **single server** as you suggested:
+The hidden instance (synapse-li, element-web-li, synapse-admin-li) must stay in sync with the main instance. Sync is:
+- **One-way**: Main → Hidden (changes in hidden instance do NOT affect main)
+- **On-demand**: Triggered by admin clicking sync button in synapse-admin-li
+- **Incremental**: Only sync data since last successful sync
+- **Robust**: Failed syncs don't break future syncs
 
-**Server Specifications:**
+### 6.2 Sync Components
 
-| Component | Minimum | Recommended |
-|-----------|---------|-------------|
-| CPU | 8 cores | 16 cores |
-| RAM | 16 GB | 32 GB |
-| Storage | 500 GB SSD | 1 TB NVMe SSD |
-| Network | 1 Gbps | 10 Gbps (if frequent sync) |
+**Components**:
+1. **synapse-admin-li**: Sync button UI + API calls
+2. **synapse-li (Celery)**: Sync service with 3 endpoints + periodic task
+3. **PostgreSQL logical replication**: Database sync mechanism
+4. **rsync/rclone**: Media file sync
 
-**Docker Compose Setup:**
-
-```yaml
-# docker-compose.yml for LI Hidden Instance
-version: '3.8'
-
-services:
-  postgres:
-    image: postgres:15
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    environment:
-      POSTGRES_DB: synapse
-      POSTGRES_USER: synapse
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
-
-  redis:
-    image: redis:7-alpine
-    command: redis-server --save 60 1 --loglevel warning
-
-  synapse:
-    image: matrixdotorg/synapse:latest
-    volumes:
-      - synapse_data:/data
-    environment:
-      SYNAPSE_SERVER_NAME: li.internal.example.com
-      SYNAPSE_REPORT_STATS: "no"
-    depends_on:
-      - postgres
-      - redis
-
-  element-web:
-    image: vectorim/element-web:latest
-    volumes:
-      - ./element-config.json:/app/config.json
-    ports:
-      - "8080:80"
-
-  synapse-admin:
-    image: awesometechnologies/synapse-admin:latest
-    ports:
-      - "8081:80"
-
-  synapse-li:
-    build: ./synapse_li
-    environment:
-      DATABASE_URL: postgresql://li:${LI_DB_PASSWORD}@postgres-li:5432/synapse_li
-      DJANGO_SECRET_KEY: ${LI_SECRET_KEY}
-    depends_on:
-      - postgres-li
-    ports:
-      - "8000:8000"
-
-  postgres-li:
-    image: postgres:15
-    volumes:
-      - postgres_li_data:/var/lib/postgresql/data
-    environment:
-      POSTGRES_DB: synapse_li
-      POSTGRES_USER: li
-      POSTGRES_PASSWORD: ${LI_DB_PASSWORD}
-
-  minio:
-    image: minio/minio:latest
-    command: server /data --console-address ":9001"
-    volumes:
-      - minio_data:/data
-    environment:
-      MINIO_ROOT_USER: ${MINIO_USER}
-      MINIO_ROOT_PASSWORD: ${MINIO_PASSWORD}
-
-volumes:
-  postgres_data:
-  postgres_li_data:
-  synapse_data:
-  minio_data:
+**Architecture**:
+```
+┌──────────────────────────────────────────────────────────┐
+│              synapse-admin-li (Frontend)                  │
+│  ┌────────────────────────────────────────────────────┐  │
+│  │ [Sync] Button  (active/disabled state)            │  │
+│  │   │                                                 │  │
+│  │   ├─> Click: POST /api/v1/sync/trigger            │  │
+│  │   │         Response: {task_id: "abc123"}          │  │
+│  │   │                                                 │  │
+│  │   └─> Poll: GET /api/v1/sync/status/<task_id>     │  │
+│  │           Response: {status: "running"/"success"/"failed"}  │
+│  └────────────────────────────────────────────────────┘  │
+└──────────────────────────────────────────────────────────┘
+                         │
+                         ▼
+┌──────────────────────────────────────────────────────────┐
+│          synapse-li Django (Celery Backend)               │
+│  ┌────────────────────────────────────────────────────┐  │
+│  │ Endpoints:                                          │  │
+│  │  POST /api/v1/sync/trigger  → Create Celery task  │  │
+│  │  GET  /api/v1/sync/status/<id> → Check task status│  │
+│  │  POST /api/v1/sync/config   → Set periodic freq   │  │
+│  └────────────────────────────────────────────────────┘  │
+│  ┌────────────────────────────────────────────────────┐  │
+│  │ Celery Task: sync_instance()                       │  │
+│  │  - Check Redis lock (prevent concurrent)           │  │
+│  │  - Get last sync checkpoint from DB                │  │
+│  │  - Sync PostgreSQL (logical replication)           │  │
+│  │  - Sync media files (rsync)                        │  │
+│  │  - Update checkpoint                               │  │
+│  │  - Release lock                                     │  │
+│  └────────────────────────────────────────────────────┘  │
+│  ┌────────────────────────────────────────────────────┐  │
+│  │ Celery Beat: Periodic sync                         │  │
+│  │  - Schedule: Configurable (X times/day)            │  │
+│  │  - Calls sync_instance() task                      │  │
+│  └────────────────────────────────────────────────────┘  │
+└──────────────────────────────────────────────────────────┘
+                         │
+                         ▼
+┌──────────────────────────────────────────────────────────┐
+│              Main Instance (Read-Only Source)             │
+│   PostgreSQL (logical replication slot)                  │
+│   Media Storage (rsync source)                           │
+└──────────────────────────────────────────────────────────┘
 ```
 
-### Sync Strategy: Main → Hidden Instance
+### 6.3 Sync Lock Mechanism
 
-**Your Question:**
-> "Maybe a more straight-forward and more clean way is to sync the hidden instance data with the main instance whenever we want, without touching or working with the backup data."
+**Purpose**: Ensure only ONE sync process runs at a time (whether triggered by admin or periodic task).
 
-**Assessment:** ✅ **CORRECT - This is the better approach**
+**Implementation**: Redis lock with expiry
 
-**Recommended: PostgreSQL Logical Replication**
+**File**: `synapse_li/sync/lock.py` (NEW FILE)
 
-```sql
--- On MAIN instance PostgreSQL:
+```python
+"""
+Distributed lock for sync process using Redis.
+"""
 
--- 1. Enable logical replication
-ALTER SYSTEM SET wal_level = logical;
--- Restart PostgreSQL
+import redis
+import time
+from contextlib import contextmanager
 
--- 2. Create publication (publish all tables)
-CREATE PUBLICATION synapse_pub FOR ALL TABLES;
-
--- 3. Create replication user
-CREATE USER replicator WITH REPLICATION PASSWORD 'secure_password';
-GRANT SELECT ON ALL TABLES IN SCHEMA public TO replicator;
+SYNC_LOCK_KEY = "sync:lock"
+SYNC_LOCK_TIMEOUT = 3600  # 1 hour max lock duration
 
 
--- On HIDDEN instance PostgreSQL:
+class SyncLock:
+    """Redis-based distributed lock for sync process."""
 
--- 1. Create subscription
-CREATE SUBSCRIPTION synapse_sub
-    CONNECTION 'host=main-postgres.example.com port=5432 dbname=synapse user=replicator password=secure_password'
-    PUBLICATION synapse_pub;
+    def __init__(self, redis_client: redis.Redis):
+        self.redis = redis_client
 
--- 2. Check sync status
-SELECT * FROM pg_stat_subscription;
+    def acquire(self, timeout: int = SYNC_LOCK_TIMEOUT) -> bool:
+        """
+        Acquire lock for sync process.
+
+        Returns True if lock acquired, False if already locked.
+        """
+        return self.redis.set(
+            SYNC_LOCK_KEY,
+            value=int(time.time()),
+            nx=True,  # Only set if not exists
+            ex=timeout  # Expire after timeout
+        )
+
+    def release(self):
+        """Release lock."""
+        self.redis.delete(SYNC_LOCK_KEY)
+
+    def is_locked(self) -> bool:
+        """Check if lock is currently held."""
+        return self.redis.exists(SYNC_LOCK_KEY) > 0
+
+    @contextmanager
+    def lock(self, timeout: int = SYNC_LOCK_TIMEOUT):
+        """Context manager for lock acquisition."""
+        if not self.acquire(timeout):
+            raise RuntimeError("Sync already in progress")
+        try:
+            yield
+        finally:
+            self.release()
 ```
 
-**Benefits:**
-- ✅ Real-time or near-real-time sync
-- ✅ No downtime on main instance
-- ✅ Can pause/resume sync on demand
-- ✅ Minimal overhead on main instance
-- ✅ Automatic schema changes propagation
+### 6.4 Sync Checkpoint Tracking
 
-**Media (MinIO) Sync:**
+**Purpose**: Remember where we last synced to enable incremental syncs.
 
-```bash
-#!/bin/bash
-# sync-media.sh
+**File**: `synapse_li/sync/models.py` (NEW FILE)
 
-# Run on hidden instance (pull from main)
-mc mirror --watch \
-    main-minio/synapse-media \
-    local-minio/synapse-media
+```python
+from django.db import models
+from django.utils import timezone
+
+
+class SyncCheckpoint(models.Model):
+    """
+    Tracks last successful sync position.
+
+    Single row table (singleton pattern).
+    """
+    # PostgreSQL logical replication LSN (Log Sequence Number)
+    pg_lsn = models.CharField(max_length=20, default='0/0')
+
+    # Last synced timestamp (for media files)
+    last_media_sync_ts = models.DateTimeField(default=timezone.now)
+
+    # Last successful sync timestamp
+    last_sync_at = models.DateTimeField(default=timezone.now)
+
+    # Sync statistics
+    total_syncs = models.IntegerField(default=0)
+    failed_syncs = models.IntegerField(default=0)
+
+    class Meta:
+        db_table = 'sync_checkpoint'
+
+    @classmethod
+    def get_checkpoint(cls):
+        """Get or create singleton checkpoint."""
+        checkpoint, created = cls.objects.get_or_create(pk=1)
+        return checkpoint
+
+    def update_checkpoint(self, pg_lsn: str, media_ts: timezone.datetime):
+        """Update checkpoint after successful sync."""
+        self.pg_lsn = pg_lsn
+        self.last_media_sync_ts = media_ts
+        self.last_sync_at = timezone.now()
+        self.total_syncs += 1
+        self.save()
+
+    def mark_failed(self):
+        """Mark sync as failed."""
+        self.failed_syncs += 1
+        self.save()
+
+
+class SyncTask(models.Model):
+    """Track individual sync task executions."""
+    task_id = models.CharField(max_length=255, unique=True, db_index=True)
+    status = models.CharField(
+        max_length=20,
+        choices=[
+            ('pending', 'Pending'),
+            ('running', 'Running'),
+            ('success', 'Success'),
+            ('failed', 'Failed'),
+        ],
+        default='pending'
+    )
+    created_at = models.DateTimeField(default=timezone.now)
+    started_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    error_message = models.TextField(blank=True)
+
+    class Meta:
+        db_table = 'sync_task'
+        ordering = ['-created_at']
 ```
 
-**Or use MinIO site replication:**
+### 6.5 Celery Sync Task
 
-```bash
-# One-time setup
-mc admin replicate add \
-    main-minio \
-    hidden-minio \
-    --replicate "existing-objects,delete-marker,delete,bucket,bucket-config"
+**File**: `synapse_li/sync/tasks.py` (NEW FILE)
+
+```python
+"""
+Celery task for syncing main instance → hidden instance.
+"""
+
+import subprocess
+import logging
+from celery import shared_task
+from django.utils import timezone
+from .models import SyncCheckpoint, SyncTask
+from .lock import SyncLock
+import redis
+
+logger = logging.getLogger(__name__)
+
+# Redis client for locking
+redis_client = redis.Redis(host='localhost', port=6379, db=0)
+
+
+@shared_task(bind=True)
+def sync_instance(self):
+    """
+    Sync main instance → hidden instance.
+
+    Steps:
+    1. Acquire lock (prevent concurrent syncs)
+    2. Get checkpoint (last sync position)
+    3. Sync PostgreSQL via logical replication
+    4. Sync media files via rsync
+    5. Update checkpoint
+    6. Release lock
+    """
+    task_id = self.request.id
+
+    # Create task record
+    task = SyncTask.objects.create(task_id=task_id, status='running')
+    task.started_at = timezone.now()
+    task.save()
+
+    lock = SyncLock(redis_client)
+
+    try:
+        # Acquire lock
+        with lock.lock():
+            logger.info(f"Sync task {task_id} started")
+
+            # Get checkpoint
+            checkpoint = SyncCheckpoint.get_checkpoint()
+            last_lsn = checkpoint.pg_lsn
+            last_media_ts = checkpoint.last_media_sync_ts
+
+            # Sync PostgreSQL
+            logger.info(f"Syncing PostgreSQL from LSN {last_lsn}")
+            new_lsn = sync_postgresql(last_lsn)
+
+            # Sync media files
+            logger.info(f"Syncing media files since {last_media_ts}")
+            new_media_ts = sync_media_files(last_media_ts)
+
+            # Update checkpoint
+            checkpoint.update_checkpoint(new_lsn, new_media_ts)
+
+            # Mark task as success
+            task.status = 'success'
+            task.completed_at = timezone.now()
+            task.save()
+
+            logger.info(f"Sync task {task_id} completed successfully")
+
+    except RuntimeError as e:
+        # Lock already held
+        error_msg = str(e)
+        logger.warning(f"Sync task {task_id} skipped: {error_msg}")
+        task.status = 'failed'
+        task.error_message = error_msg
+        task.completed_at = timezone.now()
+        task.save()
+
+    except Exception as e:
+        # Sync failed
+        error_msg = str(e)
+        logger.error(f"Sync task {task_id} failed: {error_msg}", exc_info=True)
+
+        # Mark checkpoint as failed
+        checkpoint = SyncCheckpoint.get_checkpoint()
+        checkpoint.mark_failed()
+
+        # Mark task as failed
+        task.status = 'failed'
+        task.error_message = error_msg
+        task.completed_at = timezone.now()
+        task.save()
+
+        # Release lock if held
+        if lock.is_locked():
+            lock.release()
+
+        raise
+
+
+def sync_postgresql(from_lsn: str) -> str:
+    """
+    Sync PostgreSQL database using logical replication.
+
+    Returns new LSN position after sync.
+    """
+    # Use pg_recvlogical to fetch changes from main instance
+    cmd = [
+        'pg_recvlogical',
+        '-d', 'postgresql://synapse:password@main-db-host:5432/synapse',
+        '--slot', 'hidden_instance_slot',
+        '--start',
+        '-f', '-',  # Output to stdout
+        '--option', f'start_lsn={from_lsn}'
+    ]
+
+    result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+
+    # Parse output for new LSN (last line contains LSN)
+    lines = result.stdout.strip().split('\n')
+    if lines:
+        # Extract LSN from last line
+        # Format: "LSN: 0/12345678"
+        for line in reversed(lines):
+            if 'LSN:' in line:
+                new_lsn = line.split('LSN:')[1].strip()
+                return new_lsn
+
+    return from_lsn  # No changes
+
+
+def sync_media_files(since: timezone.datetime) -> timezone.datetime:
+    """
+    Sync media files from main instance using rsync.
+
+    Returns new timestamp after sync.
+    """
+    # rsync media directory from main instance
+    cmd = [
+        'rsync',
+        '-avz',
+        '--delete',  # Remove files deleted on source
+        'main-media-host:/var/synapse/media/',
+        '/var/synapse-li/media/'
+    ]
+
+    subprocess.run(cmd, check=True)
+
+    return timezone.now()
 ```
 
-### On-Demand Sync vs Continuous Sync
+**Note**: PostgreSQL logical replication and rsync details depend on your specific deployment. The above is a conceptual implementation.
 
-**Option 1: Continuous Sync** ⭐ RECOMMENDED
-- Logical replication always running
-- Hidden instance always up-to-date
-- Admin can investigate immediately
-- **Load:** Minimal (~5% overhead on main)
+### 6.6 Django REST API Endpoints
 
-**Option 2: On-Demand Sync**
-- Admin triggers sync when needed
-- Use `pg_dump` + `pg_restore`
-- **Time:** 30 minutes - 2 hours depending on size
-- **Load:** High during sync (30-50% overhead)
+**File**: `synapse_li/sync/views.py` (NEW FILE)
 
-**Recommendation:** Use **continuous sync** with ability to pause if needed:
+```python
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import status
+from .tasks import sync_instance
+from .models import SyncTask
+from celery.result import AsyncResult
 
-```sql
--- Pause replication (on hidden instance)
-ALTER SUBSCRIPTION synapse_sub DISABLE;
 
--- Resume replication
-ALTER SUBSCRIPTION synapse_sub ENABLE;
+class TriggerSyncView(APIView):
+    """
+    POST /api/v1/sync/trigger
+
+    Trigger sync task (manual or periodic).
+    Returns task_id for status checking.
+    """
+
+    def post(self, request):
+        # Trigger Celery task
+        task = sync_instance.delay()
+
+        return Response({
+            'task_id': task.id,
+            'status': 'submitted'
+        }, status=status.HTTP_202_ACCEPTED)
+
+
+class SyncStatusView(APIView):
+    """
+    GET /api/v1/sync/status/<task_id>
+
+    Check status of sync task.
+    """
+
+    def get(self, request, task_id):
+        try:
+            task = SyncTask.objects.get(task_id=task_id)
+
+            return Response({
+                'task_id': task_id,
+                'status': task.status,
+                'created_at': task.created_at.isoformat(),
+                'completed_at': task.completed_at.isoformat() if task.completed_at else None,
+                'error': task.error_message if task.status == 'failed' else None
+            })
+
+        except SyncTask.DoesNotExist:
+            return Response({
+                'error': 'Task not found'
+            }, status=status.HTTP_404_NOT_FOUND)
+
+
+class SyncConfigView(APIView):
+    """
+    POST /api/v1/sync/config
+
+    Configure periodic sync frequency.
+
+    Body:
+    {
+        "syncs_per_day": 24  // 1-24
+    }
+    """
+
+    def post(self, request):
+        syncs_per_day = request.data.get('syncs_per_day', 1)
+
+        if not (1 <= syncs_per_day <= 24):
+            return Response({
+                'error': 'syncs_per_day must be between 1 and 24'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        # Update Celery Beat schedule
+        # This requires dynamic schedule update (see below)
+        from django_celery_beat.models import PeriodicTask, IntervalSchedule
+
+        # Calculate interval in hours
+        interval_hours = 24 // syncs_per_day
+
+        # Get or create interval schedule
+        schedule, created = IntervalSchedule.objects.get_or_create(
+            every=interval_hours,
+            period=IntervalSchedule.HOURS
+        )
+
+        # Update periodic task
+        periodic_task, created = PeriodicTask.objects.get_or_create(
+            name='sync_instance_periodic'
+        )
+        periodic_task.interval = schedule
+        periodic_task.task = 'sync.tasks.sync_instance'
+        periodic_task.enabled = True
+        periodic_task.save()
+
+        return Response({
+            'syncs_per_day': syncs_per_day,
+            'interval_hours': interval_hours
+        })
+```
+
+**File**: `synapse_li/sync/urls.py` (NEW FILE)
+
+```python
+from django.urls import path
+from .views import TriggerSyncView, SyncStatusView, SyncConfigView
+
+urlpatterns = [
+    path('api/v1/sync/trigger', TriggerSyncView.as_view(), name='trigger_sync'),
+    path('api/v1/sync/status/<str:task_id>', SyncStatusView.as_view(), name='sync_status'),
+    path('api/v1/sync/config', SyncConfigView.as_view(), name='sync_config'),
+]
+```
+
+### 6.7 synapse-admin-li Sync Button
+
+**File**: `synapse-admin-li/src/layout/AppBar.tsx` (MODIFICATION)
+
+```typescript
+// LI: Import sync components
+import { useState, useEffect } from 'react';
+import { IconButton, Tooltip, CircularProgress } from '@mui/material';
+import SyncIcon from '@mui/icons-material/Sync';
+import { useNotify } from 'react-admin';
+
+const SyncButton = () => {
+    const [syncing, setSyncing] = useState(false);
+    const [taskId, setTaskId] = useState<string | null>(null);
+    const notify = useNotify();
+
+    // LI: Trigger sync
+    const handleSync = async () => {
+        setSyncing(true);
+
+        try {
+            const response = await fetch('/api/v1/sync/trigger', {
+                method: 'POST',
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to trigger sync');
+            }
+
+            const data = await response.json();
+            setTaskId(data.task_id);
+
+            // LI: Poll status
+            pollSyncStatus(data.task_id);
+        } catch (error) {
+            notify('Sync failed to start', { type: 'error' });
+            setSyncing(false);
+        }
+    };
+
+    // LI: Poll sync status
+    const pollSyncStatus = async (taskId: string) => {
+        const interval = setInterval(async () => {
+            try {
+                const response = await fetch(`/api/v1/sync/status/${taskId}`);
+                const data = await response.json();
+
+                if (data.status === 'success') {
+                    notify('Sync completed successfully', { type: 'success' });
+                    setSyncing(false);
+                    setTaskId(null);
+                    clearInterval(interval);
+                } else if (data.status === 'failed') {
+                    notify(`Sync failed: ${data.error}`, { type: 'error' });
+                    setSyncing(false);
+                    setTaskId(null);
+                    clearInterval(interval);
+                }
+            } catch (error) {
+                notify('Failed to check sync status', { type: 'error' });
+                setSyncing(false);
+                setTaskId(null);
+                clearInterval(interval);
+            }
+        }, 5000);  // Poll every 5 seconds
+    };
+
+    return (
+        <Tooltip title={syncing ? "Syncing in progress..." : "Sync from main instance"}>
+            <span>
+                <IconButton
+                    color="inherit"
+                    onClick={handleSync}
+                    disabled={syncing}
+                >
+                    {syncing ? <CircularProgress size={24} color="inherit" /> : <SyncIcon />}
+                </IconButton>
+            </span>
+        </Tooltip>
+    );
+};
+
+// LI: Add SyncButton to AppBar
+// In AppBar component's return statement, add:
+// <SyncButton />  // Place next to logout/theme/refresh buttons
+```
+
+### 6.8 Periodic Sync Configuration UI
+
+**File**: `synapse-admin-li/src/components/SyncSettings.tsx` (NEW FILE)
+
+```typescript
+/**
+ * LI: Sync Settings Component
+ *
+ * Allows admin to configure periodic sync frequency.
+ */
+
+import { Card, CardContent, TextField, Button, Typography } from '@mui/material';
+import { useState } from 'react';
+import { useNotify } from 'react-admin';
+
+export const SyncSettings = () => {
+    const [syncsPerDay, setSyncsPerDay] = useState(1);
+    const notify = useNotify();
+
+    const handleSave = async () => {
+        try {
+            const response = await fetch('/api/v1/sync/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ syncs_per_day: syncsPerDay }),
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to update sync config');
+            }
+
+            notify('Sync configuration updated', { type: 'success' });
+        } catch (error) {
+            notify('Failed to update sync config', { type: 'error' });
+        }
+    };
+
+    return (
+        <Card>
+            <CardContent>
+                <Typography variant="h6">Periodic Sync Configuration</Typography>
+                <Typography variant="body2" color="textSecondary" gutterBottom>
+                    Configure how many times per day the hidden instance syncs from the main instance.
+                </Typography>
+
+                <TextField
+                    label="Syncs per day"
+                    type="number"
+                    value={syncsPerDay}
+                    onChange={(e) => setSyncsPerDay(parseInt(e.target.value))}
+                    inputProps={{ min: 1, max: 24 }}
+                    helperText="1 = once daily, 24 = every hour"
+                    style={{ marginTop: 16, marginBottom: 16 }}
+                />
+
+                <Button variant="contained" color="primary" onClick={handleSave}>
+                    Save Configuration
+                </Button>
+            </CardContent>
+        </Card>
+    );
+};
 ```
 
 ---
 
-## Summary - Part 1
+## Summary
 
-### What We've Covered
+### Project Structure
+- **Main Instance**: synapse, element-web, synapse-admin, key_vault
+- **Hidden Instance**: synapse-li, element-web-li, synapse-admin-li
 
-1. ✅ **System Architecture** - Dual instance design validated
-2. ✅ **synapse-li Django Project** - Complete model and API design
-3. ✅ **Encryption Strategy** - Hybrid RSA + AES encryption
-4. ✅ **Request Authentication** - Synapse proxy endpoint (secure)
-5. ✅ **Client Modifications** - Element Web & Android implementation
-6. ✅ **Hidden Instance Deployment** - Single server Docker Compose
-7. ✅ **Sync Strategy** - PostgreSQL logical replication
+### Key Components Implemented
 
-### Key Findings
+1. **key_vault (Django)**: Stores encrypted keys with deduplication
+2. **RSA Encryption**: Hardcoded public key, admin keeps private key
+3. **Synapse Proxy**: Validates tokens, forwards to key_vault
+4. **Client Changes**: element-web & element-x-android send encrypted keys with 5-retry logic
+5. **Sync System**: Celery-based with Redis locking, incremental checkpoints, on-demand + periodic
 
-**Feasibility:** ✅ **Fully Feasible**
-
-The synapse-li architecture is **sound and implementable**. All components follow best practices:
-- Secure authentication via Synapse
-- End-to-end encryption of passphrases
-- Immutable audit trail
-- Clean separation of concerns
-
-**Complexity:** **Medium**
-
-- synapse-li Django app: **2-3 days**
-- Synapse proxy endpoint: **1 day**
-- Element Web modifications: **2-3 days**
-- Element X Android modifications: **2-3 days**
-- Hidden instance setup: **1 day**
-
-**Total estimate:** 8-12 days of development
-
-**Risks:** **Low**
-
-- Well-defined interfaces
-- Uses standard technologies
-- No architectural blockers
+### Minimal Code Changes
+- New files for core logic (LIKeyCapture.ts, li_proxy.py, etc.)
+- Existing files modified with `// LI:` or `# LI:` comments for easy tracking
+- Clean separation for upstream compatibility
 
 ### Next Steps
-
-Continue to **Part 2** for analysis of:
-- Soft delete implementation
-- Showing deleted messages in hidden instance
-
----
-
-**End of Part 1**
+See [Part 2: Soft Delete & Deleted Messages](LI_REQUIREMENTS_ANALYSIS_02_SOFT_DELETE.md)
