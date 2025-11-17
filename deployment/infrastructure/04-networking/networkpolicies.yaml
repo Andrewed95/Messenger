@@ -1,0 +1,501 @@
+---
+# Default Deny All Policy
+# Starts with zero-trust: deny all traffic by default
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: matrix
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+# Allow DNS Resolution
+# All pods need to resolve DNS names
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: matrix
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+# PostgreSQL Access Control
+# Only specific applications can access PostgreSQL
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postgresql-access
+  namespace: matrix
+spec:
+  podSelector:
+    matchLabels:
+      cnpg.io/cluster: matrix-postgresql
+  policyTypes:
+    - Ingress
+  ingress:
+    # Synapse main can access
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: synapse
+              matrix.instance: main
+      ports:
+        - protocol: TCP
+          port: 5432
+    # key_vault can access
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: key-vault
+      ports:
+        - protocol: TCP
+          port: 5432
+    # CloudNativePG internal replication
+    - from:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: matrix-postgresql
+      ports:
+        - protocol: TCP
+          port: 5432
+        - protocol: TCP
+          port: 8000  # Metrics
+---
+# PostgreSQL LI Access Control
+# LI instance PostgreSQL has different access rules
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postgresql-li-access
+  namespace: matrix
+spec:
+  podSelector:
+    matchLabels:
+      cnpg.io/cluster: matrix-postgresql-li
+  policyTypes:
+    - Ingress
+  ingress:
+    # Synapse LI (read-only)
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: synapse
+              matrix.instance: li
+      ports:
+        - protocol: TCP
+          port: 5432
+    # Sync system
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: sync-system
+      ports:
+        - protocol: TCP
+          port: 5432
+    # CloudNativePG internal replication
+    - from:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: matrix-postgresql-li
+      ports:
+        - protocol: TCP
+          port: 5432
+        - protocol: TCP
+          port: 8000
+---
+# Redis Access Control
+# Multiple services need Redis access
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: redis-access
+  namespace: matrix
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: redis
+  policyTypes:
+    - Ingress
+  ingress:
+    # Synapse workers for HTTP replication
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: synapse
+              matrix.instance: main
+      ports:
+        - protocol: TCP
+          port: 6379  # Redis
+        - protocol: TCP
+          port: 26379  # Sentinel
+    # LiveKit for distributed state
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: livekit
+      ports:
+        - protocol: TCP
+          port: 6379
+        - protocol: TCP
+          port: 26379
+    # key_vault for Django sessions
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: key-vault
+      ports:
+        - protocol: TCP
+          port: 6379
+        - protocol: TCP
+          port: 26379
+    # Redis internal (Sentinel communication)
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: redis
+      ports:
+        - protocol: TCP
+          port: 6379
+        - protocol: TCP
+          port: 26379
+---
+# MinIO Access Control
+# S3-compatible storage access
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: minio-access
+  namespace: matrix
+spec:
+  podSelector:
+    matchLabels:
+      v1.min.io/tenant: matrix-minio
+  policyTypes:
+    - Ingress
+  ingress:
+    # Synapse for media storage
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: synapse
+              matrix.instance: main
+      ports:
+        - protocol: TCP
+          port: 9000  # S3 API
+    # CloudNativePG for backups
+    - from:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: matrix-postgresql
+      ports:
+        - protocol: TCP
+          port: 9000
+    - from:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: matrix-postgresql-li
+      ports:
+        - protocol: TCP
+          port: 9000
+    # Sync system for LI media replication
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: sync-system
+      ports:
+        - protocol: TCP
+          port: 9000
+    # Console access (admin UI)
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: minio-console
+      ports:
+        - protocol: TCP
+          port: 9090
+    # MinIO internal (distributed mode communication)
+    - from:
+        - podSelector:
+            matchLabels:
+              v1.min.io/tenant: matrix-minio
+      ports:
+        - protocol: TCP
+          port: 9000
+        - protocol: TCP
+          port: 9090
+---
+# key_vault Strict Isolation
+# CRITICAL: key_vault must ONLY be accessible from Synapse main
+# This is the most important security policy for LI compliance
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: key-vault-isolation
+  namespace: matrix
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: key-vault
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # ONLY Synapse main can access key_vault
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: synapse
+              matrix.instance: main
+      ports:
+        - protocol: TCP
+          port: 8000  # Django app
+  egress:
+    # Can only talk to PostgreSQL and Redis
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: matrix-postgresql
+      ports:
+        - protocol: TCP
+          port: 5432
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: redis
+      ports:
+        - protocol: TCP
+          port: 6379
+    # DNS resolution
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+# LI Instance Isolation
+# LI instance should NOT access main instance resources
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: li-instance-isolation
+  namespace: matrix
+spec:
+  podSelector:
+    matchLabels:
+      matrix.instance: li
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Admin access only (via ingress)
+    - from:
+        - namespaceSelector: {}
+      ports:
+        - protocol: TCP
+          port: 8008  # Synapse
+        - protocol: TCP
+          port: 80    # Element Web
+        - protocol: TCP
+          port: 8080  # Synapse Admin
+  egress:
+    # Can only access LI PostgreSQL
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: matrix-postgresql-li
+      ports:
+        - protocol: TCP
+          port: 5432
+    # Can access LI MinIO (for media)
+    - to:
+        - podSelector:
+            matchLabels:
+              v1.min.io/tenant: matrix-minio
+      ports:
+        - protocol: TCP
+          port: 9000
+    # DNS resolution
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+# Synapse Main Egress
+# Synapse needs broad egress for federation
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: synapse-main-egress
+  namespace: matrix
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: synapse
+      matrix.instance: main
+  policyTypes:
+    - Egress
+  egress:
+    # PostgreSQL
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: matrix-postgresql
+      ports:
+        - protocol: TCP
+          port: 5432
+    # Redis
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: redis
+      ports:
+        - protocol: TCP
+          port: 6379
+        - protocol: TCP
+          port: 26379
+    # MinIO
+    - to:
+        - podSelector:
+            matchLabels:
+              v1.min.io/tenant: matrix-minio
+      ports:
+        - protocol: TCP
+          port: 9000
+    # key_vault (LI key storage)
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: key-vault
+      ports:
+        - protocol: TCP
+          port: 8000
+    # Sygnal (push notifications)
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: sygnal
+      ports:
+        - protocol: TCP
+          port: 5000
+    # LiveKit (video calls)
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: livekit
+      ports:
+        - protocol: TCP
+          port: 7880
+    # lk-jwt-service (LiveKit auth)
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: lk-jwt-service
+      ports:
+        - protocol: TCP
+          port: 8080
+    # ClamAV antivirus scanner
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: clamav-scanner
+      ports:
+        - protocol: TCP
+          port: 8080
+    # DNS
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Federation (HTTPS to external servers)
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 8448  # Matrix federation port
+---
+# Ingress Access
+# Ingress controller needs to access services
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-from-ingress
+  namespace: matrix
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/expose: "true"
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 8008  # Synapse
+        - protocol: TCP
+          port: 80    # Element Web
+        - protocol: TCP
+          port: 8080  # Various services
+        - protocol: TCP
+          port: 9090  # MinIO console
+---
+# Monitoring Access
+# Prometheus needs to scrape metrics
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-prometheus-scraping
+  namespace: matrix
+spec:
+  podSelector:
+    matchLabels:
+      prometheus.io/scrape: "true"
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: monitoring
+      ports:
+        - protocol: TCP
+          port: 9090  # Synapse metrics
+        - protocol: TCP
+          port: 9121  # Redis exporter
+        - protocol: TCP
+          port: 9000  # MinIO metrics
+        - protocol: TCP
+          port: 8000  # PostgreSQL metrics

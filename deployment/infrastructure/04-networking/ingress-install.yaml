@@ -1,0 +1,71 @@
+---
+# NGINX Ingress Controller Installation
+# This file documents the installation process
+# DO NOT apply this file directly - follow the instructions below
+
+# Installation Method 1: Using Official Manifest (Recommended for OVH/Bare Metal)
+# kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.11.1/deploy/static/provider/baremetal/deploy.yaml
+
+# Installation Method 2: Using Helm
+# helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+# helm repo update
+# helm install ingress-nginx ingress-nginx/ingress-nginx \
+#   --namespace ingress-nginx \
+#   --create-namespace \
+#   --set controller.service.type=NodePort \
+#   --set controller.service.nodePorts.http=30080 \
+#   --set controller.service.nodePorts.https=30443
+
+# For OVH/Bare Metal with MetalLB:
+# helm install ingress-nginx ingress-nginx/ingress-nginx \
+#   --namespace ingress-nginx \
+#   --create-namespace \
+#   --set controller.service.type=LoadBalancer
+
+---
+# IngressClass for NGINX
+# Defines the ingress controller to use
+apiVersion: networking.k8s.io/v1
+kind: IngressClass
+metadata:
+  name: nginx
+  labels:
+    app.kubernetes.io/name: ingress-nginx
+    app.kubernetes.io/part-of: ingress-nginx
+spec:
+  controller: k8s.io/ingress-nginx
+---
+# ConfigMap for NGINX Tuning
+# Performance and security settings
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ingress-nginx-controller
+  namespace: ingress-nginx
+  labels:
+    app.kubernetes.io/name: ingress-nginx
+    app.kubernetes.io/part-of: ingress-nginx
+data:
+  # Client body size (for media uploads)
+  proxy-body-size: "100m"
+  client-max-body-size: "100m"
+
+  # Timeouts for long-lived connections (Matrix sync)
+  proxy-connect-timeout: "75"
+  proxy-send-timeout: "600"
+  proxy-read-timeout: "600"
+
+  # WebSocket support
+  use-forwarded-headers: "true"
+
+  # Rate limiting
+  limit-req-status-code: "429"
+
+  # SSL/TLS
+  ssl-protocols: "TLSv1.2 TLSv1.3"
+  ssl-prefer-server-ciphers: "true"
+  ssl-ciphers: "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384"
+
+  # Performance
+  worker-processes: "auto"
+  max-worker-connections: "16384"
