@@ -1,0 +1,147 @@
+---
+# CloudNativePG Cluster for LI Instance
+# Read-only replica using logical replication from main instance
+# Configured for lawful intercept with infinite message retention
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: matrix-postgresql-li
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: postgresql
+    app.kubernetes.io/component: database
+    app.kubernetes.io/part-of: matrix-stack
+    matrix.instance: li
+spec:
+  # HA for LI instance
+  instances: 2  # 1 primary + 1 replica (smaller than main)
+
+  # Primary update strategy
+  primaryUpdateStrategy: unsupervised
+
+  # Single sync replica for LI
+  minSyncReplicas: 1
+  maxSyncReplicas: 1
+
+  # PostgreSQL version (must match main cluster)
+  imageName: ghcr.io/cloudnative-pg/postgresql:16.1
+
+  # Storage configuration
+  storage:
+    size: 1Ti  # Larger than main due to infinite retention
+    storageClass: standard
+
+  # PostgreSQL configuration
+  postgresql:
+    parameters:
+      # Connection settings
+      max_connections: "200"  # Lower than main (read-only workload)
+      superuser_reserved_connections: "3"
+
+      # Memory settings
+      shared_buffers: "2GB"
+      effective_cache_size: "6GB"
+      maintenance_work_mem: "512MB"
+      work_mem: "8MB"
+
+      # WAL settings
+      wal_buffers: "16MB"
+      min_wal_size: "1GB"
+      max_wal_size: "2GB"
+      wal_level: "replica"  # LI instance doesn't need logical replication
+      max_wal_senders: "5"
+      max_replication_slots: "5"
+
+      # Checkpoint settings
+      checkpoint_completion_target: "0.9"
+      checkpoint_timeout: "15min"
+
+      # Query planner
+      random_page_cost: "1.1"
+      effective_io_concurrency: "200"
+      default_statistics_target: "100"
+
+      # Logging
+      log_destination: "csvlog"
+      logging_collector: "on"
+      log_directory: "log"
+      log_filename: "postgresql-%Y-%m-%d.log"
+      log_rotation_age: "1d"
+      log_rotation_size: "100MB"
+      log_line_prefix: "%t [%p]: [%l-1] user=%u,db=%d,app=%a,client=%h "
+      log_checkpoints: "on"
+      log_connections: "on"
+      log_disconnections: "on"
+
+      # Performance
+      autovacuum_max_workers: "2"
+      autovacuum_naptime: "1min"
+
+      # Security
+      ssl: "on"
+      password_encryption: "scram-sha-256"
+
+      # Read-only mode (prevents accidental writes)
+      default_transaction_read_only: "on"
+
+  # Bootstrap configuration
+  bootstrap:
+    initdb:
+      database: matrix_li
+      owner: synapse_li
+      encoding: UTF8
+      localeCollate: C
+      localeCType: C
+      # Note: Logical replication will be configured separately
+      # The sync system will populate this database
+
+  # Monitoring configuration
+  monitoring:
+    enabled: true
+    podMonitorEnabled: true
+
+  # Resources (smaller than main)
+  resources:
+    requests:
+      memory: "4Gi"
+      cpu: "1"
+    limits:
+      memory: "8Gi"
+      cpu: "2"
+
+  # Backup configuration to MinIO
+  backup:
+    barmanObjectStore:
+      destinationPath: s3://postgresql-backups/li/
+      endpointURL: http://minio:9000
+      s3Credentials:
+        accessKeyId:
+          name: minio-credentials
+          key: access-key
+        secretAccessKey:
+          name: minio-credentials
+          key: secret-key
+      wal:
+        compression: gzip
+        maxParallel: 2
+    retentionPolicy: "90d"  # Longer retention for LI compliance
+
+  # Affinity rules
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchLabels:
+                cnpg.io/cluster: matrix-postgresql-li
+            topologyKey: kubernetes.io/hostname
+    # Prefer different nodes from main instance
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 50
+          podAffinityTerm:
+            labelSelector:
+              matchLabels:
+                matrix.instance: main
+            topologyKey: kubernetes.io/hostname
