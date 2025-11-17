@@ -1,8 +1,6 @@
 # Lawful Interception (LI) Requirements - Implementation Guide
 ## Part 3: Automatic Key Backup & Session Limits
 
-**Last Updated:** November 17, 2025
-
 ---
 
 ## Table of Contents
@@ -126,7 +124,7 @@ WHERE user_id = '@alice:example.com';
 **Requirements**:
 - Configurable maximum (default: 5 sessions)
 - Applies to main instance only (not hidden instance)
-- Admin users can bypass limit
+- Applies to ALL users (no exceptions)
 - Handle edge cases: concurrent logins, deleted devices, token refresh
 - File-based implementation (no database schema changes)
 - Minimal code changes to Synapse
@@ -156,8 +154,8 @@ class RegistrationConfig(Config):
         return """\
         # LI: Maximum number of active sessions per user
         # Set to null to disable limit (unlimited sessions)
-        # Recommended: 5-10 for normal users
-        # Admin users always bypass this limit
+        # Recommended: 5-10 for typical deployments
+        # This limit applies to ALL users without exception
         # Default: null (no limit)
         max_sessions_per_user: null
         """
@@ -178,9 +176,8 @@ data:
     # LI: Session Limit Configuration
     # Limit number of concurrent sessions per user
     # Set to null to disable (unlimited sessions)
+    # Applies to ALL users without exception
     max_sessions_per_user: 5
-
-    # Admin users always bypass this limit
 ```
 
 #### Step 2: Session Tracking (File-Based)
@@ -255,19 +252,14 @@ class SessionLimiter:
     def check_can_create_session(
         self,
         user_id: str,
-        device_id: str,
-        is_admin: bool
+        device_id: str
     ) -> bool:
         """
         Check if user can create a new session.
 
         Returns True if session can be created, False if limit exceeded.
+        Applies to ALL users without exception.
         """
-        # LI: Admin users always bypass limit
-        if is_admin:
-            logger.debug(f"LI: Admin user {user_id} bypasses session limit")
-            return True
-
         # LI: No limit configured
         if self.max_sessions is None:
             return True
@@ -383,12 +375,10 @@ class AuthHandler:
 
         # LI: Check session limit before creating device
         user_id = requester.user.to_string()
-        is_admin = await self.store.is_server_admin(requester.user)
 
         can_create = self.session_limiter.check_can_create_session(
             user_id=user_id,
-            device_id=device_id,
-            is_admin=is_admin
+            device_id=device_id
         )
 
         if not can_create:
@@ -547,25 +537,6 @@ def add_session(self, user_id: str, device_id: str) -> bool:
         return True
 ```
 
-#### Admin Bypass
-
-**Scenario**: Admin user logs in from multiple devices.
-
-**Solution**: Check `is_admin` flag in `check_can_create_session()`.
-
-```python
-# Admins always bypass limit
-if is_admin:
-    return True
-```
-
-**Admin Detection**:
-
-```python
-# In auth.py:
-is_admin = await self.store.is_server_admin(requester.user)
-```
-
 #### Token Refresh
 
 **Scenario**: User refreshes access token on existing device (should NOT count as new session).
@@ -632,7 +603,7 @@ max_sessions_per_user: 2
 - Users can log in from multiple devices (phone, laptop, tablet, etc.)
 - Each login creates a new "session" (device)
 - Session limit restricts total number of active sessions per user
-- Admin users always bypass this limit
+- Applies to ALL users without exception
 - File-based tracking (no database changes)
 
 **Configuration**:
@@ -653,10 +624,6 @@ max_sessions_per_user: 2
 - Login denied with error: "Maximum number of sessions exceeded"
 - User must log out from an existing session first
 - Or delete an old device via synapse-admin
-
-**Admin Bypass**:
-- Admin users (`is_admin: true`) always bypass limit
-- Useful for IT staff who need many sessions
 
 **Verification**:
 
@@ -685,8 +652,7 @@ cat /var/lib/synapse/li_session_tracking.json
 
 If user legitimately needs more sessions, admin can:
 1. Delete old devices via synapse-admin
-2. Or increase `max_sessions_per_user` in config
-3. Or grant user admin privileges (bypasses limit)
+2. Or increase `max_sessions_per_user` in config for all users
 ```
 
 ### 2.6 Testing Checklist
@@ -697,11 +663,6 @@ If user legitimately needs more sessions, admin can:
 - [ ] Try 4th login (should be denied)
 - [ ] Delete one device via synapse-admin
 - [ ] Try 4th login again (should succeed)
-
-**Admin Bypass**:
-- [ ] Make user admin (`is_admin: true`)
-- [ ] Log in 10 times (all should succeed)
-- [ ] Verify session tracking shows all 10 devices
 
 **Concurrent Logins**:
 - [ ] Simultaneously log in from 2 devices at exact same time
@@ -736,7 +697,7 @@ If user legitimately needs more sessions, admin can:
 ### Session Limits
 - ✅ **Configurable** via `max_sessions_per_user` in homeserver.yaml
 - ✅ **File-based tracking** (no database schema changes)
-- ✅ **Admin bypass** built-in
+- ✅ **Applies to ALL users** without exception
 - ✅ **Edge cases handled**: concurrent logins, token refresh, deleted devices
 - ✅ **Main instance only** (not hidden instance)
 - ✅ **Minimal code changes**: ~250 lines across 4 files, all marked with `# LI:`

@@ -1,8 +1,6 @@
 # Lawful Interception (LI) Requirements - Implementation Guide
 ## Part 2: Soft Delete & Deleted Message Display
 
-**Last Updated:** November 17, 2025
-
 ---
 
 ## Table of Contents
@@ -157,14 +155,6 @@ spec:
               # For LI compliance, we DON'T run purge commands
               echo "LI: Media cleanup disabled - all media preserved for compliance"
               exit 0
-```
-
-**Alternative**: If you still want to clean remote media (from federated servers) but keep local media:
-
-```bash
-# Only purge REMOTE media older than 90 days
-# Keep ALL local media forever
-python -m synapse.app.admin_cmd purge_remote_media --before 90
 ```
 
 ---

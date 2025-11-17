@@ -1,8 +1,6 @@
 # Lawful Interception (LI) Requirements - Implementation Guide
 ## Part 4: Statistics Dashboard, Malicious Files & Decryption Tab
 
-**Last Updated:** November 17, 2025
-
 ---
 
 ## Table of Contents
