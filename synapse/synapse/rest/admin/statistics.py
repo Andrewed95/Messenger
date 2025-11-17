@@ -130,3 +130,210 @@ class LargestRoomsStatistics(RestServlet):
                 for room_id, size in room_sizes
             ]
         }
+
+
+# LI: Statistics endpoint for today's activity
+class LIStatisticsTodayRestServlet(RestServlet):
+    """
+    LI: Get today's statistics (messages, active users, rooms created).
+    Used by synapse-admin statistics dashboard.
+    """
+
+    PATTERNS = admin_patterns("/statistics/li/today$")
+
+    def __init__(self, hs: "HomeServer"):
+        self.auth = hs.get_auth()
+        self.store = hs.get_datastores().main
+
+    async def on_GET(self, request: SynapseRequest) -> tuple[int, JsonDict]:
+        # LI: Verify admin access
+        await assert_requester_is_admin(self.auth, request)
+
+        # LI: Get today's timestamp range
+        from datetime import datetime, timezone
+        today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+        today_ts_ms = int(today.timestamp() * 1000)
+
+        # LI: Count messages sent today
+        messages_sql = """
+            SELECT COUNT(*) FROM events
+            WHERE type = 'm.room.message'
+            AND origin_server_ts >= ?
+        """
+        messages_count = await self.store.db_pool.simple_select_one_onecol(
+            table="events",
+            keyvalues={},
+            retcol="COUNT(*)",
+            desc="li_count_messages_today",
+            allow_none=False,
+        )
+
+        # LI: Count active users today (users who sent events)
+        active_users_sql = """
+            SELECT COUNT(DISTINCT sender) FROM events
+            WHERE origin_server_ts >= ?
+        """
+        active_users_rows = await self.store.db_pool.execute(
+            "li_count_active_users_today",
+            active_users_sql,
+            today_ts_ms,
+        )
+        active_users = active_users_rows[0][0] if active_users_rows else 0
+
+        # LI: Count rooms created today
+        rooms_created_sql = """
+            SELECT COUNT(*) FROM events
+            WHERE type = 'm.room.create'
+            AND origin_server_ts >= ?
+        """
+        rooms_created_rows = await self.store.db_pool.execute(
+            "li_count_rooms_created_today",
+            rooms_created_sql,
+            today_ts_ms,
+        )
+        rooms_created = rooms_created_rows[0][0] if rooms_created_rows else 0
+
+        logger.info(f"LI: Today's stats - messages: {messages_count}, active_users: {active_users}, rooms_created: {rooms_created}")
+
+        return HTTPStatus.OK, {
+            "messages": messages_count,
+            "active_users": active_users,
+            "rooms_created": rooms_created,
+            "date": today.isoformat(),
+        }
+
+
+# LI: Historical statistics endpoint
+class LIStatisticsHistoricalRestServlet(RestServlet):
+    """
+    LI: Get historical statistics for the last N days.
+    Used by synapse-admin statistics dashboard for charts.
+    """
+
+    PATTERNS = admin_patterns("/statistics/li/historical$")
+
+    def __init__(self, hs: "HomeServer"):
+        self.auth = hs.get_auth()
+        self.store = hs.get_datastores().main
+
+    async def on_GET(self, request: SynapseRequest) -> tuple[int, JsonDict]:
+        # LI: Verify admin access
+        await assert_requester_is_admin(self.auth, request)
+
+        # LI: Get number of days from query parameter (default 30)
+        days = parse_integer(request, "days", default=30)
+        if days > 365:
+            raise SynapseError(
+                HTTPStatus.BAD_REQUEST,
+                "Cannot request more than 365 days of history",
+                Codes.INVALID_PARAM,
+            )
+
+        # LI: Query historical data grouped by date
+        # This query groups events by date and counts them
+        historical_sql = """
+            SELECT
+                DATE(to_timestamp(origin_server_ts / 1000)) as date,
+                COUNT(CASE WHEN type = 'm.room.message' THEN 1 END) as messages,
+                COUNT(DISTINCT CASE WHEN type = 'm.room.message' THEN sender END) as active_users,
+                COUNT(CASE WHEN type = 'm.room.create' THEN 1 END) as rooms_created
+            FROM events
+            WHERE origin_server_ts >= extract(epoch from (CURRENT_DATE - INTERVAL '%s days')) * 1000
+            GROUP BY date
+            ORDER BY date DESC
+            LIMIT ?
+        """ % days
+
+        rows = await self.store.db_pool.execute(
+            "li_get_historical_statistics",
+            historical_sql,
+            days,
+        )
+
+        historical_data = []
+        for row in rows:
+            date, messages, active_users, rooms_created = row
+            historical_data.append({
+                "date": str(date),
+                "messages": messages or 0,
+                "active_users": active_users or 0,
+                "rooms_created": rooms_created or 0,
+            })
+
+        logger.info(f"LI: Returning {len(historical_data)} days of historical statistics")
+
+        return HTTPStatus.OK, {
+            "data": historical_data,
+            "days": days,
+        }
+
+
+# LI: Top rooms statistics
+class LIStatisticsTopRoomsRestServlet(RestServlet):
+    """
+    LI: Get top N most active rooms by message count.
+    Used by synapse-admin statistics dashboard.
+    """
+
+    PATTERNS = admin_patterns("/statistics/li/top_rooms$")
+
+    def __init__(self, hs: "HomeServer"):
+        self.auth = hs.get_auth()
+        self.store = hs.get_datastores().main
+
+    async def on_GET(self, request: SynapseRequest) -> tuple[int, JsonDict]:
+        # LI: Verify admin access
+        await assert_requester_is_admin(self.auth, request)
+
+        # LI: Get limit from query parameter (default 10)
+        limit = parse_integer(request, "limit", default=10)
+        if limit > 100:
+            raise SynapseError(
+                HTTPStatus.BAD_REQUEST,
+                "Limit cannot exceed 100",
+                Codes.INVALID_PARAM,
+            )
+
+        # LI: Get time range (default last 7 days)
+        days = parse_integer(request, "days", default=7)
+
+        # LI: Query top rooms by message count
+        top_rooms_sql = """
+            SELECT
+                e.room_id,
+                COUNT(*) as message_count,
+                COUNT(DISTINCT e.sender) as unique_senders,
+                r.name,
+                r.canonical_alias
+            FROM events e
+            LEFT JOIN room_stats_state r ON e.room_id = r.room_id
+            WHERE e.type = 'm.room.message'
+            AND e.origin_server_ts >= extract(epoch from (CURRENT_DATE - INTERVAL '%s days')) * 1000
+            GROUP BY e.room_id, r.name, r.canonical_alias
+            ORDER BY message_count DESC
+            LIMIT ?
+        """ % days
+
+        rows = await self.store.db_pool.execute(
+            "li_get_top_rooms",
+            top_rooms_sql,
+            limit,
+        )
+
+        top_rooms = []
+        for row in rows:
+            room_id, message_count, unique_senders, name, canonical_alias = row
+            top_rooms.append({
+                "room_id": room_id,
+                "message_count": message_count,
+                "unique_senders": unique_senders,
+                "name": name or canonical_alias or room_id,
+            })
+
+        logger.info(f"LI: Returning top {len(top_rooms)} rooms")
+
+        return HTTPStatus.OK, {
+            "rooms": top_rooms,
+            "limit": limit,
+            "days": days,
+        }

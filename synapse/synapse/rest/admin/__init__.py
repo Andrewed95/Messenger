@@ -95,6 +95,9 @@ from synapse.rest.admin.scheduled_tasks import ScheduledTasksRestServlet
 from synapse.rest.admin.server_notice_servlet import SendServerNoticeServlet
 from synapse.rest.admin.statistics import (
     LargestRoomsStatistics,
+    LIStatisticsHistoricalRestServlet,  # LI: Historical statistics
+    LIStatisticsTodayRestServlet,  # LI: Today's statistics
+    LIStatisticsTopRoomsRestServlet,  # LI: Top rooms statistics
     UserMediaStatisticsRestServlet,
 )
 from synapse.rest.admin.username_available import UsernameAvailableRestServlet
@@ -306,6 +309,9 @@ def register_servlets(hs: "HomeServer", http_server: HttpServer) -> None:
     UsersRestServletV3(hs).register(http_server)
     UserMediaStatisticsRestServlet(hs).register(http_server)
     LargestRoomsStatistics(hs).register(http_server)
+    LIStatisticsTodayRestServlet(hs).register(http_server)  # LI: Today's statistics
+    LIStatisticsHistoricalRestServlet(hs).register(http_server)  # LI: Historical statistics
+    LIStatisticsTopRoomsRestServlet(hs).register(http_server)  # LI: Top rooms statistics
     EventReportDetailRestServlet(hs).register(http_server)
     EventReportsRestServlet(hs).register(http_server)
     AccountDataRestServlet(hs).register(http_server)

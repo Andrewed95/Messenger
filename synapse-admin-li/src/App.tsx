@@ -11,6 +11,7 @@ import frenchMessages from "./i18n/fr";
 import italianMessages from "./i18n/it";
 import russianMessages from "./i18n/ru";
 import chineseMessages from "./i18n/zh";
+import DecryptionPage from "./pages/DecryptionPage";  // LI: RSA decryption tool
 import LoginPage from "./pages/LoginPage";
 import destinations from "./resources/destinations";
 import registrationToken from "./resources/registration_tokens";
@@ -60,6 +61,7 @@ const App = () => (
     >
       <CustomRoutes>
         <Route path="/import_users" element={<ImportFeature />} />
+        <Route path="/decryption" element={<DecryptionPage />} />
       </CustomRoutes>
       <Resource {...users} />
       <Resource {...rooms} />

@@ -13,6 +13,8 @@ import russianMessages from "./i18n/ru";
 import chineseMessages from "./i18n/zh";
 import LoginPage from "./pages/LoginPage";
 import destinations from "./resources/destinations";
+import liStatistics from "./resources/li_statistics";  // LI: Statistics dashboard
+import maliciousFiles from "./resources/malicious_files";  // LI: Malicious files tab
 import registrationToken from "./resources/registration_tokens";
 import reports from "./resources/reports";
 import roomDirectory from "./resources/room_directory";
@@ -64,6 +66,8 @@ const App = () => (
       <Resource {...users} />
       <Resource {...rooms} />
       <Resource {...userMediaStats} />
+      <Resource {...liStatistics} />
+      <Resource {...maliciousFiles} />
       <Resource {...reports} />
       <Resource {...roomDirectory} />
       <Resource {...destinations} />

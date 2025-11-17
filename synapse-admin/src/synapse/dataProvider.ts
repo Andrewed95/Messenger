@@ -398,6 +398,16 @@ const resourceMap = {
     data: "users",
     total: json => json.total,
   },
+  // LI: Malicious files (quarantined media)
+  malicious_files: {
+    path: "/_synapse/admin/v1/media/quarantined",
+    map: (qm: any) => ({
+      ...qm,
+      id: qm.media_id,
+    }),
+    data: "quarantined_media",
+    total: json => json.total,
+  },
   forward_extremities: {
     map: (fe: ForwardExtremity) => ({
       ...fe,

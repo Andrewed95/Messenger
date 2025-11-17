@@ -520,6 +520,93 @@ class UserMediaRestServlet(RestServlet):
         return HTTPStatus.OK, {"deleted_media": deleted_media, "total": total}
 
 
+# LI: List all quarantined media
+class LIListQuarantinedMediaRestServlet(RestServlet):
+    """
+    LI: Get a list of all quarantined media files.
+    Used by synapse-admin malicious files tab.
+
+    Returns paginated list of quarantined local media with details.
+    """
+
+    PATTERNS = admin_patterns("/media/quarantined$")
+
+    def __init__(self, hs: "HomeServer"):
+        self.auth = hs.get_auth()
+        self.store = hs.get_datastores().main
+
+    async def on_GET(self, request: SynapseRequest) -> tuple[int, JsonDict]:
+        # LI: Verify admin access
+        await assert_requester_is_admin(self.auth, request)
+
+        # LI: Parse pagination parameters
+        start = parse_integer(request, "from", default=0)
+        limit = parse_integer(request, "limit", default=100)
+
+        if limit > 1000:
+            raise SynapseError(
+                HTTPStatus.BAD_REQUEST,
+                "Limit cannot exceed 1000",
+                Codes.INVALID_PARAM,
+            )
+
+        # LI: Query quarantined media from local_media_repository
+        quarantined_sql = """
+            SELECT
+                media_id,
+                media_type,
+                media_length,
+                created_ts,
+                upload_name,
+                quarantined_by,
+                last_access_ts
+            FROM local_media_repository
+            WHERE quarantined_by IS NOT NULL
+            ORDER BY created_ts DESC
+            LIMIT ? OFFSET ?
+        """
+
+        rows = await self.store.db_pool.execute(
+            "li_list_quarantined_media",
+            quarantined_sql,
+            limit,
+            start,
+        )
+
+        # LI: Count total quarantined media
+        count_sql = """
+            SELECT COUNT(*) FROM local_media_repository
+            WHERE quarantined_by IS NOT NULL
+        """
+        count_rows = await self.store.db_pool.execute(
+            "li_count_quarantined_media",
+            count_sql,
+        )
+        total = count_rows[0][0] if count_rows else 0
+
+        quarantined_media = []
+        for row in rows:
+            media_id, media_type, media_length, created_ts, upload_name, quarantined_by, last_access_ts = row
+            quarantined_media.append({
+                "media_id": media_id,
+                "media_type": media_type,
+                "media_length": media_length,
+                "created_ts": created_ts,
+                "upload_name": upload_name,
+                "quarantined_by": quarantined_by,
+                "last_access_ts": last_access_ts,
+            })
+
+        logger.info(f"LI: Returning {len(quarantined_media)} quarantined media files (total: {total})")
+
+        return HTTPStatus.OK, {
+            "quarantined_media": quarantined_media,
+            "total": total,
+            "offset": start,
+            "limit": limit,
+        }
+
+
 def register_servlets_for_media_repo(hs: "HomeServer", http_server: HttpServer) -> None:
     """
     Media repo specific APIs.
@@ -529,6 +616,7 @@ def register_servlets_for_media_repo(hs: "HomeServer", http_server: HttpServer) 
     QuarantineMediaByID(hs).register(http_server)
     UnquarantineMediaByID(hs).register(http_server)
     QuarantineMediaByUser(hs).register(http_server)
+    LIListQuarantinedMediaRestServlet(hs).register(http_server)  # LI: List quarantined media
     ProtectMediaByID(hs).register(http_server)
     UnprotectMediaByID(hs).register(http_server)
     ListMediaInRoom(hs).register(http_server)
