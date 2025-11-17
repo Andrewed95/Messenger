@@ -255,6 +255,11 @@ class RegistrationConfig(Config):
         dont_notify_new_devices_for = config.get("dont_notify_new_devices_for", [])
         self.dont_notify_new_devices_for = frozenset(dont_notify_new_devices_for)
 
+        # LI: Maximum number of active sessions per user
+        self.max_sessions_per_user = config.get("max_sessions_per_user", None)
+        if self.max_sessions_per_user is not None and self.max_sessions_per_user < 1:
+            raise ConfigError("max_sessions_per_user must be >= 1")
+
     def generate_config_section(
         self, generate_secrets: bool = False, **kwargs: Any
     ) -> str:
