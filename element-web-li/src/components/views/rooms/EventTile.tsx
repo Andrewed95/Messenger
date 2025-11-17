@@ -66,7 +66,8 @@ import { MediaEventHelper } from "../../../utils/MediaEventHelper";
 import { type ButtonEvent } from "../elements/AccessibleButton";
 import { copyPlaintext } from "../../../utils/strings";
 import { DecryptionFailureTracker } from "../../../DecryptionFailureTracker";
-import RedactedBody from "../messages/RedactedBody";
+// LI: Use LI-specific RedactedBody to display deleted messages with original content
+import LIRedactedBody from "../messages/LIRedactedBody";
 import { type ViewRoomPayload } from "../../../dispatcher/payloads/ViewRoomPayload";
 import { shouldDisplayReply } from "../../../utils/Reply";
 import PosthogTrackers from "../../../PosthogTrackers";
@@ -1353,7 +1354,7 @@ export class UnwrappedEventTile extends React.Component<EventTileProps, IState> 
                         <div className={lineClasses} key="mx_EventTile_line">
                             <div className="mx_EventTile_body">
                                 {this.props.mxEvent.isRedacted() ? (
-                                    <RedactedBody mxEvent={this.props.mxEvent} />
+                                    <LIRedactedBody mxEvent={this.props.mxEvent} />
                                 ) : this.props.mxEvent.isDecryptionFailure() ? (
                                     <DecryptionFailureBody mxEvent={this.props.mxEvent} />
                                 ) : (

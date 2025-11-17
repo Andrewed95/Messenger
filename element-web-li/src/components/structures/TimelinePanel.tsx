@@ -57,6 +57,8 @@ import { type ViewRoomPayload } from "../../dispatcher/payloads/ViewRoomPayload"
 import { getKeyBindingsManager } from "../../KeyBindingsManager";
 import { KeyBindingAction } from "../../accessibility/KeyboardShortcuts";
 import { haveRendererForEvent } from "../../events/EventTileFactory";
+// LI: Import store for fetching redacted (deleted) events
+import { LIRedactedEventsStore } from "../../stores/LIRedactedEvents";
 
 // These pagination sizes are higher than they may possibly need be
 // once https://github.com/matrix-org/matrix-spec-proposals/pull/3874 lands
@@ -283,6 +285,10 @@ class TimelinePanel extends React.Component<IProps, IState> {
 
         this.dispatcherRef = dis.register(this.onAction);
         const cli = MatrixClientPeg.safeGet();
+
+        // LI: Set MatrixClient on LI store for redacted events fetching
+        LIRedactedEventsStore.sharedInstance.setMatrixClient(cli);
+
         cli.on(RoomEvent.Timeline, this.onRoomTimeline);
         cli.on(RoomEvent.TimelineReset, this.onRoomTimelineReset);
         cli.on(RoomEvent.Redaction, this.onRoomRedaction);
@@ -760,6 +766,9 @@ class TimelinePanel extends React.Component<IProps, IState> {
 
         // ignore events for other rooms
         if (!this.hasTimelineSetFor(room.roomId)) return;
+
+        // LI: Invalidate redacted events cache to fetch updated list
+        LIRedactedEventsStore.sharedInstance.invalidateRoom(room.roomId);
 
         // we could skip an update if the event isn't in our timeline,
         // but that's probably an early optimisation.
@@ -1437,6 +1446,14 @@ class TimelinePanel extends React.Component<IProps, IState> {
             // clear the timeline min-height when (re)loading the timeline
             this.messagePanel.current?.onTimelineReset();
             this.reloadEvents();
+
+            // LI: Fetch redacted (deleted) events for this room to display them
+            const roomId = this.props.timelineSet.room?.roomId;
+            if (roomId) {
+                LIRedactedEventsStore.sharedInstance.getRedactedEventsForRoom(roomId).catch((err) => {
+                    logger.warn("LI: Failed to fetch redacted events", err);
+                });
+            }
 
             // If we switched away from the room while there were pending
             // outgoing events, the read-marker will be before those events.

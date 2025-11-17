@@ -1,0 +1,105 @@
+/*
+Copyright 2024 New Vector Ltd.
+
+SPDX-License-Identifier: AGPL-3.0-only OR GPL-3.0-only OR LicenseRef-Element-Commercial
+Please see LICENSE files in the repository root for full details.
+*/
+
+/* LI: Styles for deleted message display in element-web-li */
+
+.mx_LIRedactedBody {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 8px 12px;
+    background-color: #ffe6e6; /* Light red background */
+    border-left: 3px solid #d32f2f; /* Red border */
+    border-radius: 4px;
+    margin: 4px 0;
+    font-size: inherit;
+    line-height: inherit;
+}
+
+.mx_LIRedactedBody_badge {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    color: #c62828; /* Dark red text */
+}
+
+.mx_LIRedactedBody_deleteIcon {
+    font-size: 14px;
+}
+
+.mx_LIRedactedBody_label {
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.mx_LIRedactedBody_content {
+    opacity: 0.8;
+    position: relative;
+}
+
+.mx_LIRedactedBody_text {
+    display: block;
+    text-decoration: line-through;
+    text-decoration-thickness: 1px;
+    color: #666;
+}
+
+.mx_LIRedactedBody_media {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 0;
+}
+
+.mx_LIRedactedBody_mediaIcon {
+    font-size: 18px;
+    opacity: 0.6;
+}
+
+.mx_LIRedactedBody_mediaText {
+    color: #666;
+    font-style: italic;
+}
+
+/* Dark theme support */
+.mx_EventTile_dark .mx_LIRedactedBody {
+    background-color: #4a1f1f; /* Dark red background */
+    border-left-color: #f44336;
+}
+
+.mx_EventTile_dark .mx_LIRedactedBody_badge {
+    color: #ef5350;
+}
+
+.mx_EventTile_dark .mx_LIRedactedBody_text {
+    color: #ccc;
+}
+
+.mx_EventTile_dark .mx_LIRedactedBody_mediaText {
+    color: #ccc;
+}
+
+/* Compact layout adjustments */
+.mx_IRCLayout .mx_LIRedactedBody {
+    padding: 4px 8px;
+    margin: 2px 0;
+}
+
+.mx_IRCLayout .mx_LIRedactedBody_badge {
+    font-size: 11px;
+}
+
+/* Bubble layout adjustments */
+.mx_EventTileBubble .mx_LIRedactedBody {
+    background-color: #ffcdd2; /* Slightly lighter for bubbles */
+}
+
+.mx_EventTileBubble.mx_EventTile_dark .mx_LIRedactedBody {
+    background-color: #5a2626;
+}

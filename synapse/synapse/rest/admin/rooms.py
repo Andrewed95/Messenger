@@ -1059,3 +1059,113 @@ class RoomTimestampToEventRestServlet(RestServlet):
             "event_id": event_id,
             "origin_server_ts": origin_server_ts,
         }
+
+
+# LI: Admin endpoint to fetch redacted events with original content
+class LIRedactedEventsServlet(RestServlet):
+    """
+    API endpoint to fetch redacted (deleted) events with their original content.
+    This endpoint is used by element-web-li to display deleted messages.
+
+    Only accessible to admin users.
+
+    GET /_synapse/admin/v1/rooms/<roomID>/redacted_events
+    {
+        "redacted_events": [
+            {
+                "event_id": "...",
+                "room_id": "...",
+                "sender": "...",
+                "origin_server_ts": ...,
+                "type": "m.room.message",
+                "content": { original content },
+                "redacted_by": "...",
+                "redacted_at": ...
+            },
+            ...
+        ]
+    }
+    """
+
+    PATTERNS = admin_patterns("/rooms/(?P<room_id>[^/]*)/redacted_events$")
+
+    def __init__(self, hs: "HomeServer"):
+        self._auth = hs.get_auth()
+        self._store = hs.get_datastores().main
+
+    async def on_GET(
+        self, request: SynapseRequest, room_id: str
+    ) -> tuple[int, JsonDict]:
+        # LI: Verify admin access
+        requester = await self._auth.get_user_by_req(request)
+        await assert_user_is_admin(self._auth, requester)
+
+        # LI: Fetch all redacted events for this room from the database
+        # We query event_json to get the original content before redaction
+        redacted_events = []
+
+        try:
+            # LI: Query for redacted events
+            # The event_json table stores original event content
+            # The events table has the redacts relationship
+            sql = """
+                SELECT
+                    e.event_id,
+                    e.room_id,
+                    e.sender,
+                    e.origin_server_ts,
+                    e.type,
+                    ej.json,
+                    re.event_id AS redacted_by_event_id,
+                    re.origin_server_ts AS redacted_at
+                FROM events e
+                INNER JOIN event_json ej ON e.event_id = ej.event_id
+                INNER JOIN events re ON re.redacts = e.event_id
+                WHERE e.room_id = ? AND re.type = 'm.room.redaction'
+                ORDER BY e.origin_server_ts DESC
+                LIMIT 1000
+            """
+
+            rows = await self._store.db_pool.execute(
+                "get_redacted_events_with_content",
+                sql,
+                room_id,
+            )
+
+            import json as jsonlib
+
+            for row in rows:
+                event_id, room_id_db, sender, origin_server_ts, event_type, json_str, redacted_by, redacted_at = row
+
+                # LI: Parse the original event JSON
+                try:
+                    event_json = jsonlib.loads(json_str)
+                    content = event_json.get("content", {})
+
+                    redacted_events.append({
+                        "event_id": event_id,
+                        "room_id": room_id_db,
+                        "sender": sender,
+                        "origin_server_ts": origin_server_ts,
+                        "type": event_type,
+                        "content": content,
+                        "redacted_by": redacted_by,
+                        "redacted_at": redacted_at,
+                    })
+                except Exception as e:
+                    logger.warning(f"LI: Failed to parse redacted event JSON: {e}")
+                    continue
+
+            logger.info(f"LI: Returning {len(redacted_events)} redacted events for room {room_id}")
+
+        except Exception as e:
+            logger.error(f"LI: Error fetching redacted events: {e}")
+            raise SynapseError(
+                HTTPStatus.INTERNAL_SERVER_ERROR,
+                f"Failed to fetch redacted events: {str(e)}",
+                Codes.UNKNOWN,
+            )
+
+        return HTTPStatus.OK, {
+            "redacted_events": redacted_events,
+        }

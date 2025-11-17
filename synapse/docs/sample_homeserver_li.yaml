@@ -1,0 +1,122 @@
+# Synapse Configuration for Lawful Interception (LI)
+# This file provides recommended LI-specific configuration settings
+# to be added to your homeserver.yaml
+
+# ==============================================================================
+# LI: SOFT DELETE / REDACTION RETENTION
+# ==============================================================================
+# CRITICAL: Set to null to preserve all deleted message content indefinitely
+# This ensures full compliance with lawful interception requirements
+
+# Keep redacted (deleted) message content forever
+# Default: 7d (7 days)
+# LI Recommendation: null (infinite retention)
+redaction_retention_period: null
+
+# ==============================================================================
+# LI: SESSION LIMITING
+# ==============================================================================
+# Limit concurrent active sessions per user
+# Applies to ALL users without exception
+
+# Maximum number of active sessions per user
+# Set to null to disable (unlimited sessions)
+# Default: null
+# LI Recommendation: 5-10 for typical deployments
+max_sessions_per_user: 5
+
+# ==============================================================================
+# LI: KEY VAULT PROXY
+# ==============================================================================
+# Enable LI proxy endpoint for recovery key capture
+# IMPORTANT: Only enable on MAIN instance, not hidden instance
+
+li:
+  # Enable LI proxy endpoints
+  enabled: true
+
+  # key_vault Django service URL (in hidden instance network)
+  # Only main Synapse can access this URL
+  key_vault_url: "http://key-vault.matrix-li.svc.cluster.local:8000"
+
+# ==============================================================================
+# LI: MEDIA RETENTION
+# ==============================================================================
+# IMPORTANT: Disable automatic media cleanup to preserve all files
+# Comment out or remove any media_retention settings
+
+# DO NOT USE these settings for LI compliance:
+# media_retention:
+#   local_media_lifetime: 90d
+#   remote_media_lifetime: 14d
+
+# ==============================================================================
+# LI: MESSAGE RETENTION
+# ==============================================================================
+# IMPORTANT: Disable message retention policies
+# Ensure the retention section is disabled or removed
+
+retention:
+  enabled: false
+  # Do not set default_policy for LI compliance
+  # default_policy:
+  #   min_lifetime: 1d
+  #   max_lifetime: 1y
+
+# ==============================================================================
+# ADDITIONAL RECOMMENDATIONS FOR LI
+# ==============================================================================
+
+# Increase log verbosity for audit trail
+log_config: "/data/log.config"
+
+# Enable detailed request logging
+request_metrics_enabled: true
+
+# Database settings - ensure sufficient storage for retention
+database:
+  name: psycopg2
+  args:
+    user: synapse
+    password: ${SYNAPSE_DB_PASSWORD}
+    database: synapse
+    host: postgres-rw.matrix.svc.cluster.local
+    port: 5432
+    cp_min: 5
+    cp_max: 10
+
+# ==============================================================================
+# VERIFICATION
+# ==============================================================================
+# After applying these settings, verify with:
+#
+# 1. Check redaction retention:
+#    SELECT name, value FROM synapse_config WHERE name = 'redaction_retention_period';
+#
+# 2. Verify LI endpoint is available:
+#    curl -X POST https://matrix.example.com/_synapse/client/v1/li/store_key
+#
+# 3. Test session limits:
+#    - Log in from multiple devices
+#    - 6th login should fail with 429 error (if max_sessions_per_user=5)
+#
+# 4. Check for pruned events (should be 0):
+#    SELECT COUNT(*) FROM event_json
+#    WHERE json::json->>'content' = '{}'
+#    AND event_id IN (SELECT redacts FROM events WHERE type = 'm.room.redaction');
+
+# ==============================================================================
+# WARNINGS
+# ==============================================================================
+# 1. Setting redaction_retention_period=null will increase database size
+#    - Estimate ~100MB/day for 20K users with 1M messages/day
+#    - Ensure adequate storage capacity
+#
+# 2. Only enable LI on MAIN instance
+#    - Hidden instance (synapse-li) should NOT have li.enabled=true
+#
+# 3. Session limits apply to ALL users
+#    - No admin bypass (per requirements)
+#    - Users will see "Maximum sessions exceeded" error
+#
+# 4. Test thoroughly before production deployment

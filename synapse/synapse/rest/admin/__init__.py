@@ -80,6 +80,7 @@ from synapse.rest.admin.rooms import (
     DeleteRoomStatusByRoomIdRestServlet,
     ForwardExtremitiesRestServlet,
     JoinRoomAliasServlet,
+    LIRedactedEventsServlet,  # LI: Admin endpoint for redacted events
     ListRoomRestServlet,
     MakeRoomAdminRestServlet,
     RoomEventContextServlet,
@@ -325,6 +326,7 @@ def register_servlets(hs: "HomeServer", http_server: HttpServer) -> None:
     ListDestinationsRestServlet(hs).register(http_server)
     RoomMessagesRestServlet(hs).register(http_server)
     RoomTimestampToEventRestServlet(hs).register(http_server)
+    LIRedactedEventsServlet(hs).register(http_server)  # LI: Register redacted events endpoint
     UserReplaceMasterCrossSigningKeyRestServlet(hs).register(http_server)
     UserByExternalId(hs).register(http_server)
     UserByThreePid(hs).register(http_server)
