@@ -39,6 +39,7 @@ from synapse.rest.client import (
     initial_sync,
     keys,
     knock,
+    li_proxy,  # LI: Import LI proxy servlet
     login,
     login_token_request,
     logout,
@@ -195,3 +196,7 @@ class ClientRestResource(JsonResource):
                     continue
 
                 servletfunc(hs, client_resource)
+
+        # LI: Register LI proxy endpoint if enabled
+        if hs.config.li.enabled:
+            li_proxy.register_servlets(hs, client_resource)

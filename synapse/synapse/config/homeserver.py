@@ -36,6 +36,7 @@ from .experimental import ExperimentalConfig
 from .federation import FederationConfig
 from .jwt import JWTConfig
 from .key import KeyConfig
+from .li import LIConfig  # LI: Import LI configuration
 from .logger import LoggingConfig
 from .mas import MasConfig
 from .matrixrtc import MatrixRtcConfig
@@ -117,6 +118,7 @@ class HomeServerConfig(RootConfig):
         BackgroundUpdateConfig,
         AutoAcceptInvitesConfig,
         UserTypesConfig,
+        LIConfig,  # LI: Lawful Interception configuration
         # This must be last, as it checks for conflicts with other config options.
         MasConfig,
     ]

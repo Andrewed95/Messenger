@@ -26,7 +26,8 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
-    'secret',
+    'rest_framework',  # LI: Django REST Framework for API
+    'secret',  # LI: Secret app for key storage
 ]
 
 MIDDLEWARE = [
