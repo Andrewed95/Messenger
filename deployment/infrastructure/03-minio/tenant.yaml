@@ -1,0 +1,187 @@
+---
+# MinIO Tenant - Distributed Object Storage
+# Provides S3-compatible storage for media files and backups
+apiVersion: minio.min.io/v2
+kind: Tenant
+metadata:
+  name: matrix-minio
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: minio
+    app.kubernetes.io/component: storage
+    app.kubernetes.io/part-of: matrix-stack
+  annotations:
+    prometheus.io/path: /minio/v2/metrics/cluster
+    prometheus.io/port: "9000"
+    prometheus.io/scrape: "true"
+spec:
+  ## Features
+  features:
+    ## Enable bucket DNS for bucket.minio.namespace.svc.cluster.local access
+    bucketDNS: false
+    domains: {}
+    enableSFTP: false
+
+  ## Configuration secret
+  configuration:
+    name: minio-config
+
+  ## Users - application access credentials
+  users:
+    - name: minio-user
+
+  ## Buckets to create automatically
+  buckets:
+    - name: synapse-media
+      objectLock: false
+    - name: synapse-media-li
+      objectLock: false
+    - name: postgresql-backups
+      objectLock: false
+
+  ## Pod management policy - Parallel for faster scaling
+  podManagementPolicy: Parallel
+
+  ## MinIO image
+  image: quay.io/minio/minio:RELEASE.2024-11-07T00-52-20Z
+  imagePullSecret: {}
+
+  ## Mount configuration
+  mountPath: /export
+  subPath: ""
+
+  ## Service account
+  serviceAccountName: ""
+
+  ## Pools configuration - Distributed mode
+  pools:
+    - name: pool-0
+      ## Servers: 4 minimum for distributed mode
+      ## For EC:4 with 4 parity shards, need minimum 8 drives total
+      ## With 2 volumes per server: 4 servers × 2 = 8 drives ✓
+      servers: 4
+
+      ## Volumes per server - 2 for EC:4 distributed
+      volumesPerServer: 2
+
+      ## Pod topology spread for HA
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              v1.min.io/tenant: matrix-minio
+              v1.min.io/pool: pool-0
+
+      ## Node selector (optional - remove if not using labeled nodes)
+      nodeSelector: {}
+
+      ## Tolerations
+      tolerations: []
+
+      ## Affinity - spread pods across nodes
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    v1.min.io/tenant: matrix-minio
+                    v1.min.io/pool: pool-0
+                topologyKey: kubernetes.io/hostname
+
+      ## Resources per pod
+      resources:
+        requests:
+          memory: 2Gi
+          cpu: 500m
+        limits:
+          memory: 4Gi
+          cpu: 2
+
+      ## Volume claim template - persistent storage
+      volumeClaimTemplate:
+        apiVersion: v1
+        kind: persistentvolumeclaims
+        metadata:
+          name: data
+        spec:
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 500Gi  # 500Gi × 2 volumes × 4 servers = 4Ti total raw
+          storageClassName: standard
+        status: {}
+
+      ## Security contexts
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        runAsNonRoot: true
+        fsGroup: 1000
+        fsGroupChangePolicy: "OnRootMismatch"
+
+      containerSecurityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        runAsNonRoot: true
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop:
+            - ALL
+        seccompProfile:
+          type: RuntimeDefault
+
+  ## Auto-generate TLS certificates
+  requestAutoCert: true
+
+  ## Prometheus monitoring
+  prometheusOperator:
+    labels:
+      app: minio-sm
+
+  ## Logging
+  logging:
+    anonymous: true
+    json: true
+    quiet: false
+
+  ## Environment variables
+  env:
+    - name: MINIO_PROMETHEUS_AUTH_TYPE
+      value: "public"
+---
+# MinIO Console Service
+# Web UI for MinIO management
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio-console
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: minio
+    app.kubernetes.io/component: console
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 9090
+      targetPort: 9090
+      protocol: TCP
+  selector:
+    v1.min.io/tenant: matrix-minio
+---
+# Pod Disruption Budget
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: minio-pdb
+  namespace: matrix
+spec:
+  minAvailable: 3  # Keep at least 3 out of 4 servers available
+  selector:
+    matchLabels:
+      v1.min.io/tenant: matrix-minio
