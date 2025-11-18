@@ -1,288 +1,252 @@
-# MinIO Distributed Object Storage
+# MinIO Distributed Storage
 
 ## Overview
 
-MinIO provides S3-compatible object storage for Matrix media files and PostgreSQL backups.
+MinIO provides S3-compatible object storage for the Matrix deployment using distributed mode with erasure coding for high availability and data protection.
 
-**Why MinIO?**
-- Synapse requires S3-compatible storage for media files
-- CloudNativePG backs up to S3 for PITR
-- LI instance needs separate media storage
-- Production systems need distributed, redundant storage
+**Use Cases**:
+- Synapse media storage (images, videos, files)
+- CloudNativePG PostgreSQL backups (PITR WAL archiving)
+- LI instance media replication (via rclone)
+
+**Why MinIO instead of single-server storage?**
+- S3-compatible API (industry standard)
+- Erasure coding for data protection
+- Distributed mode for high availability
+- Scales horizontally
+- Air-gapped deployment capable
+- Self-healing on drive failures
 
 ## Architecture
 
-### Distributed Mode with Erasure Coding
+### Distributed Erasure Coding (EC:4)
 
-**Configuration:**
-- **4 servers** (pods) in distributed mode
-- **2 volumes per server** = 8 total drives
-- **EC:4** erasure coding (4 data + 4 parity shards)
-- **Can tolerate 4 drive failures** without data loss
-
-**Topology:**
 ```
-┌─────────────────────────────────────┐
-│  matrix-minio-pool-0-0              │
-│  - Volume 0: 500Gi                  │
-│  - Volume 1: 500Gi                  │
-│  Total: 1Ti per server              │
-└─────────────────────────────────────┘
-┌─────────────────────────────────────┐
-│  matrix-minio-pool-0-1              │
-│  - Volume 0: 500Gi                  │
-│  - Volume 1: 500Gi                  │
-└─────────────────────────────────────┘
-┌─────────────────────────────────────┐
-│  matrix-minio-pool-0-2              │
-│  - Volume 0: 500Gi                  │
-│  - Volume 1: 500Gi                  │
-└─────────────────────────────────────┘
-┌─────────────────────────────────────┐
-│  matrix-minio-pool-0-3              │
-│  - Volume 0: 500Gi                  │
-│  - Volume 1: 500Gi                  │
-└─────────────────────────────────────┘
-
-Total Raw Storage: 4Ti
-Usable Storage (EC:4): ~2Ti (50% efficiency)
+┌─────────────────────────────────────────────────────────┐
+│  MinIO Distributed Cluster (EC:4)                       │
+│                                                          │
+│  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐   │
+│  │ Server1 │  │ Server2 │  │ Server3 │  │ Server4 │   │
+│  │ 2 vols  │  │ 2 vols  │  │ 2 vols  │  │ 2 vols  │   │
+│  └─────────┘  └─────────┘  └─────────┘  └─────────┘   │
+│      ↓             ↓             ↓             ↓        │
+│  [Vol 0][Vol 1] [Vol 2][Vol 3] [Vol 4][Vol 5] [Vol 6][Vol 7]
+│                                                          │
+│  Total: 8 drives (4 servers × 2 volumes)                │
+│  EC:4 = 4 data shards + 4 parity shards                 │
+│  Efficiency: 50% (2Ti usable from 4Ti raw)              │
+│  Fault Tolerance: Can lose any 4 drives                 │
+│                                                          │
+└─────────────────────────────────────────────────────────┘
 ```
 
-### Erasure Coding EC:4 Explained
+**Erasure Coding Explanation**:
+- **EC:4** splits data into 4 data shards + 4 parity shards
+- Minimum 8 drives required (4 + 4)
+- Can reconstruct data with any 4 shards (out of 8)
+- Can tolerate **4 simultaneous drive failures**
+- **50% storage efficiency**: 500Gi × 2 × 4 = 4Ti raw → 2Ti usable
 
-**How it works:**
-- Each object is split into 4 data shards
-- 4 parity shards are generated
-- Total: 8 shards distributed across 8 drives
-- Can reconstruct data from any 4 of 8 shards
+### Comparison with Alternatives
 
-**Benefits:**
-- Better than RAID for distributed systems
-- Can lose up to 4 drives without data loss
-- Automatic healing when drives are replaced
-- Higher availability than replication
+| Solution | HA | Complexity | Data Protection | Air-gapped | S3 API |
+|----------|----|-----------|-----------------| -----------|--------|
+| Single NFS | ❌ | Low | None | ✅ | ❌ |
+| Ceph RBD | ✅ | Very High | Replication | ✅ | ❌ |
+| Ceph Object | ✅ | Very High | Replication | ✅ | ✅ |
+| MinIO | ✅ | **Medium** | **Erasure Coding** | ✅ | ✅ |
+| AWS S3 | ✅ | Low | Managed | ❌ | ✅ |
 
-**Storage Efficiency:**
-- Raw capacity: 4Ti
-- Parity overhead: 50% (4 parity for 4 data)
-- Usable capacity: ~2Ti
+**Why MinIO for our use case**:
+- ✅ Simpler than Ceph for Kubernetes
+- ✅ Native S3 API (Synapse, CloudNativePG support)
+- ✅ Erasure coding more efficient than 3x replication
+- ✅ Air-gapped deployment capable
+- ✅ Operator-managed (easier than manual deployment)
 
 ## Components
 
-### 1. Secrets (secrets.yaml)
+### 1. MinIO Tenant CRD
+- **Servers**: 4 (minimum for distributed mode)
+- **Volumes per Server**: 2 (total 8 drives)
+- **Storage per Volume**: 500Gi
+- **Total Raw**: 4Ti (2Ti usable with EC:4)
+- **Buckets**: synapse-media, synapse-media-li, postgresql-backups
 
-**minio-config:**
-- Root credentials (admin access)
-- Erasure coding configuration: EC:4
-- Performance tuning parameters
+### 2. Secrets
+- **minio-config**: Root credentials + EC:4 configuration
+- **minio-credentials**: Application S3 access (both MinIO Tenant and CloudNativePG formats)
 
-**minio-user:**
-- Application access credentials
-- Used by Synapse for media storage
-- Base64 encoded
-
-**minio-credentials:**
-- Plain text credentials
-- Used by CloudNativePG for backups
-- Used by sync system for LI replication
-
-### 2. Tenant (tenant.yaml)
-
-**MinIO Tenant CRD:**
-- Distributed deployment with 4 servers
-- 2 volumes per server (8 total drives)
-- Automatic bucket creation
-- TLS auto-generation
-- Prometheus monitoring enabled
-
-**Pre-created Buckets:**
-- `synapse-media` - Main instance media files
-- `synapse-media-li` - LI instance media files
-- `postgresql-backups` - Database backups
-
-### 3. Services
-
-**minio (created by operator):**
-- S3 API endpoint: port 9000
-- Used by applications
-
-**minio-console:**
-- Web UI: port 9090
-- Management interface
-
-### 4. PodDisruptionBudget
-
-- Ensures minimum 3/4 servers available during updates
-- Prevents data loss during maintenance
+### 3. PodDisruptionBudget
+- Ensures minimum 3 out of 4 servers available during updates
 
 ## Prerequisites
 
-1. **MinIO Operator** installed in cluster:
+1. **MinIO Operator** installed:
 ```bash
-kubectl apply -k "github.com/minio/operator?ref=v6.0.2"
+kubectl apply -k "github.com/minio/operator?ref=v6.0.4"
 ```
 
-2. **StorageClass** named `standard`:
-```bash
-kubectl get storageclass standard
-```
+2. **StorageClass** named `standard` (or adjust in manifests)
 
-3. **Generate Secure Passwords**:
+3. **Generate credentials**:
 ```bash
-# Root password
+# Root password (min 32 characters)
 openssl rand -base64 32
 
-# User password
-openssl rand -base64 32
+# S3 access credentials
+echo "Access Key: synapse-s3-user"
+openssl rand -base64 24  # Secret key
 ```
 
 ## Deployment
 
-### Step 1: Install MinIO Operator
+### Step 1: Update Secrets
+
+Edit `secrets.yaml` and replace:
+- `MINIO_ROOT_PASSWORD` with secure root password
+- `CONSOLE_SECRET_KEY` and `secret-key` with same secure S3 password
 
 ```bash
-# Install operator
-kubectl apply -k "github.com/minio/operator?ref=v6.0.2"
+# Generate passwords
+ROOT_PASS=$(openssl rand -base64 32)
+S3_PASS=$(openssl rand -base64 24)
 
-# Wait for operator to be ready
-kubectl wait --for=condition=Available deployment/minio-operator -n minio-operator --timeout=5m
-```
-
-### Step 2: Update Secrets
-
-```bash
-# Edit secrets.yaml and replace:
-# - MINIO_ROOT_PASSWORD
-# - CONSOLE_SECRET_KEY (base64 encoded)
-# - secret-key in minio-credentials
-
-# Apply secrets
+# Update secrets.yaml with these values
+# Then apply:
 kubectl apply -f secrets.yaml
 ```
 
-### Step 3: Deploy MinIO Tenant
+### Step 2: Deploy MinIO Tenant
 
 ```bash
 kubectl apply -f tenant.yaml
 ```
 
-### Step 4: Wait for Tenant
+### Step 3: Wait for Deployment
 
 ```bash
-# Watch tenant creation
-kubectl get tenant matrix-minio -n matrix -w
+# Watch pods come up
+kubectl get pods -n matrix -l v1.min.io/tenant=matrix-minio -w
 
-# Wait for all pods
-kubectl wait --for=condition=Ready pod -l v1.min.io/tenant=matrix-minio -n matrix --timeout=10m
+# Wait for tenant to be ready (may take 2-5 minutes)
+kubectl wait --for=condition=Available tenant/matrix-minio -n matrix --timeout=10m
 ```
 
-Expected: 4 pods running (one per server)
+### Step 4: Verify Deployment
+
+```bash
+# Check tenant status
+kubectl get tenant matrix-minio -n matrix
+
+# Check pods (should see 4 pods)
+kubectl get pods -n matrix -l v1.min.io/tenant=matrix-minio
+
+# Check services
+kubectl get svc -n matrix | grep minio
+```
+
+Expected services:
+- `minio` - S3 API (port 80/443)
+- `matrix-minio-console` - Web UI (port 9090)
+- `matrix-minio-hl` - Headless service
 
 ## Verification
 
-### Check Tenant Status
+### Access MinIO Console
 
 ```bash
-kubectl get tenant matrix-minio -n matrix
-```
+# Port-forward to console
+kubectl port-forward -n matrix svc/matrix-minio-console 9090:9090
 
-Expected output:
+# Open browser: http://localhost:9090
+# Login with: MINIO_ROOT_USER / MINIO_ROOT_PASSWORD from secrets
 ```
-NAME           STATE         AGE
-matrix-minio   Initialized   5m
-```
-
-### Check Pods
-
-```bash
-kubectl get pods -n matrix -l v1.min.io/tenant=matrix-minio
-```
-
-Expected: 4 pods in Running state
 
 ### Check Buckets
 
 ```bash
-# Port-forward to MinIO
-kubectl port-forward -n matrix svc/minio 9000:9000
+# Get a pod name
+POD=$(kubectl get pods -n matrix -l v1.min.io/tenant=matrix-minio -o jsonpath='{.items[0].metadata.name}')
 
-# In another terminal, install mc (MinIO client)
-wget https://dl.min.io/client/mc/release/linux-amd64/mc
-chmod +x mc
-
-# Configure mc
-./mc alias set matrix http://localhost:9000 admin <root-password>
-
-# List buckets
-./mc ls matrix/
+# List buckets using mc (MinIO Client)
+kubectl exec -n matrix $POD -- mc ls local/
 ```
 
-Expected:
+Expected output:
 ```
-[2025-11-17 10:00:00 UTC]     0B synapse-media/
-[2025-11-17 10:00:00 UTC]     0B synapse-media-li/
-[2025-11-17 10:00:00 UTC]     0B postgresql-backups/
+[2024-11-17 10:00:00 UTC]     0B postgresql-backups/
+[2024-11-17 10:00:00 UTC]     0B synapse-media/
+[2024-11-17 10:00:00 UTC]     0B synapse-media-li/
+```
+
+### Test S3 Upload
+
+```bash
+# Create test file
+kubectl exec -n matrix $POD -- sh -c 'echo "test" > /tmp/test.txt'
+
+# Upload to bucket
+kubectl exec -n matrix $POD -- mc cp /tmp/test.txt local/synapse-media/test.txt
+
+# List bucket
+kubectl exec -n matrix $POD -- mc ls local/synapse-media/
+
+# Download
+kubectl exec -n matrix $POD -- mc cp local/synapse-media/test.txt /tmp/test-download.txt
+
+# Verify
+kubectl exec -n matrix $POD -- cat /tmp/test-download.txt
 ```
 
 ### Check Erasure Coding
 
 ```bash
-# Check drive status
-./mc admin info matrix/
+# Get drive status
+kubectl exec -n matrix $POD -- mc admin info local/
+
+# Should show:
+# - 8 drives online
+# - Storage: ~2Ti available (from 4Ti total)
+# - Erasure Coding: EC:4
 ```
 
-Should show: 8 drives online (4 servers × 2 volumes)
-
-### Test Upload/Download
+### Verify Healing
 
 ```bash
-# Upload test file
-echo "test data" > test.txt
-./mc cp test.txt matrix/synapse-media/
+# Check for any offline drives (should be none)
+kubectl exec -n matrix $POD -- mc admin heal local/ --verbose
 
-# Download test file
-./mc cp matrix/synapse-media/test.txt downloaded.txt
-
-# Verify
-diff test.txt downloaded.txt
-
-# Cleanup
-./mc rm matrix/synapse-media/test.txt
+# Should show: "All drives are healthy"
 ```
 
 ## Application Integration
 
 ### Synapse Media Storage
 
-**Configuration in homeserver.yaml:**
+**Configuration** (synapse homeserver.yaml):
 ```yaml
 media_storage_providers:
   - module: s3_storage_provider.S3StorageProviderBackend
-    store_local: True
-    store_remote: True
-    store_synchronous: True
+    store_local: true
+    store_remote: true
+    store_synchronous: true
     config:
       bucket: synapse-media
-      endpoint_url: http://minio.matrix.svc.cluster.local:9000
-      access_key_id: synapse
-      secret_access_key: <from-minio-credentials-secret>
+      endpoint_url: http://minio.matrix.svc.cluster.local
+      access_key_id: synapse-s3-user
+      secret_access_key: <from-secret>
       region_name: us-east-1
 ```
 
-**Python requirements:**
-```txt
-boto3>=1.26.0
-botocore>=1.29.0
-```
+### CloudNativePG Backups
 
-### CloudNativePG Backup
-
-**Already configured in PostgreSQL clusters:**
+**Already configured** in `../01-postgresql/main-cluster.yaml`:
 ```yaml
 backup:
   barmanObjectStore:
     destinationPath: s3://postgresql-backups/main/
-    endpointURL: http://minio.matrix.svc.cluster.local:9000
+    endpointURL: http://minio.matrix.svc.cluster.local
     s3Credentials:
       accessKeyId:
         name: minio-credentials
@@ -292,104 +256,98 @@ backup:
         key: secret-key
 ```
 
-### LI Media Sync (rclone)
+### LI Instance Media Sync (rclone)
 
-**rclone configuration:**
+**Configuration** (for sync system):
 ```ini
-[minio-main]
+[main-minio]
 type = s3
 provider = Minio
-access_key_id = synapse
+access_key_id = synapse-s3-user
 secret_access_key = <from-secret>
-endpoint = http://minio.matrix.svc.cluster.local:9000
+endpoint = http://minio.matrix.svc.cluster.local
 
-[minio-li]
-type = s3
-provider = Minio
-access_key_id = synapse
-secret_access_key = <from-secret>
-endpoint = http://minio.matrix.svc.cluster.local:9000
+[main:synapse-media]
+type = alias
+remote = main-minio:synapse-media
+
+[main:synapse-media-li]
+type = alias
+remote = main-minio:synapse-media-li
 ```
 
-**Sync command:**
+**Sync command**:
 ```bash
-rclone sync minio-main:synapse-media minio-li:synapse-media-li \
-  --progress \
-  --transfers 4 \
-  --checkers 8
+rclone sync main:synapse-media main:synapse-media-li --progress
 ```
 
 ## Monitoring
 
 ### Prometheus Metrics
 
-MinIO exposes Prometheus metrics at `/minio/v2/metrics/cluster`.
+MinIO exposes Prometheus metrics at:
+- Endpoint: `http://minio:9000/minio/v2/metrics/cluster`
+- Auth: Public (configured via MINIO_PROMETHEUS_AUTH_TYPE)
 
-**ServiceMonitor (auto-created by operator):**
-```yaml
-apiVersion: monitoring.coreos.com/v1
-kind: ServiceMonitor
-metadata:
-  name: matrix-minio
-spec:
-  selector:
-    matchLabels:
-      v1.min.io/tenant: matrix-minio
-  endpoints:
-    - port: http-minio
-      path: /minio/v2/metrics/cluster
-```
-
-**Key Metrics:**
+**Key Metrics**:
 - `minio_cluster_capacity_usable_total_bytes` - Usable capacity
 - `minio_cluster_capacity_usable_free_bytes` - Free space
-- `minio_s3_requests_total` - Request count
-- `minio_s3_requests_errors_total` - Error count
-- `minio_heal_objects_heal_total` - Healed objects
-- `minio_heal_objects_errors_total` - Heal errors
+- `minio_cluster_nodes_online_total` - Online nodes
+- `minio_cluster_disk_online_total` - Online disks
+- `minio_cluster_disk_offline_total` - Offline disks
+- `minio_s3_requests_total` - S3 API requests
+- `minio_s3_errors_total` - S3 API errors
+- `minio_heal_objects_total` - Healing operations
 
-### MinIO Console
+### Grafana Dashboard
 
-Access web UI:
-```bash
-kubectl port-forward -n matrix svc/minio-console 9090:9090
+Import MinIO dashboard: https://grafana.com/grafana/dashboards/13502
+
+### Alerting Rules
+
+**Critical Alerts**:
+```yaml
+- alert: MinIODiskOffline
+  expr: minio_cluster_disk_offline_total > 0
+  for: 5m
+  severity: critical
+  annotations:
+    summary: "MinIO has {{ $value }} offline disks"
+
+- alert: MinIONodeOffline
+  expr: minio_cluster_nodes_online_total < 4
+  for: 2m
+  severity: critical
+  annotations:
+    summary: "MinIO has {{ $value }} online nodes (expect 4)"
+
+- alert: MinIOStorageLow
+  expr: (minio_cluster_capacity_usable_free_bytes / minio_cluster_capacity_usable_total_bytes) < 0.1
+  for: 15m
+  severity: warning
+  annotations:
+    summary: "MinIO storage is {{ $value | humanizePercentage }} full"
 ```
-
-Navigate to: http://localhost:9090
-
-Login with root credentials.
-
-### Health Check
-
-```bash
-# Check cluster health
-./mc admin health matrix/
-```
-
-Expected: All drives online, no errors
 
 ## Maintenance
 
 ### Scaling Storage
 
-**Option 1: Increase volume size (vertical scaling)**
-```bash
-# Edit tenant.yaml, increase storage request
-storage: 1Ti  # was 500Gi
+#### Vertical Scaling (Increase Volume Size)
 
-# Apply changes
-kubectl apply -f tenant.yaml
+**Current limitation**: MinIO doesn't support expanding existing volumes.
 
-# Operator will expand PVCs automatically
-```
-
-**Option 2: Add new pool (horizontal scaling)**
+**Workaround**: Add new pool with larger volumes:
 ```yaml
 pools:
   - name: pool-0
     servers: 4
     volumesPerServer: 2
-    # ... existing config
+    volumeClaimTemplate:
+      spec:
+        resources:
+          requests:
+            storage: 500Gi  # Original
 
   - name: pool-1  # New pool
     servers: 4
@@ -398,254 +356,223 @@ pools:
       spec:
         resources:
           requests:
-            storage: 500Gi
+            storage: 1Ti  # Larger volumes
 ```
+
+#### Horizontal Scaling (Add More Servers)
+
+```yaml
+pools:
+  - name: pool-0
+    servers: 8  # Increased from 4
+    volumesPerServer: 2
+```
+
+**Note**: Requires re-balancing data. Plan carefully.
 
 ### Updating MinIO Version
 
 ```bash
-# Edit tenant.yaml, update image tag
+# Update image in tenant.yaml
 image: quay.io/minio/minio:RELEASE.2024-12-01T00-00-00Z
 
-# Apply
+# Apply (performs rolling update)
 kubectl apply -f tenant.yaml
 
-# Operator performs rolling update
-kubectl rollout status statefulset/matrix-minio-pool-0 -n matrix
+# Monitor rollout
+kubectl rollout status statefulset -n matrix -l v1.min.io/tenant=matrix-minio
 ```
 
 ### Password Rotation
 
-**Root password:**
+**Root password**:
 ```bash
-# Create new secret
-kubectl create secret generic minio-config-new \
-  --from-file=config.env=<new-config> -n matrix
+# Update secret
+kubectl edit secret minio-config -n matrix
 
-# Update tenant to use new secret
-kubectl patch tenant matrix-minio -n matrix \
-  --type merge -p '{"spec":{"configuration":{"name":"minio-config-new"}}}'
-
-# Restart pods
-kubectl rollout restart statefulset/matrix-minio-pool-0 -n matrix
+# Restart pods to pick up new password
+kubectl rollout restart statefulset -n matrix -l v1.min.io/tenant=matrix-minio
 ```
 
-**User password:**
+**Application credentials**:
 ```bash
-# Use MinIO console or mc to update user
-./mc admin user add matrix/ synapse <new-password>
+# Create new user in MinIO console or via mc
+kubectl exec -n matrix $POD -- mc admin user add local/ newuser newpassword
+
+# Update secret
+kubectl edit secret minio-credentials -n matrix
+
+# Update application configs (Synapse, CloudNativePG)
 ```
 
-### Backup Configuration
+### Drive Replacement
 
-MinIO configuration is stored in:
-1. Secrets (credentials)
-2. Tenant CRD (deployment config)
+MinIO handles drive failures automatically with erasure coding:
 
-**Backup:**
+1. **Detect failure**:
 ```bash
-kubectl get secret minio-config -n matrix -o yaml > minio-config-backup.yaml
-kubectl get secret minio-credentials -n matrix -o yaml > minio-creds-backup.yaml
-kubectl get tenant matrix-minio -n matrix -o yaml > tenant-backup.yaml
+kubectl exec -n matrix $POD -- mc admin info local/
 ```
+
+2. **If PVC fails**, delete the pod:
+```bash
+kubectl delete pod $FAILED_POD -n matrix
+```
+
+3. **Kubernetes recreates pod** with new PVC
+
+4. **MinIO auto-heals** data from parity shards
 
 ## Troubleshooting
 
 ### Pods Not Starting
 
 ```bash
-# Check pod events
-kubectl describe pod matrix-minio-pool-0-0 -n matrix
+# Check events
+kubectl describe tenant matrix-minio -n matrix
 
-# Check logs
-kubectl logs matrix-minio-pool-0-0 -n matrix
+# Check pod logs
+kubectl logs -n matrix $POD
 
 # Common issues:
-# - PVC not bound: Check StorageClass
-# - Image pull error: Check image name/tag
-# - Resource limits: Check node resources
+# - StorageClass doesn't exist → create or adjust in tenant.yaml
+# - Insufficient storage → check node disk space
+# - Secret missing → verify secrets.yaml applied
 ```
 
-### Drives Offline
+### Drives Showing Offline
 
 ```bash
 # Check drive status
-./mc admin info matrix/
+kubectl exec -n matrix $POD -- mc admin info local/
 
-# If drives offline:
-# 1. Check PVC status
-kubectl get pvc -n matrix -l v1.min.io/tenant=matrix-minio
+# Force heal
+kubectl exec -n matrix $POD -- mc admin heal local/ --recursive
 
-# 2. Check if pods can mount volumes
-kubectl describe pod <pod-name> -n matrix
-
-# 3. Healing will start automatically once drives are online
-./mc admin heal matrix/ --recursive
-```
-
-### High Error Rate
-
-```bash
-# Check error logs
-kubectl logs matrix-minio-pool-0-0 -n matrix | grep ERROR
-
-# Check metrics
-./mc admin prometheus metrics matrix/
-
-# Common causes:
-# - Network issues
-# - Disk full
-# - Corrupted data (triggers healing)
+# If PVC is corrupted, delete pod to recreate
 ```
 
 ### Bucket Not Accessible
 
 ```bash
-# Check bucket policy
-./mc admin policy list matrix/
+# List buckets
+kubectl exec -n matrix $POD -- mc ls local/
 
-# Set policy if needed
-./mc admin policy attach matrix/ readwrite --user synapse
+# If missing, create manually
+kubectl exec -n matrix $POD -- mc mb local/synapse-media
 
-# Check user
-./mc admin user list matrix/
+# Set policy
+kubectl exec -n matrix $POD -- mc anonymous set download local/synapse-media
 ```
 
-### Console Not Accessible
+### Performance Issues
 
 ```bash
-# Check console service
-kubectl get svc minio-console -n matrix
+# Check resource usage
+kubectl top pods -n matrix -l v1.min.io/tenant=matrix-minio
 
-# Check if pod is running
-kubectl get pods -n matrix -l v1.min.io/console=matrix-minio
+# Check for slow drives
+kubectl exec -n matrix $POD -- mc admin speedtest local/
 
-# Port-forward directly to pod
-kubectl port-forward matrix-minio-pool-0-0 -n matrix 9090:9090
+# Increase pod resources in tenant.yaml if needed
 ```
 
-## Data Recovery
+### Connection Refused
 
-### Lost Drive Scenario
-
-**EC:4 can tolerate up to 4 drive failures.**
-
-If a drive fails:
-1. MinIO automatically detects failure
-2. Reads data from remaining drives
-3. Reconstructs missing data from parity
-4. Continues serving requests (degraded mode)
-
-**When drive is replaced:**
 ```bash
-# MinIO automatically starts healing
-# Monitor healing progress
-./mc admin heal matrix/ --recursive --verbose
+# Test from another pod
+kubectl run -n matrix minio-test --rm -it --image=alpine -- sh
+apk add curl
+curl -I http://minio.matrix.svc.cluster.local/minio/health/live
 
-# Check heal status
-kubectl logs matrix-minio-pool-0-0 -n matrix | grep heal
+# Check service
+kubectl get svc minio -n matrix
+
+# Check endpoints
+kubectl get endpoints minio -n matrix
 ```
+
+## Backup & Recovery
 
 ### Disaster Recovery
 
-**Full cluster loss:**
+**Scenario**: Entire MinIO cluster lost
 
-1. **Restore from Backup** (if using external backup)
-2. **Rebuild Cluster** with same configuration
-3. **Restore Data** from backup source
-
-**Partial data loss:**
-- If < 4 drives lost: Automatic recovery
-- If ≥ 5 drives lost: Data loss, restore from backup
-
-## Performance Tuning
-
-### For Higher Throughput
-
-```yaml
-# Increase resources in tenant.yaml
-resources:
-  limits:
-    cpu: 4
-    memory: 8Gi
-
-# Increase API limits in minio-config
-MINIO_API_REQUESTS_MAX="20000"
+1. **Restore from CloudNativePG backups** (PostgreSQL data):
+```bash
+# CloudNativePG has its own backups to MinIO
+# If MinIO is lost, PostgreSQL backups are also lost
+# CRITICAL: Backup PostgreSQL data externally!
 ```
 
-### For More Parallelism
-
-```yaml
-# Add more servers (must be multiple of 4)
-servers: 8  # Instead of 4
-
-# Or add more volumes per server
-volumesPerServer: 4  # Instead of 2
+2. **Restore media from external backup**:
+```bash
+# Use rclone to restore from external backup
+rclone copy backup:synapse-media main:synapse-media
 ```
 
-### Network Optimization
+**Recommendation**:
+- Replicate MinIO data to external S3 (AWS/Backblaze)
+- Use rclone for periodic off-site backups
+- Consider PostgreSQL backups to external storage too
 
-```yaml
-# Enable faster network if available
-# Set pod annotations for network policies
-annotations:
-  k8s.v1.cni.cncf.io/networks: high-speed-network
+### Data Export
+
+```bash
+# Export all data from bucket
+kubectl exec -n matrix $POD -- mc mirror local/synapse-media /tmp/backup/
+
+# Copy to local machine
+kubectl cp matrix/$POD:/tmp/backup ./local-backup/
 ```
 
 ## Security Considerations
 
-1. **TLS**: Auto-generated by operator, certificates in /tmp/certs
-2. **Authentication**: Root and user credentials required
-3. **Network Policies**: See ../04-networking/networkpolicies.yaml
-4. **Encryption at Rest**: Enable if required by cloud provider
-5. **Audit Logging**: Enable via MINIO_AUDIT_WEBHOOK
+1. **Access Control**: Root credentials in secret, application credentials separate
+2. **TLS**: Auto-generated certificates (requestAutoCert: true)
+3. **Network Policies**: See `../04-networking/networkpolicies.yaml`
+4. **Bucket Policies**: Default is private (no public access)
+5. **Encryption at Rest**: Not enabled by default (add KES if required)
 
-### Enable Audit Logging
+### Enabling Server-Side Encryption (Optional)
 
+Requires MinIO KES (Key Encryption Service):
 ```yaml
-# In minio-config secret
-MINIO_AUDIT_WEBHOOK_ENABLE_target1="on"
-MINIO_AUDIT_WEBHOOK_ENDPOINT_target1="http://audit-service:8080/webhook"
+# Add to tenant.yaml
+kes:
+  image: quay.io/minio/kes:latest
+  replicas: 3
+  configuration:
+    name: kes-config
 ```
 
 ## Scaling Guidelines
 
-| CCU Range | Servers | Volumes/Server | Storage/Volume | Total Raw | Usable (EC:4) |
-|-----------|---------|----------------|----------------|-----------|---------------|
-| 100 | 4 | 2 | 100Gi | 800Gi | 400Gi |
-| 1,000 | 4 | 2 | 250Gi | 2Ti | 1Ti |
-| 5,000 | 4 | 2 | 500Gi | 4Ti | 2Ti |
-| 10,000 | 8 | 2 | 500Gi | 8Ti | 4Ti |
-| 20,000 | 8 | 4 | 500Gi | 16Ti | 8Ti |
+| CCU Range | Servers | Volumes/Server | Total Storage | Usable (EC:4) |
+|-----------|---------|----------------|---------------|---------------|
+| 100 | 4 | 2 × 100Gi | 800Gi | 400Gi |
+| 1,000 | 4 | 2 × 250Gi | 2Ti | 1Ti |
+| 5,000 | 4 | 2 × 500Gi | 4Ti | **2Ti** (current) |
+| 10,000 | 4 | 2 × 1Ti | 8Ti | 4Ti |
+| 20,000 | 8 | 2 × 1Ti | 16Ti | 8Ti |
 
-**Note**: Always provision 2x expected usage to account for:
-- Temporary uploads
-- Backup retention
-- Growth over time
+**Note**: For 20K CCU, consider adding a second pool instead of scaling existing pool.
 
-## Comparison with Alternatives
+## Differences from Simple Storage
 
-| Feature | MinIO | Ceph | AWS S3 |
-|---------|-------|------|--------|
-| S3 Compatible | ✅ Yes | ✅ Yes | ✅ Native |
-| On-Premises | ✅ Yes | ✅ Yes | ❌ No |
-| Kubernetes Native | ✅ Yes | ⚠️ Complex | ❌ No |
-| Erasure Coding | ✅ EC:4 | ✅ Configurable | ✅ Automatic |
-| Operator | ✅ Yes | ⚠️ Rook | ❌ N/A |
-| Complexity | ⭐⭐ Low | ⭐⭐⭐⭐⭐ High | ⭐ Managed |
-| Cost | ✅ Free | ✅ Free | ❌ Pay per GB |
-
-**Why MinIO for this deployment:**
-- ✅ Native Kubernetes integration
-- ✅ Simple operator-based deployment
-- ✅ S3-compatible (works with Synapse)
-- ✅ Erasure coding for data protection
-- ✅ Lower complexity than Ceph
-- ✅ Air-gapped deployment support
+| Feature | Simple NFS/PVC | MinIO Distributed |
+|---------|----------------|-------------------|
+| HA | ❌ Single point of failure | ✅ 4-node cluster |
+| Data Protection | ❌ None | ✅ EC:4 (4 drive failures) |
+| S3 API | ❌ | ✅ Native S3 |
+| Auto-healing | ❌ | ✅ Automatic |
+| Scalability | Limited | ✅ Horizontal |
+| Complexity | Low | Medium |
+| Resource Usage | 1 pod | 4 pods |
 
 ## References
 
-- [MinIO Documentation](https://min.io/docs/minio/kubernetes/upstream/)
-- [MinIO Operator](https://github.com/minio/operator)
-- [Erasure Coding](https://min.io/docs/minio/linux/operations/concepts/erasure-coding.html)
-- [Tenant CRD Reference](https://github.com/minio/operator/blob/master/docs/tenant_crd.adoc)
+- [MinIO Operator Documentation](https://min.io/docs/minio/kubernetes/upstream/)
+- [Erasure Coding Guide](https://min.io/docs/minio/linux/operations/concepts/erasure-coding.html)
+- [MinIO Kubernetes Deployment](https://github.com/minio/operator)
+- [S3 API Documentation](https://docs.aws.amazon.com/AmazonS3/latest/API/Welcome.html)

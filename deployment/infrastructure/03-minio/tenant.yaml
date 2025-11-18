@@ -1,6 +1,7 @@
 ---
 # MinIO Tenant - Distributed Object Storage
-# Provides S3-compatible storage for media files and backups
+# Provides S3-compatible storage for Synapse media and PostgreSQL backups
+# Erasure Coding EC:4 (4 data + 4 parity shards)
 apiVersion: minio.min.io/v2
 kind: Tenant
 metadata:
@@ -14,23 +15,22 @@ metadata:
     prometheus.io/path: /minio/v2/metrics/cluster
     prometheus.io/port: "9000"
     prometheus.io/scrape: "true"
+
 spec:
-  ## Features
+  ## S3 Features
   features:
-    ## Enable bucket DNS for bucket.minio.namespace.svc.cluster.local access
     bucketDNS: false
     domains: {}
-    enableSFTP: false
 
   ## Configuration secret
   configuration:
     name: minio-config
 
-  ## Users - application access credentials
+  ## User credentials
   users:
-    - name: minio-user
+    - name: minio-credentials
 
-  ## Buckets to create automatically
+  ## Auto-create buckets on deployment
   buckets:
     - name: synapse-media
       objectLock: false
@@ -38,9 +38,6 @@ spec:
       objectLock: false
     - name: postgresql-backups
       objectLock: false
-
-  ## Pod management policy - Parallel for faster scaling
-  podManagementPolicy: Parallel
 
   ## MinIO image
   image: quay.io/minio/minio:RELEASE.2024-11-07T00-52-20Z
@@ -50,37 +47,25 @@ spec:
   mountPath: /export
   subPath: ""
 
-  ## Service account
+  ## Pod management - Parallel for faster deployments
+  podManagementPolicy: Parallel
+
+  ## Service account (operator creates one automatically if not specified)
   serviceAccountName: ""
 
-  ## Pools configuration - Distributed mode
+  ## MinIO Pool Configuration
+  ## For EC:4 erasure coding, we need minimum 8 drives (4 data + 4 parity)
+  ## Configuration: 4 servers × 2 volumes = 8 drives
   pools:
     - name: pool-0
-      ## Servers: 4 minimum for distributed mode
-      ## For EC:4 with 4 parity shards, need minimum 8 drives total
-      ## With 2 volumes per server: 4 servers × 2 = 8 drives ✓
+      ## 4 servers minimum for distributed mode
       servers: 4
 
-      ## Volumes per server - 2 for EC:4 distributed
+      ## 2 volumes per server = 8 total drives
+      ## This gives us EC:4 (4 data + 4 parity shards)
       volumesPerServer: 2
 
-      ## Pod topology spread for HA
-      topologySpreadConstraints:
-        - maxSkew: 1
-          topologyKey: kubernetes.io/hostname
-          whenUnsatisfiable: ScheduleAnyway
-          labelSelector:
-            matchLabels:
-              v1.min.io/tenant: matrix-minio
-              v1.min.io/pool: pool-0
-
-      ## Node selector (optional - remove if not using labeled nodes)
-      nodeSelector: {}
-
-      ## Tolerations
-      tolerations: []
-
-      ## Affinity - spread pods across nodes
+      ## Pod anti-affinity to spread across nodes
       affinity:
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
@@ -96,12 +81,15 @@ spec:
       resources:
         requests:
           memory: 2Gi
-          cpu: 500m
+          cpu: 1
         limits:
           memory: 4Gi
           cpu: 2
 
-      ## Volume claim template - persistent storage
+      ## Volume configuration
+      ## Each volume is 500Gi, so:
+      ## - Total raw storage: 4 servers × 2 volumes × 500Gi = 4Ti
+      ## - Usable storage with EC:4: ~2Ti (50% efficiency)
       volumeClaimTemplate:
         apiVersion: v1
         kind: persistentvolumeclaims
@@ -112,11 +100,10 @@ spec:
             - ReadWriteOnce
           resources:
             requests:
-              storage: 500Gi  # 500Gi × 2 volumes × 4 servers = 4Ti total raw
+              storage: 500Gi
           storageClassName: standard
-        status: {}
 
-      ## Security contexts
+      ## Security context
       securityContext:
         runAsUser: 1000
         runAsGroup: 1000
@@ -124,6 +111,7 @@ spec:
         fsGroup: 1000
         fsGroupChangePolicy: "OnRootMismatch"
 
+      ## Container security context
       containerSecurityContext:
         runAsUser: 1000
         runAsGroup: 1000
@@ -135,53 +123,26 @@ spec:
         seccompProfile:
           type: RuntimeDefault
 
-  ## Auto-generate TLS certificates
+  ## TLS - Auto-generated certificates
   requestAutoCert: true
 
   ## Prometheus monitoring
   prometheusOperator:
     labels:
-      app: minio-sm
+      app: minio-metrics
 
-  ## Logging
-  logging:
-    anonymous: true
-    json: true
-    quiet: false
-
-  ## Environment variables
-  env:
-    - name: MINIO_PROMETHEUS_AUTH_TYPE
-      value: "public"
 ---
-# MinIO Console Service
-# Web UI for MinIO management
-apiVersion: v1
-kind: Service
-metadata:
-  name: minio-console
-  namespace: matrix
-  labels:
-    app.kubernetes.io/name: minio
-    app.kubernetes.io/component: console
-spec:
-  type: ClusterIP
-  ports:
-    - name: http
-      port: 9090
-      targetPort: 9090
-      protocol: TCP
-  selector:
-    v1.min.io/tenant: matrix-minio
----
-# Pod Disruption Budget
+# PodDisruptionBudget for MinIO
+# Ensures at least 3 out of 4 pods are available during updates
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
-  name: minio-pdb
+  name: matrix-minio-pdb
   namespace: matrix
+  labels:
+    app.kubernetes.io/name: minio
 spec:
-  minAvailable: 3  # Keep at least 3 out of 4 servers available
+  minAvailable: 3
   selector:
     matchLabels:
       v1.min.io/tenant: matrix-minio
