@@ -1,0 +1,554 @@
+# Synapse LI (Lawful Intercept) Instance Deployment
+# ⭐ READ-ONLY Synapse instance for law enforcement access ⭐
+#
+# CRITICAL Security Features:
+# - NetworkPolicy li-instance-isolation: Can ONLY access LI PostgreSQL and MinIO
+# - NetworkPolicy key-vault-isolation: CANNOT access key_vault
+# - Read-only PostgreSQL: default_transaction_read_only: on
+# - No federation: Isolated from Matrix federation network
+# - No registration: Users synced from main via logical replication
+
+---
+# ConfigMap for Synapse LI
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: synapse-li-config
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: synapse
+    app.kubernetes.io/component: homeserver
+    app.kubernetes.io/instance: li
+    matrix.instance: li
+data:
+  homeserver.yaml: |
+    # Content from homeserver.yaml with environment variable substitution
+    # See: /home/ali/Messenger/deployment/li-instance/01-synapse-li/homeserver.yaml
+
+    server_name: "matrix.example.com"
+    public_baseurl: "https://matrix-li.example.com"
+    pid_file: /data/homeserver.pid
+
+    listeners:
+      - port: 8008
+        tls: false
+        type: http
+        x_forwarded: true
+        bind_addresses: ['0.0.0.0']
+        resources:
+          - names: [client]
+            compress: false
+      - port: 9090
+        type: metrics
+        bind_addresses: ['0.0.0.0']
+
+    database:
+      name: psycopg2
+      args:
+        user: synapse_li
+        password: ${DB_PASSWORD}
+        database: matrix_li
+        host: matrix-postgresql-li-rw.matrix.svc.cluster.local
+        port: 5432
+        sslmode: require
+        cp_min: 5
+        cp_max: 20
+
+    redis:
+      enabled: true
+      host: redis.matrix.svc.cluster.local
+      port: 6379
+      password: ${REDIS_PASSWORD}
+
+    enable_media_repo: true
+    media_store_path: "/data/media_store"
+
+    media_storage_providers:
+      - module: s3_storage_provider.S3StorageProviderBackend
+        store_local: true
+        store_remote: true
+        store_synchronous: true
+        config:
+          bucket: synapse-media-li
+          endpoint_url: http://minio.matrix.svc.cluster.local:9000
+          access_key_id: ${S3_ACCESS_KEY}
+          secret_access_key: ${S3_SECRET_KEY}
+
+    max_upload_size: 100M
+    max_image_pixels: 32M
+
+    # LI: Infinite retention
+    redaction_retention_period: null
+    forgotten_room_retention_period: null
+
+    # LI: NO federation
+    federation_domain_whitelist: []
+    send_federation: false
+    federation_ip_range_blacklist:
+      - '0.0.0.0/0'
+      - '::/0'
+
+    macaroon_secret_key: "${MACAROON_SECRET}"
+    registration_shared_secret: "${REGISTRATION_SECRET}"
+    form_secret: "${FORM_SECRET}"
+    signing_key_path: "/config/signing.key"
+
+    trusted_key_servers:
+      - server_name: "matrix.org"
+
+    # LI: NO registration
+    enable_registration: false
+    enable_registration_without_verification: false
+    enable_set_displayname: false
+    enable_set_avatar_url: false
+    enable_3pid_changes: false
+    enable_password_reset: false
+
+    user_directory:
+      enabled: true
+      search_all_users: true
+
+    rc_message:
+      per_second: 1.0
+      burst_count: 50
+
+    rc_login:
+      address:
+        per_second: 1.0
+        burst_count: 10
+      account:
+        per_second: 1.0
+        burst_count: 10
+
+    event_cache_size: "20K"
+    caches:
+      global_factor: 1.0
+
+    presence:
+      enabled: false
+
+    stats:
+      enabled: true
+
+    push:
+      enabled: false
+
+    turn_uris: []
+
+    enable_metrics: true
+    report_stats: false
+
+    log_config: "/config/log.yaml"
+
+    allow_public_rooms_without_auth: true
+    allow_public_rooms_over_federation: false
+
+    url_preview_enabled: true
+    url_preview_ip_range_blacklist:
+      - '127.0.0.0/8'
+      - '10.0.0.0/8'
+      - '172.16.0.0/12'
+      - '192.168.0.0/16'
+
+  log.yaml: |
+    version: 1
+    formatters:
+      precise:
+        format: '%(asctime)s - %(name)s - %(lineno)d - %(levelname)s - %(request)s - %(message)s'
+    handlers:
+      console:
+        class: logging.StreamHandler
+        formatter: precise
+        stream: ext://sys.stdout
+    loggers:
+      synapse:
+        level: INFO
+      synapse.http.server:
+        level: INFO
+      synapse.storage:
+        level: WARNING
+    root:
+      level: INFO
+      handlers: [console]
+    disable_existing_loggers: false
+
+---
+# Secrets for Synapse LI
+apiVersion: v1
+kind: Secret
+metadata:
+  name: synapse-li-secrets
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: synapse
+    app.kubernetes.io/component: homeserver
+    app.kubernetes.io/instance: li
+    matrix.instance: li
+type: Opaque
+stringData:
+  # LI PostgreSQL credentials
+  DB_PASSWORD: "CHANGEME_SECURE_LI_DB_PASSWORD"
+
+  # Redis password (shared with main)
+  REDIS_PASSWORD: "CHANGEME_SECURE_REDIS_PASSWORD"
+
+  # S3/MinIO credentials for LI bucket
+  S3_ACCESS_KEY: "synapse-s3-user"
+  S3_SECRET_KEY: "CHANGEME_SECURE_S3_PASSWORD"
+
+  # Synapse secrets (can be same as main or different)
+  MACAROON_SECRET: "CHANGEME_SECURE_LI_MACAROON_SECRET"
+  REGISTRATION_SECRET: "CHANGEME_SECURE_LI_REGISTRATION_SECRET"
+  FORM_SECRET: "CHANGEME_SECURE_LI_FORM_SECRET"
+
+  # Signing key (MUST be same as main for signature verification)
+  signing.key: |
+    ed25519 a_XXXX CHANGEME_COPY_FROM_MAIN_SIGNING_KEY
+    # CRITICAL: This MUST be the SAME signing key as the main instance
+    # Otherwise users cannot log in to LI instance
+
+---
+# Synapse LI StatefulSet
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: synapse-li
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: synapse
+    app.kubernetes.io/component: homeserver
+    app.kubernetes.io/instance: li
+    matrix.instance: li
+spec:
+  serviceName: synapse-li
+  replicas: 1  # Single replica (no workers for LI)
+  podManagementPolicy: Parallel
+
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: synapse
+      app.kubernetes.io/component: homeserver
+      app.kubernetes.io/instance: li
+
+  updateStrategy:
+    type: RollingUpdate
+
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: local-path
+        resources:
+          requests:
+            storage: 100Gi  # Same as main
+
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: synapse
+        app.kubernetes.io/component: homeserver
+        app.kubernetes.io/instance: li
+        matrix.instance: li  # CRITICAL label for NetworkPolicy
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/_synapse/metrics"
+
+    spec:
+      securityContext:
+        runAsUser: 991
+        runAsGroup: 991
+        fsGroup: 991
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+
+      # Prefer different nodes from main instance
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    matrix.instance: main
+                topologyKey: kubernetes.io/hostname
+
+      initContainers:
+        - name: wait-for-postgres
+          image: postgres:16-alpine
+          command:
+            - sh
+            - -c
+            - |
+              until pg_isready -h matrix-postgresql-li-rw.matrix.svc.cluster.local -p 5432 -U synapse_li; do
+                echo "Waiting for PostgreSQL LI..."
+                sleep 2
+              done
+              echo "PostgreSQL LI is ready!"
+          env:
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: synapse-li-secrets
+                  key: DB_PASSWORD
+
+        - name: wait-for-redis
+          image: redis:7.2-alpine
+          command:
+            - sh
+            - -c
+            - |
+              until redis-cli -h redis.matrix.svc.cluster.local -p 6379 -a "$REDIS_PASSWORD" ping; do
+                echo "Waiting for Redis..."
+                sleep 2
+              done
+              echo "Redis is ready!"
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: synapse-li-secrets
+                  key: REDIS_PASSWORD
+
+        - name: generate-config
+          image: matrixdotorg/synapse:v1.119.0
+          command:
+            - sh
+            - -c
+            - |
+              envsubst < /config-template/homeserver.yaml > /config/homeserver.yaml
+              cp /config-template/log.yaml /config/log.yaml
+              cp /config-template/signing.key /config/signing.key
+              chown -R 991:991 /config /data
+              chmod 600 /config/signing.key
+              echo "LI configuration prepared"
+          env:
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: synapse-li-secrets
+                  key: DB_PASSWORD
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: synapse-li-secrets
+                  key: REDIS_PASSWORD
+            - name: S3_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: synapse-li-secrets
+                  key: S3_ACCESS_KEY
+            - name: S3_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: synapse-li-secrets
+                  key: S3_SECRET_KEY
+            - name: MACAROON_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: synapse-li-secrets
+                  key: MACAROON_SECRET
+            - name: REGISTRATION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: synapse-li-secrets
+                  key: REGISTRATION_SECRET
+            - name: FORM_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: synapse-li-secrets
+                  key: FORM_SECRET
+          volumeMounts:
+            - name: config-template
+              mountPath: /config-template
+            - name: config
+              mountPath: /config
+            - name: data
+              mountPath: /data
+            - name: signing-key
+              mountPath: /config-template/signing.key
+              subPath: signing.key
+
+      containers:
+        - name: synapse
+          image: matrixdotorg/synapse:v1.119.0
+          imagePullPolicy: IfNotPresent
+
+          command:
+            - python
+            - -m
+            - synapse.app.homeserver
+            - --config-path=/config/homeserver.yaml
+
+          ports:
+            - name: http
+              containerPort: 8008
+              protocol: TCP
+            - name: metrics
+              containerPort: 9090
+              protocol: TCP
+
+          env:
+            - name: SYNAPSE_CONFIG_PATH
+              value: "/config/homeserver.yaml"
+            - name: UID
+              value: "991"
+            - name: GID
+              value: "991"
+
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            - name: data
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+
+          resources:
+            requests:
+              memory: "1Gi"
+              cpu: "500m"
+            limits:
+              memory: "2Gi"
+              cpu: "1000m"
+
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8008
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 5
+
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8008
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8008
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 30
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 991
+            runAsGroup: 991
+            capabilities:
+              drop:
+                - ALL
+
+      volumes:
+        - name: config-template
+          configMap:
+            name: synapse-li-config
+        - name: config
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+        - name: signing-key
+          secret:
+            secretName: synapse-li-secrets
+            items:
+              - key: signing.key
+                path: signing.key
+                mode: 0600
+
+---
+# Synapse LI Services
+apiVersion: v1
+kind: Service
+metadata:
+  name: synapse-li
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: synapse
+    app.kubernetes.io/component: homeserver
+    app.kubernetes.io/instance: li
+    matrix.instance: li
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: synapse
+    app.kubernetes.io/component: homeserver
+    app.kubernetes.io/instance: li
+  ports:
+    - name: http
+      port: 8008
+      targetPort: 8008
+      protocol: TCP
+    - name: metrics
+      port: 9090
+      targetPort: 9090
+      protocol: TCP
+
+---
+# Client API service for LI
+apiVersion: v1
+kind: Service
+metadata:
+  name: synapse-li-client
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: synapse
+    app.kubernetes.io/component: client-api
+    matrix.instance: li
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: synapse
+    app.kubernetes.io/instance: li
+  ports:
+    - name: http
+      port: 8008
+      targetPort: 8008
+      protocol: TCP
+
+---
+# Ingress for Synapse LI (separate domain)
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: synapse-li
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: synapse
+    app.kubernetes.io/component: ingress
+    matrix.instance: li
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "100m"
+    # IP whitelisting for LI access (uncomment and configure)
+    # nginx.ingress.kubernetes.io/whitelist-source-range: "10.0.0.0/8,192.168.0.0/16"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - matrix-li.example.com
+      secretName: synapse-li-tls
+  rules:
+    - host: matrix-li.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: synapse-li-client
+                port:
+                  number: 8008

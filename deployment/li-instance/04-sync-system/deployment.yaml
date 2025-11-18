@@ -1,0 +1,373 @@
+# Sync System for LI Instance
+# ⭐ CRITICAL: Bridge between main and LI instances ⭐
+#
+# Handles two types of synchronization:
+# 1. PostgreSQL Logical Replication: Real-time database sync from main to LI
+# 2. MinIO/rclone Media Sync: Periodic media file sync between buckets
+#
+# IMPORTANT: This is the ONLY component with access to BOTH main and LI resources
+# Enforced by sync-system-access NetworkPolicy
+
+---
+# ConfigMap for sync system
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sync-system-config
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: sync-system
+    app.kubernetes.io/component: replication
+    matrix.instance: sync
+data:
+  # PostgreSQL replication setup script
+  setup-replication.sql: |
+    -- Run this on MAIN PostgreSQL cluster to set up logical replication
+
+    -- 1. Create publication on main database (if not exists)
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_publication WHERE pubname = 'matrix_li_publication'
+      ) THEN
+        CREATE PUBLICATION matrix_li_publication FOR ALL TABLES;
+      END IF;
+    END $$;
+
+    -- 2. Create replication user (if not exists)
+    DO $$
+    BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'replication_user') THEN
+        CREATE USER replication_user WITH REPLICATION PASSWORD 'CHANGEME_REPLICATION_PASSWORD';
+        GRANT SELECT ON ALL TABLES IN SCHEMA public TO replication_user;
+        ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO replication_user;
+      END IF;
+    END $$;
+
+    -- 3. Update pg_hba.conf to allow replication connections
+    -- This needs to be added to CloudNativePG cluster configuration:
+    -- host    matrix    replication_user    10.0.0.0/8    scram-sha-256
+
+  # PostgreSQL subscription setup script (run on LI)
+  setup-subscription.sql: |
+    -- Run this on LI PostgreSQL cluster to subscribe to main
+
+    -- 1. Create subscription (if not exists)
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_subscription WHERE subname = 'matrix_li_subscription'
+      ) THEN
+        CREATE SUBSCRIPTION matrix_li_subscription
+        CONNECTION 'host=matrix-postgresql-rw.matrix.svc.cluster.local port=5432 dbname=matrix user=replication_user password=CHANGEME_REPLICATION_PASSWORD'
+        PUBLICATION matrix_li_publication;
+      END IF;
+    END $$;
+
+    -- 2. Monitor replication lag
+    SELECT
+      subname,
+      received_lsn,
+      latest_end_lsn,
+      pg_wal_lsn_diff(latest_end_lsn, received_lsn) AS replication_lag_bytes
+    FROM pg_subscription_rel
+    JOIN pg_subscription ON subrelid = srrelid;
+
+  # rclone configuration for MinIO sync
+  rclone.conf: |
+    [minio-main]
+    type = s3
+    provider = Minio
+    env_auth = false
+    access_key_id = ${S3_ACCESS_KEY}
+    secret_access_key = ${S3_SECRET_KEY}
+    endpoint = http://minio.matrix.svc.cluster.local:9000
+
+    [minio-li]
+    type = s3
+    provider = Minio
+    env_auth = false
+    access_key_id = ${S3_ACCESS_KEY}
+    secret_access_key = ${S3_SECRET_KEY}
+    endpoint = http://minio.matrix.svc.cluster.local:9000
+
+  # Sync script
+  sync.sh: |
+    #!/bin/bash
+    set -e
+
+    echo "Starting sync at $(date)"
+
+    # Sync media from main bucket to LI bucket
+    echo "Syncing media files..."
+    rclone sync \
+      minio-main:synapse-media \
+      minio-li:synapse-media-li \
+      --config /config/rclone.conf \
+      --progress \
+      --stats 10s \
+      --transfers 10 \
+      --checkers 20 \
+      --fast-list \
+      --no-update-modtime \
+      --checksum
+
+    echo "Media sync completed at $(date)"
+
+    # Check replication lag
+    echo "Checking PostgreSQL replication lag..."
+    PGPASSWORD="$LI_DB_PASSWORD" psql \
+      -h matrix-postgresql-li-rw.matrix.svc.cluster.local \
+      -U synapse_li \
+      -d matrix_li \
+      -c "SELECT
+            subname,
+            received_lsn,
+            latest_end_lsn,
+            pg_wal_lsn_diff(latest_end_lsn, received_lsn) AS lag_bytes,
+            pg_size_pretty(pg_wal_lsn_diff(latest_end_lsn, received_lsn)) AS lag_pretty
+          FROM pg_subscription_rel
+          JOIN pg_subscription ON subrelid = srrelid;" || echo "Replication not yet set up"
+
+    echo "Sync completed successfully at $(date)"
+
+---
+# Secret for sync system
+apiVersion: v1
+kind: Secret
+metadata:
+  name: sync-system-secrets
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: sync-system
+    app.kubernetes.io/component: replication
+type: Opaque
+stringData:
+  # Main PostgreSQL (for reading)
+  MAIN_DB_HOST: "matrix-postgresql-rw.matrix.svc.cluster.local"
+  MAIN_DB_PORT: "5432"
+  MAIN_DB_NAME: "matrix"
+  MAIN_DB_USER: "replication_user"
+  MAIN_DB_PASSWORD: "CHANGEME_REPLICATION_PASSWORD"
+
+  # LI PostgreSQL (for writing)
+  LI_DB_HOST: "matrix-postgresql-li-rw.matrix.svc.cluster.local"
+  LI_DB_PORT: "5432"
+  LI_DB_NAME: "matrix_li"
+  LI_DB_USER: "synapse_li"
+  LI_DB_PASSWORD: "CHANGEME_SECURE_LI_DB_PASSWORD"
+
+  # S3/MinIO credentials
+  S3_ACCESS_KEY: "synapse-s3-user"
+  S3_SECRET_KEY: "CHANGEME_SECURE_S3_PASSWORD"
+
+---
+# Job to set up PostgreSQL replication (run once)
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: sync-system-setup-replication
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: sync-system
+    app.kubernetes.io/component: setup
+spec:
+  template:
+    spec:
+      restartPolicy: OnFailure
+      securityContext:
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        runAsNonRoot: true
+      containers:
+        - name: setup-replication
+          image: postgres:16-alpine
+          command:
+            - sh
+            - -c
+            - |
+              echo "Setting up logical replication..."
+
+              # Set up publication on main
+              echo "Creating publication on main database..."
+              PGPASSWORD="$MAIN_DB_PASSWORD" psql \
+                -h "$MAIN_DB_HOST" \
+                -U "$MAIN_DB_USER" \
+                -d "$MAIN_DB_NAME" \
+                -f /config/setup-replication.sql
+
+              echo "Waiting 10 seconds for publication to be ready..."
+              sleep 10
+
+              # Set up subscription on LI
+              echo "Creating subscription on LI database..."
+              PGPASSWORD="$LI_DB_PASSWORD" psql \
+                -h "$LI_DB_HOST" \
+                -U "$LI_DB_USER" \
+                -d "$LI_DB_NAME" \
+                -f /config/setup-subscription.sql
+
+              echo "Logical replication setup complete!"
+              echo "Checking replication status..."
+              PGPASSWORD="$LI_DB_PASSWORD" psql \
+                -h "$LI_DB_HOST" \
+                -U "$LI_DB_USER" \
+                -d "$LI_DB_NAME" \
+                -c "SELECT subname, subenabled, subslotname FROM pg_subscription;"
+          env:
+            - name: MAIN_DB_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: sync-system-secrets
+                  key: MAIN_DB_HOST
+            - name: MAIN_DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: sync-system-secrets
+                  key: MAIN_DB_USER
+            - name: MAIN_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: sync-system-secrets
+                  key: MAIN_DB_PASSWORD
+            - name: MAIN_DB_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: sync-system-secrets
+                  key: MAIN_DB_NAME
+            - name: LI_DB_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: sync-system-secrets
+                  key: LI_DB_HOST
+            - name: LI_DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: sync-system-secrets
+                  key: LI_DB_USER
+            - name: LI_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: sync-system-secrets
+                  key: LI_DB_PASSWORD
+            - name: LI_DB_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: sync-system-secrets
+                  key: LI_DB_NAME
+          volumeMounts:
+            - name: config
+              mountPath: /config
+      volumes:
+        - name: config
+          configMap:
+            name: sync-system-config
+
+---
+# CronJob for periodic media sync
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: sync-system-media
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: sync-system
+    app.kubernetes.io/component: media-sync
+spec:
+  schedule: "*/15 * * * *"  # Every 15 minutes
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  concurrencyPolicy: Forbid  # Don't run multiple sync jobs simultaneously
+
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: sync-system
+            app.kubernetes.io/component: media-sync
+        spec:
+          restartPolicy: OnFailure
+          securityContext:
+            runAsUser: 1000
+            runAsGroup: 1000
+            fsGroup: 1000
+            runAsNonRoot: true
+
+          containers:
+            - name: rclone-sync
+              image: rclone/rclone:1.65
+              command:
+                - sh
+                - /config/sync.sh
+              env:
+                - name: S3_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: sync-system-secrets
+                      key: S3_ACCESS_KEY
+                - name: S3_SECRET_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: sync-system-secrets
+                      key: S3_SECRET_KEY
+                - name: LI_DB_HOST
+                  valueFrom:
+                    secretKeyRef:
+                      name: sync-system-secrets
+                      key: LI_DB_HOST
+                - name: LI_DB_USER
+                  valueFrom:
+                    secretKeyRef:
+                      name: sync-system-secrets
+                      key: LI_DB_USER
+                - name: LI_DB_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: sync-system-secrets
+                      key: LI_DB_PASSWORD
+                - name: LI_DB_NAME
+                  valueFrom:
+                    secretKeyRef:
+                      name: sync-system-secrets
+                      key: LI_DB_NAME
+              volumeMounts:
+                - name: config
+                  mountPath: /config
+                - name: tmp
+                  mountPath: /tmp
+              resources:
+                requests:
+                  memory: "256Mi"
+                  cpu: "250m"
+                limits:
+                  memory: "512Mi"
+                  cpu: "500m"
+
+          volumes:
+            - name: config
+              configMap:
+                name: sync-system-config
+                defaultMode: 0755
+            - name: tmp
+              emptyDir: {}
+
+---
+# Service for monitoring sync system (optional)
+apiVersion: v1
+kind: Service
+metadata:
+  name: sync-system
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: sync-system
+    app.kubernetes.io/component: replication
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: sync-system
+  ports:
+    - name: metrics
+      port: 9090
+      protocol: TCP

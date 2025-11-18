@@ -1,0 +1,242 @@
+# Synapse Admin LI (Lawful Intercept)
+# Admin interface for forensics and E2EE decryption
+# Provides access to user data, room statistics, and encrypted message recovery
+#
+# Key Features:
+# - User and room management (read-only for LI)
+# - Statistics and analytics
+# - Sync system monitoring
+# - E2EE decryption via key_vault integration (on main instance)
+# - Message search and filtering
+
+---
+# ConfigMap for Synapse Admin LI
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: synapse-admin-li-config
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: synapse-admin
+    app.kubernetes.io/component: admin-interface
+    matrix.instance: li
+data:
+  config.json: |
+    {
+      "restrictBaseUrl": "https://matrix-li.example.com",
+      "asManagedUsers": false,
+      "supportedLanguages": ["en", "de", "fr", "es", "it"],
+      "defaultLanguage": "en"
+    }
+
+---
+# Synapse Admin LI Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: synapse-admin-li
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: synapse-admin
+    app.kubernetes.io/component: admin-interface
+    app.kubernetes.io/version: "0.10.3"
+    matrix.instance: li
+spec:
+  replicas: 2
+
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: synapse-admin
+      app.kubernetes.io/component: admin-interface
+      matrix.instance: li
+
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: synapse-admin
+        app.kubernetes.io/component: admin-interface
+        app.kubernetes.io/version: "0.10.3"
+        matrix.instance: li
+
+    spec:
+      securityContext:
+        runAsUser: 101
+        runAsGroup: 101
+        fsGroup: 101
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: synapse-admin
+                    matrix.instance: li
+                topologyKey: kubernetes.io/hostname
+
+      containers:
+        - name: synapse-admin
+          image: awesometechnologies/synapse-admin:0.10.3
+          imagePullPolicy: IfNotPresent
+
+          ports:
+            - name: http
+              containerPort: 80
+              protocol: TCP
+
+          volumeMounts:
+            - name: config
+              mountPath: /app/config.json
+              subPath: config.json
+              readOnly: true
+            - name: cache
+              mountPath: /var/cache/nginx
+            - name: run
+              mountPath: /var/run
+
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "50m"
+            limits:
+              memory: "128Mi"
+              cpu: "100m"
+
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 2
+
+          startupProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 10
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 101
+            runAsGroup: 101
+            capabilities:
+              drop:
+                - ALL
+
+      volumes:
+        - name: config
+          configMap:
+            name: synapse-admin-li-config
+        - name: cache
+          emptyDir: {}
+        - name: run
+          emptyDir: {}
+
+---
+# Synapse Admin LI Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: synapse-admin-li
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: synapse-admin
+    app.kubernetes.io/component: admin-interface
+    matrix.instance: li
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: synapse-admin
+    app.kubernetes.io/component: admin-interface
+    matrix.instance: li
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+      protocol: TCP
+
+---
+# Ingress for Synapse Admin LI
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: synapse-admin-li
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: synapse-admin
+    app.kubernetes.io/component: ingress
+    matrix.instance: li
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    # CRITICAL: IP whitelisting for law enforcement access only
+    # nginx.ingress.kubernetes.io/whitelist-source-range: "10.0.0.0/8,192.168.0.0/16"
+    # Authentication (basic auth or OAuth)
+    # nginx.ingress.kubernetes.io/auth-type: basic
+    # nginx.ingress.kubernetes.io/auth-secret: synapse-admin-auth
+    # nginx.ingress.kubernetes.io/auth-realm: "Synapse Admin LI - Authentication Required"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - admin-li.matrix.example.com
+      secretName: synapse-admin-li-tls
+  rules:
+    - host: admin-li.matrix.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: synapse-admin-li
+                port:
+                  number: 80
+
+---
+# Secret for basic authentication (create htpasswd file)
+# Generate using: htpasswd -c auth admin
+# kubectl create secret generic synapse-admin-auth --from-file=auth -n matrix
+apiVersion: v1
+kind: Secret
+metadata:
+  name: synapse-admin-auth
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: synapse-admin
+    app.kubernetes.io/component: authentication
+    matrix.instance: li
+type: Opaque
+stringData:
+  auth: |
+    # Generate using: htpasswd -c auth admin
+    # Then paste the output here
+    # Example: admin:$apr1$xyz123$abc...
+    admin:CHANGEME_GENERATE_HTPASSWD

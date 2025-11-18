@@ -1,0 +1,152 @@
+# Sync System NetworkPolicy
+# Allows sync system to access BOTH main and LI resources
+# Required for PostgreSQL logical replication and rclone media sync
+#
+# CRITICAL: This is the ONLY component that can access both main and LI resources
+# All other components are strictly isolated by li-instance-isolation policy
+
+---
+###############################################################################
+# Sync System Egress Policy
+# Allows access to both main and LI PostgreSQL clusters and MinIO buckets
+###############################################################################
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sync-system-access
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: networkpolicy
+    app.kubernetes.io/component: sync-system
+  annotations:
+    description: "CRITICAL: Sync system is the bridge between main and LI instances"
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: sync-system
+  policyTypes:
+    - Egress
+  egress:
+    # Allow DNS
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+    # Allow MAIN PostgreSQL (for reading data to replicate)
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: matrix-postgresql
+      ports:
+        - protocol: TCP
+          port: 5432
+
+    # Allow LI PostgreSQL (for writing replicated data)
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: matrix-postgresql-li
+      ports:
+        - protocol: TCP
+          port: 5432
+
+    # Allow MinIO (for syncing media between buckets)
+    - to:
+        - podSelector:
+            matchLabels:
+              v1.min.io/tenant: matrix-minio
+      ports:
+        - protocol: TCP
+          port: 9000
+
+    # Allow Redis (for coordination and caching)
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: redis
+      ports:
+        - protocol: TCP
+          port: 6379
+
+---
+###############################################################################
+# Allow Sync System to Access PostgreSQL Main
+# PostgreSQL main needs to allow incoming connections from sync-system
+###############################################################################
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postgresql-main-allow-sync
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: networkpolicy
+    app.kubernetes.io/component: database
+spec:
+  podSelector:
+    matchLabels:
+      cnpg.io/cluster: matrix-postgresql
+  policyTypes:
+    - Ingress
+  ingress:
+    # Allow from sync system (in addition to existing rules)
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: sync-system
+      ports:
+        - protocol: TCP
+          port: 5432
+
+---
+###############################################################################
+# Allow Sync System to Access PostgreSQL LI
+# PostgreSQL LI needs to allow incoming connections from sync-system
+###############################################################################
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postgresql-li-allow-sync
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: networkpolicy
+    app.kubernetes.io/component: database
+spec:
+  podSelector:
+    matchLabels:
+      cnpg.io/cluster: matrix-postgresql-li
+  policyTypes:
+    - Ingress
+  ingress:
+    # Allow from sync system
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: sync-system
+      ports:
+        - protocol: TCP
+          port: 5432
+
+    # Allow from LI Synapse instance
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: synapse
+              matrix.instance: li
+      ports:
+        - protocol: TCP
+          port: 5432
+
+    # Allow internal cluster replication
+    - from:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: matrix-postgresql-li
+      ports:
+        - protocol: TCP
+          port: 5432
