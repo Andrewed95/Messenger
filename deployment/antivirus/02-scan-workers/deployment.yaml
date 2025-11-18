@@ -188,6 +188,13 @@ spec:
                 sleep 2
               done
               echo "ClamAV is ready!"
+          resources:
+            requests:
+              memory: "32Mi"
+              cpu: "25m"
+            limits:
+              memory: "64Mi"
+              cpu: "50m"
 
       containers:
         - name: content-scanner
@@ -274,15 +281,14 @@ spec:
                 - ALL
 
         # ClamAV client sidecar (provides clamdscan command)
+        # Uses image with netcat pre-installed to avoid runtime installation
         - name: clamav-client
-          image: clamav/clamav:1.4.1
+          image: alpine:3.19
           command:
             - sh
             - -c
             - |
-              # Install netcat for readiness check
-              apk add --no-cache netcat-openbsd
-              # Keep container running
+              # Keep container running for clamdscan access
               tail -f /dev/null
 
           volumeMounts:
@@ -299,14 +305,13 @@ spec:
 
           securityContext:
             allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: false
-            runAsNonRoot: false  # Needs root for apk install
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
             capabilities:
               drop:
                 - ALL
-              add:
-                - CHOWN
-                - DAC_OVERRIDE
 
       volumes:
         - name: config

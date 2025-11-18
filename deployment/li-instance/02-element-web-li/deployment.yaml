@@ -176,8 +176,11 @@ spec:
               mountPath: /app/config.json
               subPath: config.json
               readOnly: true
+            # Custom CSS must be loaded via modified index.html or nginx config
+            # To use: Add <link rel="stylesheet" href="/custom.css"> to index.html
+            # Or configure nginx to inject it
             - name: custom-css
-              mountPath: /app/bundles/custom.css
+              mountPath: /app/custom.css
               subPath: custom.css
               readOnly: true
             - name: cache

@@ -121,6 +121,9 @@ data:
         http-request return status 200 content-type text/plain string "OK\n"
 
     # DNS Resolver for Kubernetes
+    # 10.96.0.10 is the default Kubernetes DNS service IP (kube-dns/CoreDNS)
+    # If your cluster uses a different DNS service IP, update this value
+    # To find your cluster's DNS IP: kubectl get svc -n kube-system kube-dns -o jsonpath='{.spec.clusterIP}'
     resolvers k8s
         nameserver dns 10.96.0.10:53
         accepted_payload_size 8192

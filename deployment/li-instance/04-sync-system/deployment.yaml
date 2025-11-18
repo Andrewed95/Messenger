@@ -297,10 +297,20 @@ spec:
 
           containers:
             - name: rclone-sync
+              # NOTE: This image needs BOTH rclone and postgresql-client
+              # Option 1: Use custom image with both tools pre-installed
+              # Option 2: Use this alpine-based rclone with postgresql-client installed at runtime
+              # Current: rclone/rclone:1.65 (lacks postgresql-client)
+              # Replace with your custom image URL that includes both tools
               image: rclone/rclone:1.65
               command:
                 - sh
-                - /config/sync.sh
+                - -c
+                - |
+                  # Install postgresql-client for replication lag checking
+                  apk add --no-cache postgresql-client || echo "Warning: Could not install postgresql-client"
+                  # Run sync script
+                  sh /config/sync.sh
               env:
                 - name: S3_ACCESS_KEY
                   valueFrom:

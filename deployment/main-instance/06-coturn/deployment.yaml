@@ -166,6 +166,13 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "50m"
+            limits:
+              memory: "128Mi"
+              cpu: "100m"
           securityContext:
             allowPrivilegeEscalation: false
             runAsNonRoot: true
@@ -270,8 +277,7 @@ spec:
             capabilities:
               drop:
                 - ALL
-              add:
-                - NET_BIND_SERVICE  # Required for binding to ports < 1024
+              # NET_BIND_SERVICE not needed - ports 3478 and 5349 are > 1024
 
       volumes:
         - name: config

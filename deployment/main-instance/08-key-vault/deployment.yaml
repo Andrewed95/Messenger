@@ -243,6 +243,13 @@ spec:
               mountPath: /app/key_vault/settings.py
               subPath: settings.py
               readOnly: true
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "200m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
           securityContext:
             allowPrivilegeEscalation: false
             runAsNonRoot: true
@@ -470,11 +477,13 @@ spec:
 
               echo "key_vault database initialized successfully"
           env:
+            # PostgreSQL superuser credentials from CloudNativePG
+            # CloudNativePG creates app-level user, we need superuser for CREATE DATABASE
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: synapse-secrets  # Main postgres admin password
-                  key: DB_PASSWORD
+                  name: matrix-postgresql-superuser
+                  key: password
             - name: DB_NAME
               valueFrom:
                 secretKeyRef:

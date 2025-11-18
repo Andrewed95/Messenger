@@ -130,31 +130,33 @@ spec:
     matchNames:
       - matrix
 
----
-# ServiceMonitor for Redis Sentinel
-# Monitors Redis instances and Sentinel nodes
-# Note: Requires redis-exporter sidecar in Redis pods
-apiVersion: monitoring.coreos.com/v1
-kind: ServiceMonitor
-metadata:
-  name: redis
-  namespace: matrix
-  labels:
-    app.kubernetes.io/name: redis
-    prometheus: kube-prometheus
-spec:
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: redis
-  endpoints:
-    # Redis exporter (if deployed as sidecar)
-    - port: redis-exporter
-      path: /metrics
-      interval: 30s
-      scrapeTimeout: 10s
-  namespaceSelector:
-    matchNames:
-      - matrix
+# ServiceMonitor for Redis Sentinel (DISABLED - requires redis-exporter sidecar)
+# To enable Redis metrics:
+# 1. Deploy redis-exporter as sidecar in Redis StatefulSet
+# 2. Add redis-exporter port to Redis service
+# 3. Uncomment this ServiceMonitor
+#
+# ---
+# apiVersion: monitoring.coreos.com/v1
+# kind: ServiceMonitor
+# metadata:
+#   name: redis
+#   namespace: matrix
+#   labels:
+#     app.kubernetes.io/name: redis
+#     prometheus: kube-prometheus
+# spec:
+#   selector:
+#     matchLabels:
+#       app.kubernetes.io/name: redis
+#   endpoints:
+#     - port: redis-exporter
+#       path: /metrics
+#       interval: 30s
+#       scrapeTimeout: 10s
+#   namespaceSelector:
+#     matchNames:
+#       - matrix
 
 ---
 # ServiceMonitor for MinIO
@@ -211,53 +213,60 @@ spec:
     matchNames:
       - matrix
 
----
-# ServiceMonitor for key_vault
-# Monitors E2EE key storage service
-apiVersion: monitoring.coreos.com/v1
-kind: ServiceMonitor
-metadata:
-  name: key-vault
-  namespace: matrix
-  labels:
-    app.kubernetes.io/name: key-vault
-    prometheus: kube-prometheus
-spec:
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: key-vault
-  endpoints:
-    - port: metrics
-      path: /metrics
-      interval: 30s
-      scrapeTimeout: 10s
-  namespaceSelector:
-    matchNames:
-      - matrix
+# ServiceMonitor for key_vault (DISABLED - no metrics port exposed for security)
+# key_vault deliberately does not expose metrics to minimize attack surface
+# Monitoring is done via health checks and application logs only
+#
+# ---
+# apiVersion: monitoring.coreos.com/v1
+# kind: ServiceMonitor
+# metadata:
+#   name: key-vault
+#   namespace: matrix
+#   labels:
+#     app.kubernetes.io/name: key-vault
+#     prometheus: kube-prometheus
+# spec:
+#   selector:
+#     matchLabels:
+#       app.kubernetes.io/name: key-vault
+#   endpoints:
+#     - port: metrics
+#       path: /metrics
+#       interval: 30s
+#       scrapeTimeout: 10s
+#   namespaceSelector:
+#     matchNames:
+#       - matrix
 
----
-# ServiceMonitor for Sync System
-# Monitors LI sync jobs (PostgreSQL replication + rclone media sync)
-apiVersion: monitoring.coreos.com/v1
-kind: ServiceMonitor
-metadata:
-  name: sync-system
-  namespace: matrix
-  labels:
-    app.kubernetes.io/name: sync-system
-    prometheus: kube-prometheus
-spec:
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: sync-system
-  endpoints:
-    - port: metrics
-      path: /metrics
-      interval: 30s
-      scrapeTimeout: 10s
-  namespaceSelector:
-    matchNames:
-      - matrix
+# ServiceMonitor for Sync System (DISABLED - CronJob has no metrics server)
+# sync-system runs as CronJob/Job and does not expose metrics
+# Monitoring is done via:
+# - Job completion status in Kubernetes
+# - CronJob execution history
+# - Application logs from sync jobs
+#
+# ---
+# apiVersion: monitoring.coreos.com/v1
+# kind: ServiceMonitor
+# metadata:
+#   name: sync-system
+#   namespace: matrix
+#   labels:
+#     app.kubernetes.io/name: sync-system
+#     prometheus: kube-prometheus
+# spec:
+#   selector:
+#     matchLabels:
+#       app.kubernetes.io/name: sync-system
+#   endpoints:
+#     - port: metrics
+#       path: /metrics
+#       interval: 30s
+#       scrapeTimeout: 10s
+#   namespaceSelector:
+#     matchNames:
+#       - matrix
 
 ---
 # ServiceMonitor for NGINX Ingress Controller
@@ -284,50 +293,63 @@ spec:
     matchNames:
       - ingress-nginx
 
----
-# ServiceMonitor for Element Web (optional)
-# Monitors web client health if metrics are exposed
-apiVersion: monitoring.coreos.com/v1
-kind: ServiceMonitor
-metadata:
-  name: element-web
-  namespace: matrix
-  labels:
-    app.kubernetes.io/name: element-web
-    prometheus: kube-prometheus
-spec:
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: element-web
-  endpoints:
-    - port: http
-      path: /metrics
-      interval: 60s
-      scrapeTimeout: 10s
-  namespaceSelector:
-    matchNames:
-      - matrix
+# ServiceMonitor for Element Web (DISABLED - static site has no metrics)
+# Element Web is a static site served by nginx and does not expose metrics
+# Monitoring is done via:
+# - NGINX Ingress Controller metrics
+# - HTTP availability checks
+# - Client-side error logging (if configured)
+#
+# ---
+# apiVersion: monitoring.coreos.com/v1
+# kind: ServiceMonitor
+# metadata:
+#   name: element-web
+#   namespace: matrix
+#   labels:
+#     app.kubernetes.io/name: element-web
+#     prometheus: kube-prometheus
+# spec:
+#   selector:
+#     matchLabels:
+#       app.kubernetes.io/name: element-web
+#   endpoints:
+#     - port: http
+#       path: /metrics
+#       interval: 60s
+#       scrapeTimeout: 10s
+#   namespaceSelector:
+#     matchNames:
+#       - matrix
 
----
-# ServiceMonitor for coturn
-# Monitors TURN/STUN server metrics if exposed
-apiVersion: monitoring.coreos.com/v1
-kind: ServiceMonitor
-metadata:
-  name: coturn
-  namespace: matrix
-  labels:
-    app.kubernetes.io/name: coturn
-    prometheus: kube-prometheus
-spec:
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: coturn
-  endpoints:
-    - port: metrics
-      path: /metrics
-      interval: 30s
-      scrapeTimeout: 10s
-  namespaceSelector:
-    matchNames:
-      - matrix
+# ServiceMonitor for coturn (DISABLED - coturn does not expose Prometheus metrics)
+# coturn does not have native Prometheus metrics support
+# Monitoring is done via:
+# - Process health checks (liveness/readiness probes)
+# - TURN/STUN protocol tests
+# - System-level monitoring (CPU, memory, network)
+#
+# To enable metrics, deploy coturn-exporter:
+# https://github.com/tiagosousa10/coturn-exporter
+#
+# ---
+# apiVersion: monitoring.coreos.com/v1
+# kind: ServiceMonitor
+# metadata:
+#   name: coturn
+#   namespace: matrix
+#   labels:
+#     app.kubernetes.io/name: coturn
+#     prometheus: kube-prometheus
+# spec:
+#   selector:
+#     matchLabels:
+#       app.kubernetes.io/name: coturn
+#   endpoints:
+#     - port: metrics
+#       path: /metrics
+#       interval: 30s
+#       scrapeTimeout: 10s
+#   namespaceSelector:
+#     matchNames:
+#       - matrix

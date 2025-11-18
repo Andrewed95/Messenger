@@ -1,0 +1,397 @@
+# LiveKit SFU (Selective Forwarding Unit) for Matrix Video/Voice Calling
+#
+# ⚠️ DEPLOYMENT OPTIONS:
+#
+# Option A (Recommended): Use Helm chart (see README.md)
+#   helm install livekit livekit/livekit-server \
+#     --namespace matrix \
+#     --values /home/ali/Messenger/deployment/values/livekit-values.yaml
+#
+# Option B: Use these native Kubernetes manifests (below)
+#   kubectl apply -f deployment/main-instance/04-livekit/deployment.yaml
+#
+# This file provides Option B for users who prefer native K8s manifests.
+
+---
+# LiveKit Secrets
+apiVersion: v1
+kind: Secret
+metadata:
+  name: livekit-secrets
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: livekit
+    app.kubernetes.io/component: sfu
+type: Opaque
+stringData:
+  # API Key for Synapse <-> LiveKit authentication
+  # Generate: openssl rand -hex 32
+  API_KEY: "CHANGEME_LIVEKIT_API_KEY"
+
+  # API Secret for JWT signing
+  # Generate: openssl rand -hex 32
+  API_SECRET: "CHANGEME_LIVEKIT_API_SECRET"
+
+  # Redis password (same as main Redis)
+  REDIS_PASSWORD: "CHANGEME_SECURE_REDIS_PASSWORD"
+
+---
+# LiveKit ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: livekit-config
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: livekit
+    app.kubernetes.io/component: sfu
+data:
+  config.yaml: |
+    # LiveKit Server Configuration
+    # See: https://docs.livekit.io/deploy/configuration/
+
+    port: 7880
+    bind_addresses:
+      - "0.0.0.0"
+
+    rtc:
+      port_range_start: 50000
+      port_range_end: 60000
+      use_external_ip: true
+      tcp_port: 7881
+
+    redis:
+      address: redis.matrix.svc.cluster.local:6379
+      password: ${REDIS_PASSWORD}
+      db: 1  # Use different DB from Synapse
+
+    keys:
+      ${API_KEY}: ${API_SECRET}
+
+    turn:
+      enabled: false  # Use dedicated coturn service
+
+    logging:
+      level: info
+      sample: false
+      pion_level: warning
+
+    room:
+      auto_create: false  # Rooms created by Synapse
+      empty_timeout: 300
+      max_participants: 100
+
+    limits:
+      num_tracks: 30
+      bytes_per_sec: 100000000  # 100 Mbps per participant
+
+---
+# LiveKit Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: livekit
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: livekit
+    app.kubernetes.io/component: sfu
+    app.kubernetes.io/version: "v1.8.1"
+spec:
+  replicas: 3  # HA deployment
+
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: livekit
+      app.kubernetes.io/component: sfu
+
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: livekit
+        app.kubernetes.io/component: sfu
+        app.kubernetes.io/version: "v1.8.1"
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "7880"
+        prometheus.io/path: "/metrics"
+
+    spec:
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+
+      # Anti-affinity: spread across nodes
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: livekit
+                topologyKey: kubernetes.io/hostname
+
+      initContainers:
+        - name: wait-for-redis
+          image: redis:7.2-alpine
+          command:
+            - sh
+            - -c
+            - |
+              until redis-cli -h redis.matrix.svc.cluster.local -p 6379 -a "$REDIS_PASSWORD" ping; do
+                echo "Waiting for Redis..."
+                sleep 2
+              done
+              echo "Redis is ready!"
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: livekit-secrets
+                  key: REDIS_PASSWORD
+
+      containers:
+        - name: livekit
+          image: livekit/livekit-server:v1.8.1
+          imagePullPolicy: IfNotPresent
+
+          command:
+            - /livekit-server
+            - --config=/etc/livekit/config.yaml
+            - --bind=0.0.0.0
+
+          ports:
+            - name: http
+              containerPort: 7880
+              protocol: TCP
+            - name: rtc-tcp
+              containerPort: 7881
+              protocol: TCP
+            # UDP ports for WebRTC media
+            - name: rtc-udp-start
+              containerPort: 50000
+              protocol: UDP
+            # Note: Full range 50000-60000 needs hostNetwork or NodePort
+
+          env:
+            - name: LIVEKIT_CONFIG
+              value: "/etc/livekit/config.yaml"
+            - name: API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: livekit-secrets
+                  key: API_KEY
+            - name: API_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: livekit-secrets
+                  key: API_SECRET
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: livekit-secrets
+                  key: REDIS_PASSWORD
+            - name: NODE_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP
+
+          volumeMounts:
+            - name: config
+              mountPath: /etc/livekit
+              readOnly: true
+
+          resources:
+            requests:
+              memory: "2Gi"
+              cpu: "1000m"
+            limits:
+              memory: "4Gi"
+              cpu: "2000m"
+
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 7880
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 7880
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 2
+
+          startupProbe:
+            httpGet:
+              path: /
+              port: 7880
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 20
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            capabilities:
+              drop:
+                - ALL
+
+      volumes:
+        - name: config
+          configMap:
+            name: livekit-config
+
+---
+# LiveKit Service - HTTP/WebSocket
+apiVersion: v1
+kind: Service
+metadata:
+  name: livekit
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: livekit
+    app.kubernetes.io/component: sfu
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: livekit
+    app.kubernetes.io/component: sfu
+  ports:
+    - name: http
+      port: 7880
+      targetPort: 7880
+      protocol: TCP
+
+---
+# LiveKit Service - RTC (NodePort for WebRTC media)
+apiVersion: v1
+kind: Service
+metadata:
+  name: livekit-rtc
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: livekit
+    app.kubernetes.io/component: sfu
+spec:
+  type: NodePort
+  externalTrafficPolicy: Local
+  selector:
+    app.kubernetes.io/name: livekit
+    app.kubernetes.io/component: sfu
+  ports:
+    - name: rtc-tcp
+      port: 7881
+      targetPort: 7881
+      protocol: TCP
+      nodePort: 30781
+    # UDP range for WebRTC media
+    # NOTE: In production, use multiple NodePort services or LoadBalancer
+    - name: rtc-udp-1
+      port: 50000
+      targetPort: 50000
+      protocol: UDP
+      nodePort: 30000
+    - name: rtc-udp-2
+      port: 50001
+      targetPort: 50001
+      protocol: UDP
+      nodePort: 30001
+    # Add more ports as needed (50000-60000 range)
+    # Or use hostNetwork: true in pod spec
+
+---
+# Ingress for LiveKit WebSocket
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: livekit
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: livekit
+    app.kubernetes.io/component: ingress
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/websocket-services: "livekit"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-http-version: "1.1"
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      proxy_set_header Upgrade $http_upgrade;
+      proxy_set_header Connection "upgrade";
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - livekit.matrix.example.com
+      secretName: livekit-tls
+  rules:
+    - host: livekit.matrix.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: livekit
+                port:
+                  number: 7880
+
+---
+# PodDisruptionBudget for LiveKit
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: livekit-pdb
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: livekit
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: livekit
+      app.kubernetes.io/component: sfu
+
+---
+# ServiceMonitor for Prometheus
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: livekit
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: livekit
+    prometheus: kube-prometheus
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: livekit
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 10s
+  namespaceSelector:
+    matchNames:
+      - matrix
