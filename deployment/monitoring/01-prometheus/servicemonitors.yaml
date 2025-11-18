@@ -1,0 +1,332 @@
+# ServiceMonitors for Prometheus Operator
+# Matrix/Synapse Production Deployment
+#
+# Automatically discovers and scrapes metrics from all Matrix components:
+# - Synapse main process and workers
+# - Synapse LI instance
+# - PostgreSQL (main and LI clusters)
+# - Redis Sentinel
+# - MinIO
+# - HAProxy
+# - key_vault
+# - Sygnal
+# - Sync system
+
+---
+# ServiceMonitor for Synapse Workers
+# Monitors all worker types: synchrotron, generic, media, event-persister, federation-sender
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: synapse-workers
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: synapse
+    app.kubernetes.io/component: workers
+    prometheus: kube-prometheus
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: synapse
+      app.kubernetes.io/component: worker
+  endpoints:
+    - port: metrics
+      path: /_synapse/metrics
+      interval: 30s
+      scrapeTimeout: 10s
+      relabelings:
+        - sourceLabels: [__meta_kubernetes_pod_label_worker_type]
+          targetLabel: worker_type
+        - sourceLabels: [__meta_kubernetes_pod_name]
+          targetLabel: pod
+        - sourceLabels: [__meta_kubernetes_namespace]
+          targetLabel: namespace
+  namespaceSelector:
+    matchNames:
+      - matrix
+
+---
+# ServiceMonitor for Synapse LI
+# Monitors the read-only LI instance
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: synapse-li
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: synapse
+    app.kubernetes.io/instance: li
+    prometheus: kube-prometheus
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: synapse
+      app.kubernetes.io/instance: li
+  endpoints:
+    - port: metrics
+      path: /_synapse/metrics
+      interval: 30s
+      scrapeTimeout: 10s
+  namespaceSelector:
+    matchNames:
+      - matrix
+
+---
+# PodMonitor for PostgreSQL Main Cluster
+# CloudNativePG exposes metrics on port 9187
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: postgresql-main
+  namespace: matrix
+  labels:
+    cnpg.io/cluster: matrix-postgresql
+    prometheus: kube-prometheus
+spec:
+  selector:
+    matchLabels:
+      cnpg.io/cluster: matrix-postgresql
+  podMetricsEndpoints:
+    - port: metrics
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 10s
+      relabelings:
+        - sourceLabels: [__meta_kubernetes_pod_label_role]
+          targetLabel: role
+        - sourceLabels: [__meta_kubernetes_pod_name]
+          targetLabel: pod
+  namespaceSelector:
+    matchNames:
+      - matrix
+
+---
+# PodMonitor for PostgreSQL LI Cluster
+# Separate monitoring for LI database
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: postgresql-li
+  namespace: matrix
+  labels:
+    cnpg.io/cluster: matrix-postgresql-li
+    prometheus: kube-prometheus
+spec:
+  selector:
+    matchLabels:
+      cnpg.io/cluster: matrix-postgresql-li
+  podMetricsEndpoints:
+    - port: metrics
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 10s
+      relabelings:
+        - sourceLabels: [__meta_kubernetes_pod_label_role]
+          targetLabel: role
+        - sourceLabels: [__meta_kubernetes_pod_name]
+          targetLabel: pod
+  namespaceSelector:
+    matchNames:
+      - matrix
+
+---
+# ServiceMonitor for Redis Sentinel
+# Monitors Redis instances and Sentinel nodes
+# Note: Requires redis-exporter sidecar in Redis pods
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: redis
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: redis
+    prometheus: kube-prometheus
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: redis
+  endpoints:
+    # Redis exporter (if deployed as sidecar)
+    - port: redis-exporter
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 10s
+  namespaceSelector:
+    matchNames:
+      - matrix
+
+---
+# ServiceMonitor for MinIO
+# Monitors MinIO Tenant cluster metrics
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: minio
+  namespace: matrix
+  labels:
+    v1.min.io/tenant: matrix-minio
+    prometheus: kube-prometheus
+spec:
+  selector:
+    matchLabels:
+      v1.min.io/tenant: matrix-minio
+  endpoints:
+    - port: http
+      path: /minio/v2/metrics/cluster
+      interval: 30s
+      scrapeTimeout: 10s
+      scheme: http
+      relabelings:
+        - sourceLabels: [__meta_kubernetes_pod_name]
+          targetLabel: pod
+        - sourceLabels: [__meta_kubernetes_namespace]
+          targetLabel: namespace
+  namespaceSelector:
+    matchNames:
+      - matrix
+
+---
+# ServiceMonitor for HAProxy
+# Monitors HAProxy routing and health
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: haproxy
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: haproxy
+    prometheus: kube-prometheus
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: haproxy
+      app.kubernetes.io/component: loadbalancer
+  endpoints:
+    - port: stats
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 10s
+  namespaceSelector:
+    matchNames:
+      - matrix
+
+---
+# ServiceMonitor for key_vault
+# Monitors E2EE key storage service
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: key-vault
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: key-vault
+    prometheus: kube-prometheus
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: key-vault
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 10s
+  namespaceSelector:
+    matchNames:
+      - matrix
+
+---
+# ServiceMonitor for Sync System
+# Monitors LI sync jobs (PostgreSQL replication + rclone media sync)
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: sync-system
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: sync-system
+    prometheus: kube-prometheus
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: sync-system
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 10s
+  namespaceSelector:
+    matchNames:
+      - matrix
+
+---
+# ServiceMonitor for NGINX Ingress Controller
+# Monitors ingress traffic and routing
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: nginx-ingress
+  namespace: ingress-nginx
+  labels:
+    app.kubernetes.io/name: ingress-nginx
+    prometheus: kube-prometheus
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ingress-nginx
+      app.kubernetes.io/component: controller
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 10s
+  namespaceSelector:
+    matchNames:
+      - ingress-nginx
+
+---
+# ServiceMonitor for Element Web (optional)
+# Monitors web client health if metrics are exposed
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: element-web
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: element-web
+    prometheus: kube-prometheus
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: element-web
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 60s
+      scrapeTimeout: 10s
+  namespaceSelector:
+    matchNames:
+      - matrix
+
+---
+# ServiceMonitor for coturn
+# Monitors TURN/STUN server metrics if exposed
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: coturn
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: coturn
+    prometheus: kube-prometheus
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: coturn
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 10s
+  namespaceSelector:
+    matchNames:
+      - matrix
