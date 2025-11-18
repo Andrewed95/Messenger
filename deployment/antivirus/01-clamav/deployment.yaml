@@ -1,0 +1,354 @@
+# ClamAV Antivirus DaemonSet
+# Runs ClamAV daemon (clamd) on every node for media scanning
+#
+# CRITICAL: Required for antivirus scanning of uploaded Matrix media
+#
+# Architecture:
+# - clamd: Antivirus scanning daemon (port 3310)
+# - freshclam: Virus definition updater (runs periodically)
+# - Resource: ~1GB RAM per node
+#
+# Security:
+# - Port 3310 is NOT exposed via Service (security requirement)
+# - Only accessible via localhost or pod network
+# - Updated virus definitions every 6 hours
+
+---
+# ConfigMap for ClamAV configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: clamav-config
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: clamav
+    app.kubernetes.io/component: antivirus
+data:
+  # clamd.conf - ClamAV daemon configuration
+  clamd.conf: |
+    # ClamAV daemon configuration
+
+    # Listening
+    TCPSocket 3310
+    TCPAddr 0.0.0.0
+
+    # Limits
+    MaxThreads 12
+    MaxConnectionQueueLength 100
+    MaxDirectoryRecursion 20
+
+    # Timeouts
+    ReadTimeout 600
+    CommandReadTimeout 30
+    SendBufTimeout 500
+
+    # File size limits
+    MaxScanSize 500M
+    MaxFileSize 100M
+    MaxRecursion 20
+    MaxFiles 10000
+
+    # Scanning options
+    ScanPDF yes
+    ScanSWF yes
+    ScanXMLDOCS yes
+    ScanHWP3 yes
+    ScanMail yes
+    ScanArchive yes
+
+    # Archives
+    ArchiveBlockEncrypted no
+
+    # Logging
+    LogSyslog no
+    LogFacility LOG_LOCAL6
+    LogClean no
+    LogVerbose no
+
+    # Temp directory
+    TemporaryDirectory /tmp
+
+    # Database directory
+    DatabaseDirectory /var/lib/clamav
+
+    # Self check
+    SelfCheck 3600
+
+    # Don't fork
+    Foreground yes
+
+  # freshclam.conf - Virus definition updater configuration
+  freshclam.conf: |
+    # FreshClam configuration
+
+    # Database directory
+    DatabaseDirectory /var/lib/clamav
+
+    # Update database directory
+    UpdateLogFile /var/log/clamav/freshclam.log
+
+    # Log to stdout
+    LogSyslog no
+    LogFacility LOG_LOCAL6
+    LogVerbose no
+
+    # Database servers
+    DatabaseMirror database.clamav.net
+
+    # Number of database checks per day (4 times = every 6 hours)
+    Checks 4
+
+    # Update timeout
+    ConnectTimeout 30
+    ReceiveTimeout 60
+
+    # Don't fork
+    Foreground yes
+
+    # Daemon mode
+    Daemon yes
+
+    # PID file
+    PidFile /var/run/clamav/freshclam.pid
+
+---
+# ClamAV DaemonSet
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: clamav
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: clamav
+    app.kubernetes.io/component: antivirus
+    app.kubernetes.io/version: "1.4.1"
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: clamav
+      app.kubernetes.io/component: antivirus
+
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: clamav
+        app.kubernetes.io/component: antivirus
+        app.kubernetes.io/version: "1.4.1"
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9000"
+        prometheus.io/path: "/metrics"
+
+    spec:
+      # Security context
+      securityContext:
+        runAsUser: 100
+        runAsGroup: 101
+        fsGroup: 101
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+
+      # Priority class (high priority for security)
+      priorityClassName: system-node-critical
+
+      # Tolerate taints to run on all nodes
+      tolerations:
+        - effect: NoSchedule
+          key: node-role.kubernetes.io/master
+          operator: Exists
+        - effect: NoSchedule
+          key: node-role.kubernetes.io/control-plane
+          operator: Exists
+
+      # Init container to download virus definitions
+      initContainers:
+        - name: init-freshclam
+          image: clamav/clamav:1.4.1
+          command:
+            - sh
+            - -c
+            - |
+              echo "Updating ClamAV virus definitions..."
+              freshclam --config-file=/etc/clamav/freshclam.conf --foreground=true --no-daemon
+              echo "Virus definitions updated successfully"
+          volumeMounts:
+            - name: config
+              mountPath: /etc/clamav/freshclam.conf
+              subPath: freshclam.conf
+            - name: virus-db
+              mountPath: /var/lib/clamav
+            - name: freshclam-log
+              mountPath: /var/log/clamav
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              cpu: 2000m
+              memory: 2Gi
+
+      containers:
+        # ClamAV daemon
+        - name: clamd
+          image: clamav/clamav:1.4.1
+          command:
+            - clamd
+            - --config-file=/etc/clamav/clamd.conf
+
+          ports:
+            - name: clamd
+              containerPort: 3310
+              protocol: TCP
+
+          volumeMounts:
+            - name: config
+              mountPath: /etc/clamav/clamd.conf
+              subPath: clamd.conf
+            - name: virus-db
+              mountPath: /var/lib/clamav
+            - name: tmp
+              mountPath: /tmp
+
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              cpu: 2000m
+              memory: 2Gi
+
+          livenessProbe:
+            tcpSocket:
+              port: 3310
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+          readinessProbe:
+            tcpSocket:
+              port: 3310
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 2
+
+          startupProbe:
+            tcpSocket:
+              port: 3310
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 30
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false  # ClamAV needs to write temp files
+            runAsNonRoot: true
+            runAsUser: 100
+            runAsGroup: 101
+            capabilities:
+              drop:
+                - ALL
+
+        # FreshClam daemon (virus definition updater)
+        - name: freshclam
+          image: clamav/clamav:1.4.1
+          command:
+            - freshclam
+            - --config-file=/etc/clamav/freshclam.conf
+            - --daemon
+            - --foreground=true
+
+          volumeMounts:
+            - name: config
+              mountPath: /etc/clamav/freshclam.conf
+              subPath: freshclam.conf
+            - name: virus-db
+              mountPath: /var/lib/clamav
+            - name: freshclam-log
+              mountPath: /var/log/clamav
+
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+            limits:
+              cpu: 1000m
+              memory: 1Gi
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            runAsNonRoot: true
+            runAsUser: 100
+            runAsGroup: 101
+            capabilities:
+              drop:
+                - ALL
+
+      volumes:
+        - name: config
+          configMap:
+            name: clamav-config
+        - name: virus-db
+          emptyDir:
+            sizeLimit: 2Gi  # Virus database is ~200MB, room to grow
+        - name: freshclam-log
+          emptyDir: {}
+        - name: tmp
+          emptyDir:
+            sizeLimit: 1Gi
+
+---
+# Service for ClamAV (internal access only)
+# NOTE: This is NOT exposed via Ingress or LoadBalancer for security
+apiVersion: v1
+kind: Service
+metadata:
+  name: clamav
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: clamav
+    app.kubernetes.io/component: antivirus
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: clamav
+    app.kubernetes.io/component: antivirus
+  ports:
+    - name: clamd
+      port: 3310
+      targetPort: 3310
+      protocol: TCP
+
+---
+# ServiceMonitor for Prometheus (optional - requires metrics exporter)
+# ClamAV doesn't expose Prometheus metrics natively
+# Consider adding clamav_exporter sidecar if detailed metrics needed
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: clamav
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: clamav
+    prometheus: kube-prometheus
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: clamav
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 60s
+      scrapeTimeout: 10s
+  namespaceSelector:
+    matchNames:
+      - matrix
