@@ -1,0 +1,68 @@
+# Synapse Homeserver Configuration
+# Integrates with Phase 1 infrastructure (PostgreSQL, Redis, MinIO)
+# For production Matrix deployment with LI capabilities
+
+server_name: "matrix.example.com"
+public_baseurl: "https://matrix.example.com"
+pid_file: /data/homeserver.pid
+
+# Listeners
+listeners:
+  - port: 8008
+    tls: false
+    type: http
+    x_forwarded: true
+    bind_addresses: ['0.0.0.0']
+    resources:
+      - names: [client, federation]
+        compress: false
+
+# Database - CloudNativePG
+database:
+  name: psycopg2
+  args:
+    user: synapse
+    password: CHANGEME_DB_PASSWORD
+    database: matrix
+    host: matrix-postgresql-rw.matrix.svc.cluster.local
+    port: 5432
+    sslmode: require
+    cp_min: 5
+    cp_max: 10
+
+# Redis for worker replication
+redis:
+  enabled: true
+  host: redis.matrix.svc.cluster.local
+  port: 6379
+  password: CHANGEME_REDIS_PASSWORD
+
+# Media Storage - MinIO S3
+media_storage_providers:
+  - module: s3_storage_provider.S3StorageProviderBackend
+    store_local: true
+    store_remote: true
+    store_synchronous: true
+    config:
+      bucket: synapse-media
+      endpoint_url: http://minio.matrix.svc.cluster.local:9000
+      access_key_id: synapse-s3-user
+      secret_access_key: CHANGEME_S3_PASSWORD
+
+# Security
+macaroon_secret_key: "CHANGEME_MACAROON"
+registration_shared_secret: "CHANGEME_REGISTRATION"
+form_secret: "CHANGEME_FORM"
+
+# Registration
+enable_registration: false
+
+# Performance
+event_cache_size: "10K"
+
+# Metrics
+enable_metrics: true
+metrics_port: 9090
+
+# Logging
+log_config: "/config/log.yaml"
