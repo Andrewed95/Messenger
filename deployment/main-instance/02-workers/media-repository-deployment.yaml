@@ -340,3 +340,20 @@ spec:
         - type: Percent
           value: 100
           periodSeconds: 30
+
+---
+# PodDisruptionBudget for high availability
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: synapse-media-repository
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: synapse
+    app.kubernetes.io/component: media-repository
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: synapse
+      app.kubernetes.io/component: media-repository

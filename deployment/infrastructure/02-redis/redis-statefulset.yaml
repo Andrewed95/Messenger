@@ -9,7 +9,7 @@ metadata:
   labels:
     app.kubernetes.io/name: redis
     app.kubernetes.io/component: database
-spec:
+data:
   redis.conf: |
     # Network
     bind 0.0.0.0

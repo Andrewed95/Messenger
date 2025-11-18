@@ -532,22 +532,77 @@ kubectl get networkpolicies -n matrix
 
 ## 📊 Resource Requirements
 
-### Minimum (100 CCU)
-- **CPU**: 10 cores
-- **Memory**: 30Gi
-- **Storage**: 500Gi
+### 100 CCU - Small Deployment
 
-### Medium (1K CCU)
-- **CPU**: 20 cores
-- **Memory**: 60Gi
-- **Storage**: 2Ti
+**VM/Server Requirements:**
 
-### Large (20K CCU)
-- **CPU**: 40 cores
-- **Memory**: 120Gi
-- **Storage**: 10Ti
+| Role | Count | CPU | RAM | Storage | Purpose |
+|------|-------|-----|-----|---------|---------|
+| **Control Plane** | 3 | 4 vCPU | 8GB | 100GB SSD | Kubernetes masters |
+| **Application Nodes** | 3 | 8 vCPU | 16GB | 200GB SSD | Synapse, monitoring |
+| **Database Nodes** | 3 | 4 vCPU | 16GB | 500GB NVMe | PostgreSQL (1 primary + 2 replicas) |
+| **Storage Nodes** | 4 | 4 vCPU | 8GB | 1TB HDD | MinIO (media files, EC:4) |
+| **Call Servers** | 2 | 4 vCPU | 8GB | 50GB SSD | LiveKit + coturn |
+| **Total VMs** | **15** | **92 vCPU** | **180GB RAM** | **5.4TB** | |
 
-See `docs/SCALING-GUIDE.md` for detailed sizing.
+**Component Breakdown:**
+- **Synapse**: 1 main + 8 workers (2 sync, 2 generic, 2 event-persister, 2 federation)
+- **PostgreSQL**: 3 instances (main) + 2 instances (LI)
+- **Redis**: 3 instances (Sentinel HA)
+- **MinIO**: 4 nodes (EC:4 erasure coding, 1TB usable)
+- **ClamAV**: DaemonSet (1 pod per app node)
+- **Monitoring**: Prometheus + Grafana + Loki
+
+**Expected Capacity:**
+- **Users**: 100 concurrent users
+- **Messages**: 140-400 messages/min at peak
+- **Media uploads**: 10-20 files/hour
+- **Concurrent calls**: 5-10 users
+- **Rooms**: 50-100 active rooms
+
+---
+
+### 20K CCU - Large Enterprise Deployment
+
+**VM/Server Requirements:**
+
+| Role | Count | CPU | RAM | Storage | Purpose |
+|------|-------|-----|-----|---------|---------|
+| **Control Plane** | 3 | 8 vCPU | 16GB | 200GB SSD | Kubernetes masters |
+| **Application Nodes** | 21 | 32 vCPU | 128GB | 2TB SSD | Synapse, monitoring, workers |
+| **Database Nodes** | 5 | 32 vCPU | 128GB | 4TB NVMe | PostgreSQL (1 primary + 4 replicas) |
+| **Storage Nodes** | 12 | 16 vCPU | 32GB | 4TB HDD | MinIO (3 pools of 4 nodes, EC:4) |
+| **Call Servers** | 10 | 16 vCPU | 32GB | 200GB SSD | LiveKit (5) + coturn (5) |
+| **Total VMs** | **51** | **1024 vCPU** | **3.7TB RAM** | **63TB** | |
+
+**Component Breakdown:**
+- **Synapse**: 1 main + 38 workers (18 sync, 8 generic, 4 event-persister, 8 federation)
+- **PostgreSQL**: 5 instances (main) + 2 instances (LI)
+- **Redis**: 6 instances (3 for Synapse, 3 for LiveKit)
+- **MinIO**: 12 nodes (3 pools × 4 nodes, EC:4, ~12TB usable)
+- **LiveKit**: 5 instances (HA + performance)
+- **coturn**: 5 instances (HA + performance)
+- **ClamAV**: DaemonSet (1 pod per app node = 21 pods)
+- **Monitoring**: Prometheus + Grafana + Loki (HA setup)
+
+**Expected Capacity:**
+- **Users**: 20,000 concurrent users
+- **Messages**: 28,000-80,000 messages/min at peak
+- **Media uploads**: 2,000-4,000 files/hour
+- **Concurrent calls**: 1,000-2,000 users
+- **Rooms**: 10,000-20,000 active rooms
+
+---
+
+### Quick Reference
+
+| Scale | VMs | Total vCPU | Total RAM | Storage | Users (CCU) |
+|-------|-----|------------|-----------|---------|-------------|
+| **Small** | 15 | 92 | 180GB | 5.4TB | 100 |
+| **Medium** | 30 | 480 | 900GB | 20TB | 1,000 |
+| **Large** | 51 | 1024 | 3.7TB | 63TB | 20,000 |
+
+**📘 For detailed sizing (including 1K, 5K, 10K CCU), see `docs/SCALING-GUIDE.md`**
 
 ---
 
