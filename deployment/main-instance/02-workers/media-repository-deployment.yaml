@@ -346,7 +346,7 @@ spec:
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
-  name: synapse-media-repository
+  name: synapse-media-repository-pdb
   namespace: matrix
   labels:
     app.kubernetes.io/name: synapse

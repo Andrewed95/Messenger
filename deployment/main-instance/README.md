@@ -66,13 +66,11 @@ main-instance/
 │
 ├── 02-element-web/      # Element Web client
 │   ├── config.json            # Element configuration
-│   ├── deployment.yaml        # Deployment + Service + Ingress
-│   └── README.md              # Client documentation
+│   └── deployment.yaml        # Deployment + Service + Ingress
 │
 ├── 03-haproxy/          # HAProxy load balancer
 │   ├── haproxy.cfg            # Routing configuration
-│   ├── deployment.yaml        # Deployment + Services + Ingress
-│   └── README.md              # Routing documentation
+│   └── deployment.yaml        # Deployment + Services + Ingress
 │
 └── README.md            # This file
 ```

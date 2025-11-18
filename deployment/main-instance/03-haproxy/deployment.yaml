@@ -166,6 +166,7 @@ spec:
         app.kubernetes.io/component: load-balancer
         app.kubernetes.io/version: "2.9"
         matrix.instance: main
+        ingress-accessible: "true"
       annotations:
         prometheus.io/scrape: "true"
         prometheus.io/port: "8404"

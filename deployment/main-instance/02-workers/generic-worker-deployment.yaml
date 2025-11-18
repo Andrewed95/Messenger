@@ -346,7 +346,7 @@ spec:
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
-  name: synapse-generic-worker
+  name: synapse-generic-worker-pdb
   namespace: matrix
   labels:
     app.kubernetes.io/name: synapse

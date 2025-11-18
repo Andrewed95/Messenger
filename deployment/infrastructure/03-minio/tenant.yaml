@@ -92,7 +92,7 @@ spec:
       ## - Usable storage with EC:4: ~2Ti (50% efficiency)
       volumeClaimTemplate:
         apiVersion: v1
-        kind: persistentvolumeclaims
+        kind: PersistentVolumeClaim
         metadata:
           name: data
         spec:

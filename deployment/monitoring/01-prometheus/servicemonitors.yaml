@@ -28,7 +28,8 @@ spec:
   selector:
     matchLabels:
       app.kubernetes.io/name: synapse
-      app.kubernetes.io/component: worker
+      # Note: Workers have specific components (synchrotron, generic-worker, etc.)
+      # This ServiceMonitor discovers all Synapse worker services
   endpoints:
     - port: metrics
       path: /_synapse/metrics
@@ -200,7 +201,7 @@ spec:
   selector:
     matchLabels:
       app.kubernetes.io/name: haproxy
-      app.kubernetes.io/component: loadbalancer
+      app.kubernetes.io/component: load-balancer
   endpoints:
     - port: stats
       path: /metrics

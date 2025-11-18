@@ -601,7 +601,7 @@ spec:
     - from:
         - podSelector:
             matchLabels:
-              app.kubernetes.io/name: scan-worker
+              app.kubernetes.io/name: content-scanner
       ports:
         - protocol: TCP
           port: 3310  # ClamAV clamd

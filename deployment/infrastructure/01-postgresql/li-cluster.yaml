@@ -130,15 +130,14 @@ spec:
   affinity:
     podAntiAffinity:
       preferredDuringSchedulingIgnoredDuringExecution:
+        # Spread LI pods across different nodes (within LI cluster)
         - weight: 100
           podAffinityTerm:
             labelSelector:
               matchLabels:
                 cnpg.io/cluster: matrix-postgresql-li
             topologyKey: kubernetes.io/hostname
-    # Prefer different nodes from main instance
-    podAntiAffinity:
-      preferredDuringSchedulingIgnoredDuringExecution:
+        # Prefer different nodes from main instance
         - weight: 50
           podAffinityTerm:
             labelSelector:

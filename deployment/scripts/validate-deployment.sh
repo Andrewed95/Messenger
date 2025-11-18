@@ -236,7 +236,7 @@ validate_phase1() {
     fi
 
     # NetworkPolicies
-    local policies=("default-deny-all" "allow-dns" "postgresql-access" "postgresql-li-access" \
+    local policies=("default-deny-all" "allow-dns" "postgresql-main-access" "postgresql-li-access" \
                     "redis-access" "minio-access" "key-vault-isolation" "li-instance-isolation" \
                     "synapse-main-egress" "allow-from-ingress" "allow-prometheus-scraping" \
                     "antivirus-access")
@@ -284,13 +284,13 @@ validate_phase2() {
     check_service "haproxy-federation" "matrix"
 
     # PodDisruptionBudgets
-    check_pdb "synapse-main" "matrix"
-    check_pdb "synapse-synchrotron" "matrix"
-    check_pdb "synapse-generic-worker" "matrix"
-    check_pdb "synapse-media-repository" "matrix"
-    check_pdb "synapse-event-persister" "matrix"
-    check_pdb "synapse-federation-sender" "matrix"
-    check_pdb "haproxy" "matrix"
+    check_pdb "synapse-main-pdb" "matrix"
+    check_pdb "synapse-synchrotron-pdb" "matrix"
+    check_pdb "synapse-generic-worker-pdb" "matrix"
+    check_pdb "synapse-media-repository-pdb" "matrix"
+    check_pdb "synapse-event-persister-pdb" "matrix"
+    check_pdb "synapse-federation-sender-pdb" "matrix"
+    check_pdb "haproxy-pdb" "matrix"
 
     # coturn
     check_pods "app.kubernetes.io/name=coturn" "matrix" 2 "coturn"
