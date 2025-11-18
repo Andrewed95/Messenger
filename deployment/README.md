@@ -1,949 +1,682 @@
-# Matrix Synapse Kubernetes Deployment Guide
+# Matrix/Synapse Production Deployment
 
-Complete production deployment of Matrix Synapse homeserver on Kubernetes with full high availability, scalable from 100 to 20,000+ concurrent users.
+Complete production-grade Matrix Synapse homeserver deployment on Kubernetes, supporting 100-20,000+ concurrent users with high availability, lawful intercept, and antivirus protection.
 
-**📊 Choose Your Scale:** This deployment supports 100 CCU to 20K+ CCU. See [SCALING-GUIDE.md](docs/SCALING-GUIDE.md) for infrastructure sizing at your scale.
+## 🎯 What This Deployment Provides
 
----
+### Core Features
+- ✅ **Scalable**: 100 CCU → 20,000+ CCU with horizontal scaling
+- ✅ **High Availability**: Zero single points of failure
+- ✅ **Lawful Intercept**: Complete LI instance with E2EE recovery
+- ✅ **Antivirus**: Real-time ClamAV scanning of all media
+- ✅ **Monitoring**: Prometheus + Grafana + Loki observability
+- ✅ **Air-gapped**: Can run fully offline after initial setup
 
-## What You'll Get
-
-This deployment provides a complete, production-ready Matrix homeserver with:
-
-**Core Messaging Platform:**
-- Synapse homeserver with horizontally scalable workers (2-38 workers depending on scale)
-- Element Web client for browser access
-- Synapse Admin interface for user/room management
-- Full high availability at all scales with zero single points of failure
-
-**Infrastructure Components:**
-- PostgreSQL database cluster (3-5 nodes with synchronous replication)
-- Redis caching (2 separate instances for different services)
-- MinIO object storage (4-12 nodes, erasure coded for HA)
-- Complete monitoring stack (Prometheus, Grafana, Loki)
-
-**Communication Features:**
-- 1:1 voice/video calls (coturn TURN/STUN servers)
-- Group video calls (LiveKit SFU)
-- File sharing and media storage
-- End-to-end encryption support
-- Optional federation with other Matrix servers
-
-**Operational Features:**
-- Automated TLS certificate management
-- Automated backups (PostgreSQL, object storage)
-- Automated maintenance tasks (media cleanup, database optimization)
-- Load balancing with session affinity
-- Horizontal and vertical scaling capabilities
+### Architecture Highlights
+- **Worker-based Synapse**: 5 worker types with intelligent HAProxy routing
+- **HA Database**: CloudNativePG with synchronous replication
+- **Distributed Storage**: MinIO with EC:4 erasure coding
+- **Redis Sentinel**: Automatic failover for caching
+- **Zero-trust Security**: 16+ NetworkPolicies with strict isolation
 
 ---
 
-## Before You Begin
-
-### What You Need
-
-**Infrastructure:**
-- **Servers:** 15-51 servers depending on scale (see [SCALING-GUIDE.md](docs/SCALING-GUIDE.md))
-  - **Example for 100 CCU:** 15 servers total
-  - **Example for 20K CCU:** 51 servers total
-- All servers: Virtual or physical, running Debian 12
-- Network connectivity between all servers
-- IP address range for load balancers (10-20 addresses)
-- Domain name for your Matrix server (e.g., `chat.example.com`)
-
-**Important:** Review [SCALING-GUIDE.md](docs/SCALING-GUIDE.md) to determine exact server count and specifications for your target scale.
-
-**Technical Knowledge:**
-- Basic Linux system administration
-- Basic understanding of Kubernetes concepts
-- Comfortable with command-line tools
-
-**On Your Local Machine:**
-- `kubectl` installed and configured
-- `helm` installed (version 3.12+)
-- SSH access to your servers
-- Text editor (vim, nano, or VS Code)
-
-**→ See [`docs/00-WORKSTATION-SETUP.md`](docs/00-WORKSTATION-SETUP.md) for complete installation instructions**
-
-### Time Required
-
-- **Kubernetes Installation**: 2-4 hours (if starting from scratch)
-- **Matrix Deployment**: 1-2 hours
-- **Testing and Validation**: 1 hour
-
-Total: Approximately 4-7 hours for first-time deployment.
-
----
-
-## Understanding the Architecture
-
-Before deploying, it helps to understand how components connect:
-
-```
-                                Internet
-                                   │
-                                   ▼
-                        ┌──────────────────────┐
-                        │   Domain Name (DNS)  │
-                        │  chat.example.com    │
-                        └──────────────────────┘
-                                   │
-                                   ▼
-┌────────────────────────────────────────────────────────────────┐
-│                     KUBERNETES CLUSTER                          │
-│                                                                  │
-│  ┌────────────────────────────────────────────────────────┐   │
-│  │              Load Balancer (MetalLB)                   │   │
-│  │          Assigns real IP to Ingress                    │   │
-│  └────────────────────────────────────────────────────────┘   │
-│                              │                                  │
-│                              ▼                                  │
-│  ┌────────────────────────────────────────────────────────┐   │
-│  │           NGINX Ingress Controller                      │   │
-│  │      TLS termination & DDoS protection                 │   │
-│  │  • / → Element Web (direct)                            │   │
-│  │  • /_matrix/* → HAProxy Layer                          │   │
-│  │  • /admin → Synapse Admin (direct)                     │   │
-│  └────────────────────────────────────────────────────────┘   │
-│                              │                                  │
-│                              ▼                                  │
-│  ┌────────────────────────────────────────────────────────┐   │
-│  │           HAProxy Routing Layer (NEW!)                  │   │
-│  │  Intelligent routing to specialized workers:           │   │
-│  │  • Sync requests → Sync workers (token hashing)        │   │
-│  │  • Event creation → Event creators (room hashing)      │   │
-│  │  • Federation → Federation workers (origin hashing)    │   │
-│  │  • Media uploads/downloads → Media workers             │   │
-│  │  • + 8 more specialized worker types                   │   │
-│  │  (See HAPROXY-ARCHITECTURE.md for details)             │   │
-│  └────────────────────────────────────────────────────────┘   │
-│           │                  │                  │               │
-│           ▼                  ▼                  ▼               │
-│  ┌──────────────┐  ┌────────────────┐  ┌──────────────┐      │
-│  │ Element Web  │  │    Synapse     │  │Synapse Admin │      │
-│  │  (2 pods)    │  │ Main + 12-38   │  │   (2 pods)   │      │
-│  │              │  │  Worker Pods   │  │              │      │
-│  └──────────────┘  └────────────────┘  └──────────────┘      │
-│                            │                                    │
-│                            ▼                                    │
-│         ┌──────────────────┴───────────────────┐              │
-│         │                                        │              │
-│         ▼                                        ▼              │
-│  ┌────────────────┐                    ┌───────────────┐      │
-│  │  PostgreSQL    │                    │  Redis Cache  │      │
-│  │  (3 replicas)  │                    │  (3 replicas) │      │
-│  │   Primary +    │                    │   Sentinel    │      │
-│  │  2 Standby     │                    │      HA       │      │
-│  └────────────────┘                    └───────────────┘      │
-│         │                                                       │
-│         └──────────┐                                           │
-│                    ▼                                            │
-│           ┌────────────────┐                                   │
-│           │     MinIO      │                                   │
-│           │  Object Storage│                                   │
-│           │   (4 nodes)    │                                   │
-│           │   Erasure Code │                                   │
-│           └────────────────┘                                   │
-│                                                                  │
-│  Additional Components:                                         │
-│  • coturn (TURN/STUN) - 2 nodes for voice/video NAT traversal │
-│  • LiveKit (SFU) - 4 nodes for group video calls              │
-│  • Monitoring (Prometheus, Grafana, Loki)                      │
-└────────────────────────────────────────────────────────────────┘
-```
-
-**Key High Availability Features:**
-
-1. **PostgreSQL**: 3 replicas with automatic failover
-   - 1 primary (handles writes)
-   - 2 standby replicas (handle reads)
-   - Automatic promotion if primary fails (5 minute timeout)
-   - Connection pooling via PgBouncer
-
-2. **Synapse**: Main process + 18 workers
-   - Main process coordinates workers
-   - Workers handle specific tasks (sync, API calls, federation)
-   - If worker dies, Kubernetes restarts it automatically
-   - Load distributed across workers
-
-3. **Redis**: 3 replicas with Sentinel
-   - 1 master (active)
-   - 2 replicas (standby)
-   - Sentinel monitors health, promotes replica if master fails
-
-4. **MinIO**: 4 nodes with erasure coding
-   - Data split across 4 nodes
-   - Can lose 1 node without data loss
-   - Automatic healing when node returns
-
----
-
-## Directory Structure
-
-Here's where everything is located:
+## 📁 Directory Structure
 
 ```
 deployment/
+├── README.md                    ← ⭐ YOU ARE HERE (start here!)
+├── namespace.yaml               ← Kubernetes namespace definition
 │
-├── README.md                          ← You are here
+├── infrastructure/              ← Phase 1: Core Infrastructure
+│   ├── 01-postgresql/           # CloudNativePG (main + LI clusters)
+│   ├── 02-redis/                # Redis Sentinel (HA caching)
+│   ├── 03-minio/                # MinIO distributed object storage
+│   └── 04-networking/           # NetworkPolicies, Ingress, TLS
 │
-├── docs/                              ← Detailed documentation
-│   ├── 00-KUBERNETES-INSTALLATION-DEBIAN-OVH.md
-│   │                                  ← Step-by-step Kubernetes installation
-│   │
-│   ├── SCALING-GUIDE.md               ← **START HERE** - Choose your scale (100-20K CCU)
-│   │                                  Infrastructure sizing for all scales
-│   │
-│   ├── DEPLOYMENT-GUIDE.md            ← Detailed deployment walkthrough
-│   │
-│   ├── CONFIGURATION-REFERENCE.md     ← All configuration options explained
-│   │
-│   ├── OPERATIONS-UPDATE-GUIDE.md     ← Update, scale, and maintain services
-│   │
-│   ├── HAPROXY-ARCHITECTURE.md        ← **NEW!** HAProxy intelligent routing layer
-│   │                                  Production-grade routing to specialized workers
-│   │
-│   ├── MATRIX-AUTHENTICATION-SERVICE.md  ← **NEW!** Enterprise SSO with Keycloak
-│   │                                  Optional component for Keycloak OIDC integration
-│   │
-│   ├── HA-ROUTING-GUIDE.md            ← How HA and routing works (general concepts)
-│   │
-│   ├── CONTAINER-IMAGES-AND-CUSTOMIZATION.md
-│   │                                  ← Image sources and customization
-│   │
-│   └── ANTIVIRUS-GUIDE.md             ← Complete antivirus implementation guide
-│                                      (both with and without AV options)
+├── config/                      ← Centralized Configuration Files
+│   └── synapse/                 # Synapse homeserver.yaml + log.yaml
 │
-├── config/                            ← Configuration files
-│   ├── deployment.env.example         ← Template with all settings
-│   └── deployment.env                 ← Your actual config (create this)
+├── main-instance/               ← Phase 2: Main Matrix Instance
+│   ├── 01-synapse/              # Synapse main process
+│   ├── 02-workers/              # 5 worker types (synchrotron, generic, etc.)
+│   ├── 03-haproxy/              # Intelligent load balancer
+│   ├── 04-element-web/          # Web client interface
+│   ├── 05-livekit/              # Video/voice calling (Helm reference)
+│   ├── 06-coturn/               # TURN/STUN NAT traversal
+│   ├── 07-sygnal/               # Push notifications (APNs/FCM)
+│   └── 08-key-vault/            # E2EE recovery key storage
 │
-├── values/                            ← Helm chart values
-│   ├── cert-manager-values.yaml       ← TLS certificate automation
-│   ├── cloudnativepg-values.yaml      ← PostgreSQL operator
-│   ├── redis-synapse-values.yaml      ← Redis for Synapse
-│   ├── redis-livekit-values.yaml      ← Redis for LiveKit
-│   ├── minio-operator-values.yaml     ← Object storage operator
-│   ├── metallb-values.yaml            ← Load balancer
-│   ├── nginx-ingress-values.yaml      ← Ingress controller
-│   ├── prometheus-stack-values.yaml   ← Monitoring stack
-│   ├── loki-values.yaml               ← Log aggregation
-│   └── livekit-values.yaml            ← Video call server
+├── li-instance/                 ← Phase 3: Lawful Intercept
+│   ├── 01-synapse-li/           # Read-only Synapse instance
+│   ├── 02-element-web-li/       # LI web client (shows deleted messages)
+│   ├── 03-synapse-admin-li/     # Admin interface for forensics
+│   └── 04-sync-system/          # DB replication + media sync
 │
-├── manifests/                         ← Kubernetes resource definitions
-│   ├── 00-namespaces.yaml             ← Creates Kubernetes namespaces
-│   ├── 01-postgresql-cluster.yaml     ← PostgreSQL HA cluster
-│   ├── 02-minio-tenant.yaml           ← Object storage deployment
-│   ├── 03-metallb-config.yaml         ← Load balancer IP pool
-│   ├── 04-coturn.yaml                 ← TURN/STUN servers
-│   ├── 05-synapse-main.yaml           ← Synapse main process
-│   ├── 06-synapse-workers.yaml        ← Synapse workers (18 workers)
-│   ├── 07-element-web.yaml            ← Web client interface
-│   ├── 08-synapse-admin.yaml          ← Admin web interface
-│   ├── 09-ingress.yaml                ← Routing and TLS
-│   └── 10-operational-automation.yaml ← Maintenance tasks
+├── monitoring/                  ← Phase 4: Observability Stack
+│   ├── 01-prometheus/           # ServiceMonitors + AlertRules
+│   ├── 02-grafana/              # Dashboards (Synapse, PostgreSQL, LI)
+│   └── 03-loki/                 # Log aggregation (30-day retention)
 │
-└── scripts/                           ← Automation scripts
-    └── deploy-all.sh                  ← Automated deployment script
+├── antivirus/                   ← Phase 5: ClamAV Protection
+│   ├── 01-clamav/               # ClamAV DaemonSet (virus scanner)
+│   └── 02-scan-workers/         # Content Scanner (media proxy)
+│
+├── values/                      ← Helm Chart Values
+│   ├── prometheus-stack-values.yaml
+│   ├── loki-values.yaml
+│   ├── cloudnativepg-values.yaml
+│   ├── minio-operator-values.yaml
+│   ├── metallb-values.yaml
+│   ├── nginx-ingress-values.yaml
+│   ├── cert-manager-values.yaml
+│   ├── redis-synapse-values.yaml
+│   ├── redis-livekit-values.yaml
+│   └── livekit-values.yaml
+│
+└── docs/                        ← Comprehensive Guides
+    ├── 00-WORKSTATION-SETUP.md
+    ├── 00-KUBERNETES-INSTALLATION-DEBIAN-OVH.md
+    ├── DEPLOYMENT-GUIDE.md
+    ├── SCALING-GUIDE.md
+    ├── CONFIGURATION-REFERENCE.md
+    ├── OPERATIONS-UPDATE-GUIDE.md
+    ├── SECRETS-MANAGEMENT.md
+    ├── HAPROXY-ARCHITECTURE.md
+    ├── HA-ROUTING-GUIDE.md
+    ├── ANTIVIRUS-GUIDE.md
+    └── ... (more guides)
 ```
 
 ---
 
-## Deployment Overview
+## 🚀 Quick Start Guide
 
-The deployment process follows these main steps:
+### Prerequisites
 
-### Phase 1: Infrastructure Preparation
+**Infrastructure:**
+- Kubernetes cluster (1.28+)
+- Storage class for PVCs
+- Domain name for your homeserver
+- `kubectl` and `helm` installed
 
-**If you don't have Kubernetes yet:**
-1. Follow [`docs/00-KUBERNETES-INSTALLATION-DEBIAN-OVH.md`](docs/00-KUBERNETES-INSTALLATION-DEBIAN-OVH.md)
-   - Install Kubernetes on your 21 Debian servers
-   - Configure networking, storage, and container runtime
-   - Verify cluster is healthy
-
-**If you already have Kubernetes:**
-- Verify it meets requirements (v1.26+, storage classes configured)
-- Ensure you have `kubectl` access with cluster-admin permissions
-
-### Phase 2: Configuration
-
-**→ IMPORTANT:** Review [`docs/CONFIGURATION-CHECKLIST.md`](docs/CONFIGURATION-CHECKLIST.md) for complete list of values to replace before deployment.
-
-1. Copy configuration template:
-   ```bash
-   cd deployment/
-   cp config/deployment.env.example config/deployment.env
-   ```
-
-2. Edit `config/deployment.env` with your values:
-   - Domain name (replace `chat.z3r0d3v.com`)
-   - Storage classes (replace empty `""`)
-   - IP addresses (MetalLB range)
-   - Passwords and secrets (all `CHANGE_TO_*` placeholders)
-
-   **See:**
-   - [`docs/CONFIGURATION-CHECKLIST.md`](docs/CONFIGURATION-CHECKLIST.md) - **Complete checklist of ALL values to replace**
-   - [`docs/CONFIGURATION-REFERENCE.md`](docs/CONFIGURATION-REFERENCE.md) - Detailed explanation of every option
-
-3. Generate required secrets:
-   ```bash
-   # PostgreSQL password
-   openssl rand -base64 32
-
-   # Synapse signing key
-   docker run -it --rm matrixdotorg/synapse:latest generate
-
-   # coturn shared secret
-   openssl rand -base64 32
-
-   # Synapse secrets (registration, macaroon, form)
-   openssl rand -base64 32  # Run for each secret needed
-
-   # MinIO credentials
-   openssl rand -base64 32
-   ```
-
-   **See [`docs/CONFIGURATION-CHECKLIST.md`](docs/CONFIGURATION-CHECKLIST.md) Section 4 for detailed secret generation instructions.**
-
-### Phase 3: Deployment
-
-**Automated (Recommended):**
-```bash
-./scripts/deploy-all.sh
-```
-The script will:
-- Validate prerequisites
-- Deploy all components in correct order
-- Wait for each component to be ready
-- Provide next steps
-
-**Manual:**
-Follow [`docs/DEPLOYMENT-GUIDE.md`](docs/DEPLOYMENT-GUIDE.md) for step-by-step manual deployment with detailed explanations of what each step does.
-
-### Phase 4: Post-Deployment
-
-1. Configure DNS to point your domain to the load balancer IP
-2. Wait for TLS certificate to be issued (2-5 minutes)
-3. Create admin user
-4. Access web interface and test
-
-**See Post-Deployment section below for detailed steps.**
-
-### Phase 5: Validation
-
-1. Test user registration and login
-2. Test messaging
-3. Test file upload
-4. Test voice/video calls
-5. Review monitoring dashboards
+**Recommended Reading:**
+- `docs/00-WORKSTATION-SETUP.md` - Set up local tools
+- `docs/00-KUBERNETES-INSTALLATION-DEBIAN-OVH.md` - Set up K8s cluster
+- `docs/SCALING-GUIDE.md` - Size your infrastructure
 
 ---
 
-## Quick Start (For Experienced Users)
+## 📋 Deployment Steps
 
-If you're familiar with Kubernetes and just want to get started quickly:
+### **Phase 1: Core Infrastructure** (HA Database, Storage, Networking)
 
+**Deploy PostgreSQL Clusters:**
 ```bash
-# 1. Prepare configuration
-cd deployment/
-cp config/deployment.env.example config/deployment.env
-nano config/deployment.env  # Edit all CHANGE_TO_* values
+# Main cluster (3 instances, HA)
+kubectl apply -f infrastructure/01-postgresql/main-cluster.yaml
 
-# 2. Deploy everything
-./scripts/deploy-all.sh
+# LI cluster (2 instances, read-only)
+kubectl apply -f infrastructure/01-postgresql/li-cluster.yaml
 
-# 3. Wait for deployment (10-15 minutes)
-watch kubectl get pods -A
+# Wait for clusters to be ready
+kubectl wait --for=condition=Ready cluster/matrix-postgresql -n matrix --timeout=600s
+kubectl wait --for=condition=Ready cluster/matrix-postgresql-li -n matrix --timeout=600s
+```
 
-# 4. Get load balancer IP
-kubectl get svc -n ingress-nginx nginx-ingress-ingress-nginx-controller
+**Deploy Redis Sentinel:**
+```bash
+kubectl apply -f infrastructure/02-redis/redis-statefulset.yaml
 
-# 5. Configure DNS
-# Point your domain to the EXTERNAL-IP from step 4
+# Wait for Redis to be ready
+kubectl wait --for=condition=Ready pod/redis-0 -n matrix --timeout=300s
+```
 
-# 6. Create admin user
-SYNAPSE_POD=$(kubectl get pod -n matrix -l app=synapse,component=main -o name | head -1)
-kubectl exec -n matrix $SYNAPSE_POD -- \
-  register_new_matrix_user -c /config/homeserver.yaml \
-  -u admin -p YOUR_PASSWORD -a http://localhost:8008
+**Deploy MinIO:**
+```bash
+# Install MinIO Operator (if not already installed)
+helm repo add minio-operator https://operator.min.io
+helm install minio-operator minio-operator/operator \
+  --namespace minio-operator --create-namespace \
+  --values values/minio-operator-values.yaml
 
-# 7. Access
-# Open https://your-domain.com in browser
+# Deploy MinIO Tenant
+kubectl apply -f infrastructure/03-minio/tenant.yaml
+
+# Wait for MinIO to be ready
+kubectl wait --for=condition=Ready tenant/matrix-minio -n matrix --timeout=600s
+```
+
+**Deploy Networking:**
+```bash
+# NetworkPolicies (zero-trust security)
+kubectl apply -f infrastructure/04-networking/networkpolicies.yaml
+kubectl apply -f infrastructure/04-networking/sync-system-networkpolicy.yaml
+
+# NGINX Ingress Controller
+helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+helm install ingress-nginx ingress-nginx/ingress-nginx \
+  --namespace ingress-nginx --create-namespace \
+  --values values/nginx-ingress-values.yaml
+
+# cert-manager (TLS automation)
+helm repo add jetstack https://charts.jetstack.io
+helm install cert-manager jetstack/cert-manager \
+  --namespace cert-manager --create-namespace \
+  --set installCRDs=true \
+  --values values/cert-manager-values.yaml
+
+kubectl apply -f infrastructure/04-networking/cert-manager-install.yaml
+```
+
+**✅ Verification:**
+```bash
+# Check all Phase 1 components
+kubectl get cluster -n matrix                    # PostgreSQL clusters
+kubectl get statefulset redis -n matrix          # Redis
+kubectl get tenant matrix-minio -n matrix        # MinIO
+kubectl get networkpolicies -n matrix            # Security policies
+kubectl get pods -n ingress-nginx                # Ingress controller
 ```
 
 ---
 
-## Configuration
+### **Phase 2: Main Instance** (Synapse, Workers, Clients)
 
-All configuration is managed through `config/deployment.env`. This file controls:
-
-- **Domain and Networking**: Your domain name, IP ranges for load balancers
-- **Storage**: Which Kubernetes storage classes to use for different workloads
-- **Credentials**: Passwords, API keys, secrets for all components
-- **Features**: Enable/disable optional features (federation, antivirus)
-- **Resource Limits**: CPU and memory allocations
-- **Scaling**: Number of replicas, worker counts
-
-### Configuration Workflow
-
-1. **Copy the template:**
-   ```bash
-   cp config/deployment.env.example config/deployment.env
-   ```
-
-2. **Edit with your values:**
-   ```bash
-   nano config/deployment.env
-   ```
-
-3. **Understand what you're changing:**
-   - Each setting has comments explaining what it does
-   - For detailed explanation of any setting, see [`docs/CONFIGURATION-REFERENCE.md`](docs/CONFIGURATION-REFERENCE.md)
-   - Critical settings are marked with `# REQUIRED`
-   - Optional settings are marked with `# OPTIONAL`
-
-4. **Validate before deployment:**
-   ```bash
-   # Source the file to check for syntax errors
-   bash -n config/deployment.env
-
-   # The deployment script will also validate before deploying
-   ./scripts/deploy-all.sh --validate-only
-   ```
-
-### Example: Understanding a Configuration Section
-
-In `config/deployment.env`, you'll see sections like this:
-
+**1. Configure Synapse:**
 ```bash
-# ============================================================================
-# POSTGRESQL CONFIGURATION
-# ============================================================================
-# PostgreSQL is the main database for Synapse. It stores all messages, users,
-# rooms, and state information. We deploy it as a 3-node cluster for high
-# availability with automatic failover.
-
-# Password for the 'synapse' database user
-# REQUIRED: Generate with: openssl rand -base64 32
-# This password is used by Synapse to connect to PostgreSQL
-POSTGRES_PASSWORD="CHANGE_TO_SECURE_PASSWORD"
-
-# Storage class for PostgreSQL data volumes
-# REQUIRED: Must support ReadWriteOnce access mode
-# Recommendation: Use fast storage (NVMe/SSD) for best performance
-# Example: "local-path", "ceph-block", "longhorn"
-POSTGRES_STORAGE_CLASS="CHANGE_TO_YOUR_STORAGE_CLASS"
-
-# Storage size for each PostgreSQL instance
-# Default: 500Gi (500 gigabytes)
-# Estimate: ~1GB per 1000 users, plus message history
-# For 20K users with 6 months history: 500GB recommended
-POSTGRES_STORAGE_SIZE="500Gi"
+# Edit configuration (REQUIRED before deploying)
+# Update domain names, secrets, etc.
+nano config/synapse/homeserver.yaml
 ```
 
-For complete documentation of every setting, see [`docs/CONFIGURATION-REFERENCE.md`](docs/CONFIGURATION-REFERENCE.md).
+**2. Deploy Synapse Main Process:**
+```bash
+kubectl apply -f main-instance/01-synapse/configmap.yaml
+kubectl apply -f main-instance/01-synapse/secrets.yaml
+kubectl apply -f main-instance/01-synapse/main-statefulset.yaml
+kubectl apply -f main-instance/01-synapse/services.yaml
+
+# Wait for Synapse main to be ready
+kubectl wait --for=condition=Ready pod/synapse-main-0 -n matrix --timeout=600s
+```
+
+**3. Deploy Workers:**
+```bash
+kubectl apply -f main-instance/02-workers/synchrotron-deployment.yaml
+kubectl apply -f main-instance/02-workers/generic-worker-deployment.yaml
+kubectl apply -f main-instance/02-workers/media-repository-deployment.yaml
+kubectl apply -f main-instance/02-workers/event-persister-deployment.yaml
+kubectl apply -f main-instance/02-workers/federation-sender-deployment.yaml
+
+# Wait for workers to be ready
+kubectl wait --for=condition=Available deployment -l app.kubernetes.io/component=worker -n matrix --timeout=600s
+```
+
+**4. Deploy HAProxy (Load Balancer):**
+```bash
+kubectl apply -f main-instance/03-haproxy/deployment.yaml
+
+# Wait for HAProxy to be ready
+kubectl wait --for=condition=Available deployment/haproxy -n matrix --timeout=300s
+```
+
+**5. Deploy Clients:**
+```bash
+# Element Web
+kubectl apply -f main-instance/04-element-web/deployment.yaml
+
+# coturn (TURN/STUN)
+kubectl apply -f main-instance/06-coturn/deployment.yaml
+
+# Sygnal (Push notifications)
+kubectl apply -f main-instance/07-sygnal/deployment.yaml
+
+# key_vault (E2EE recovery)
+kubectl apply -f main-instance/08-key-vault/deployment.yaml
+```
+
+**6. Deploy LiveKit (Optional - Video/Voice):**
+```bash
+helm repo add livekit https://helm.livekit.io
+helm install livekit livekit/livekit-stack \
+  --namespace matrix \
+  --values values/livekit-values.yaml
+```
+
+**✅ Verification:**
+```bash
+# Check all Phase 2 components
+kubectl get pods -n matrix -l app.kubernetes.io/name=synapse
+kubectl get svc -n matrix | grep synapse
+kubectl get ingress -n matrix
+
+# Test Synapse health
+kubectl exec -n matrix synapse-main-0 -- curl http://localhost:8008/health
+```
 
 ---
 
-## Deployment
+### **Phase 3: LI Instance** (Lawful Intercept)
 
-### Automated Deployment
-
-The automated deployment script handles everything for you:
-
+**1. Deploy Sync System (PostgreSQL Replication):**
 ```bash
-./scripts/deploy-all.sh
+# Deploy sync system components
+kubectl apply -f li-instance/04-sync-system/deployment.yaml
+
+# Run replication setup (ONE TIME ONLY)
+kubectl create job --from=job/sync-system-setup-replication \
+  sync-setup-$(date +%s) -n matrix
+
+# Wait for setup to complete
+kubectl wait --for=condition=complete job/sync-setup-$(date +%s) -n matrix --timeout=300s
+
+# Check replication status
+kubectl logs job/sync-setup-$(date +%s) -n matrix
 ```
 
-**What it does:**
-
-1. **Validates** prerequisites (kubectl, helm, config file)
-2. **Checks** Kubernetes cluster connectivity
-3. **Adds** Helm repositories
-4. **Deploys** infrastructure layer:
-   - cert-manager (TLS certificates)
-   - MetalLB (load balancer)
-   - NGINX Ingress (routing)
-5. **Deploys** data layer:
-   - CloudNativePG + PostgreSQL cluster
-   - Redis (2 instances)
-   - MinIO object storage
-6. **Deploys** application layer:
-   - coturn (TURN/STUN)
-   - Synapse (main + workers)
-   - Element Web
-   - Synapse Admin
-   - LiveKit
-7. **Deploys** monitoring layer:
-   - Prometheus, Grafana, Loki
-8. **Configures** routing and TLS
-9. **Validates** deployment
-10. **Provides** next steps
-
-**Script options:**
-
+**2. Deploy Synapse LI:**
 ```bash
-# Validate configuration only (don't deploy)
-./scripts/deploy-all.sh --validate-only
+kubectl apply -f li-instance/01-synapse-li/deployment.yaml
 
-# Deploy specific component only
-./scripts/deploy-all.sh --component postgresql
-
-# Skip component
-./scripts/deploy-all.sh --skip monitoring
-
-# Verbose output
-./scripts/deploy-all.sh --verbose
+# Wait for Synapse LI to be ready
+kubectl wait --for=condition=Ready pod/synapse-li-0 -n matrix --timeout=600s
 ```
 
-### Manual Deployment
+**3. Deploy Element Web LI:**
+```bash
+kubectl apply -f li-instance/02-element-web-li/deployment.yaml
+```
 
-For complete control, deploy manually following [`docs/DEPLOYMENT-GUIDE.md`](docs/DEPLOYMENT-GUIDE.md).
+**4. Deploy Synapse Admin LI:**
+```bash
+kubectl apply -f li-instance/03-synapse-admin-li/deployment.yaml
+```
 
-The manual guide explains:
-- What each component does
-- Why it's configured a specific way
-- How components interact
-- What to verify at each step
-- How to troubleshoot issues
+**✅ Verification:**
+```bash
+# Check LI components
+kubectl get pods -n matrix -l matrix.instance=li
+kubectl get ingress -n matrix | grep li
+
+# Check replication lag (CRITICAL - should be < 5 seconds)
+kubectl exec -n matrix matrix-postgresql-li-1-0 -- \
+  psql -U postgres -d matrix_li -c "
+  SELECT
+    subname,
+    received_lsn,
+    latest_end_lsn,
+    pg_wal_lsn_diff(latest_end_lsn, received_lsn) AS lag_bytes
+  FROM pg_subscription_rel
+  JOIN pg_subscription ON subrelid = srrelid;"
+
+# Check media sync job
+kubectl get cronjob sync-system-media -n matrix
+kubectl get jobs -n matrix | grep sync-system-media
+```
 
 ---
 
-## Post-Deployment Steps
+### **Phase 4: Monitoring Stack** (Prometheus, Grafana, Loki)
 
-After deployment completes, follow these steps to make your Matrix server accessible:
-
-### 1. Get Load Balancer IP Address
-
+**1. Install Prometheus + Grafana:**
 ```bash
-kubectl get svc -n ingress-nginx nginx-ingress-ingress-nginx-controller
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+helm repo update
+
+kubectl create namespace monitoring
+
+helm install prometheus prometheus-community/kube-prometheus-stack \
+  --namespace monitoring \
+  --values values/prometheus-stack-values.yaml \
+  --version 67.0.0
 ```
 
-Look for the `EXTERNAL-IP` column. Example output:
-```
-NAME                                    TYPE           EXTERNAL-IP      PORT(S)
-nginx-ingress-ingress-nginx-controller  LoadBalancer   192.168.1.240    80:31234/TCP,443:31235/TCP
-```
-
-The IP `192.168.1.240` is your load balancer IP.
-
-### 2. Configure DNS
-
-Add a DNS A record pointing your domain to the load balancer IP:
-
-```
-chat.example.com.  300  IN  A  192.168.1.240
-```
-
-**Verify DNS resolution:**
+**2. Install Loki:**
 ```bash
-nslookup chat.example.com
-# Should return 192.168.1.240
+helm repo add grafana https://grafana.github.io/helm-charts
+helm repo update
+
+helm install loki grafana/loki-stack \
+  --namespace monitoring \
+  --values values/loki-values.yaml \
+  --version 2.10.0
 ```
 
-### 3. Wait for TLS Certificate
-
-The system automatically requests a TLS certificate from Let's Encrypt:
-
+**3. Deploy ServiceMonitors and AlertRules:**
 ```bash
-# Check certificate status
-kubectl get certificate -n matrix
+# ServiceMonitors (auto-discovery of metrics)
+kubectl apply -f monitoring/01-prometheus/servicemonitors.yaml
 
-# Should show:
-# NAME         READY   SECRET            AGE
-# matrix-tls   True    matrix-tls-secret 2m
+# PrometheusRules (60+ alerting rules)
+kubectl apply -f monitoring/01-prometheus/prometheusrules.yaml
+
+# Grafana Dashboards
+kubectl apply -f monitoring/02-grafana/dashboards-configmap.yaml
 ```
 
-If `READY` shows `False`, wait 2-5 minutes. Let's Encrypt needs to verify domain ownership.
-
-**Troubleshoot certificate issues:**
+**4. Enable CloudNativePG Monitoring:**
 ```bash
-# Check certificate request details
-kubectl describe certificate matrix-tls -n matrix
+# Enable PodMonitor for PostgreSQL clusters
+kubectl patch cluster matrix-postgresql -n matrix --type=merge -p '
+{
+  "spec": {
+    "monitoring": {
+      "enablePodMonitor": true
+    }
+  }
+}'
 
-# Check cert-manager logs
-kubectl logs -n cert-manager -l app=cert-manager
+kubectl patch cluster matrix-postgresql-li -n matrix --type=merge -p '
+{
+  "spec": {
+    "monitoring": {
+      "enablePodMonitor": true
+    }
+  }
+}'
 ```
 
-### 4. Create Admin User
-
-Create your first Matrix user with admin privileges:
-
+**✅ Verification:**
 ```bash
-# Find Synapse main pod name
-SYNAPSE_POD=$(kubectl get pod -n matrix -l app=synapse,component=main -o jsonpath='{.items[0].metadata.name}')
+# Check monitoring pods
+kubectl get pods -n monitoring
 
-# Create admin user
-kubectl exec -n matrix $SYNAPSE_POD -- \
-  register_new_matrix_user \
-  -c /config/homeserver.yaml \
-  -u admin \
-  -p "YOUR_SECURE_PASSWORD" \
-  -a \
-  http://localhost:8008
-```
+# Access Prometheus
+kubectl port-forward -n monitoring svc/prometheus-kube-prometheus-prometheus 9090:9090
+# Open: http://localhost:9090
 
-**Important:**
-- Replace `YOUR_SECURE_PASSWORD` with a strong password
-- The `-a` flag grants admin privileges
-- Remember these credentials - you'll need them to log in
-
-### 5. Access Web Interface
-
-Open your browser and navigate to:
-```
-https://chat.example.com
-```
-
-You should see the Element Web login page.
-
-**Login with:**
-- Homeserver: `https://chat.example.com`
-- Username: `admin`
-- Password: `YOUR_SECURE_PASSWORD` (from step 4)
-
-### 6. Access Admin Interface
-
-Navigate to:
-```
-https://chat.example.com/admin
-```
-
-**Login with the same credentials:**
-- Homeserver: `https://chat.example.com`
-- Username: `admin`
-- Password: `YOUR_SECURE_PASSWORD`
-
-From here you can:
-- Create/manage users
-- View/manage rooms
-- Monitor server statistics
-- Quarantine media
-- Configure server settings
-
-### 7. Access Monitoring
-
-View system metrics and logs:
-
-```bash
-# Port-forward Grafana to your local machine
+# Access Grafana
 kubectl port-forward -n monitoring svc/prometheus-grafana 3000:80
+# Open: http://localhost:3000
+# Username: admin
+# Password: See values/prometheus-stack-values.yaml
+
+# Check targets are being scraped
+# Navigate to: http://localhost:9090/targets
 ```
-
-Open browser to: `http://localhost:3000`
-
-**Default Grafana login:**
-- Username: `admin`
-- Password: (from `GRAFANA_ADMIN_PASSWORD` in `config/deployment.env`)
-
-**Recommended dashboards to import:**
-1. Synapse dashboard: https://github.com/element-hq/synapse/tree/develop/contrib/grafana
-2. PostgreSQL dashboard: ID `9628` from grafana.com
-3. Redis dashboard: ID `11835` from grafana.com
 
 ---
 
-## Operational Guide
+### **Phase 5: Antivirus System** (ClamAV + Content Scanner)
 
-### Daily Operations
-
-**Check system health:**
+**1. Deploy ClamAV DaemonSet:**
 ```bash
-# All pods running
-kubectl get pods -A | grep -v Running
+kubectl apply -f antivirus/01-clamav/deployment.yaml
 
-# Check for pod restarts
-kubectl get pods -A --field-selector status.phase=Running \
-  --sort-by=.status.containerStatuses[0].restartCount
+# Wait for ClamAV to download virus definitions
+kubectl wait --for=condition=Ready pod -l app.kubernetes.io/name=clamav -n matrix --timeout=600s
 
-# View recent events
-kubectl get events -A --sort-by='.lastTimestamp' | tail -20
+# Verify virus definitions downloaded
+kubectl logs -n matrix <clamav-pod> -c init-freshclam
 ```
 
-**Monitor resource usage:**
+**2. Deploy Content Scanner:**
 ```bash
-# Node resource usage
-kubectl top nodes
+kubectl apply -f antivirus/02-scan-workers/deployment.yaml
 
-# Pod resource usage
-kubectl top pods -A --sort-by=memory
+# Wait for Content Scanner to be ready
+kubectl wait --for=condition=Available deployment/content-scanner -n matrix --timeout=300s
 ```
 
-### Regular Maintenance
+**3. Configure Media Routing (Choose ONE method):**
 
-**Weekly Tasks:**
-- Review Grafana dashboards for anomalies
-- Check disk usage: `kubectl get pvc -A`
-- Review error logs in Grafana Loki
+**Method A: HAProxy (Recommended)**
 
-**Monthly Tasks:**
-- Update Synapse to latest stable version
-- Review and rotate credentials
-- Test backup restore procedure
-- Clean up old media (automatic via CronJob)
+Edit `main-instance/03-haproxy/haproxy.cfg`:
+```haproxy
+# Add media scanning backend
+backend content_scanner
+    balance roundrobin
+    server scanner1 content-scanner.matrix.svc.cluster.local:8080 check
 
-**Automated Maintenance:**
-
-The system includes automated maintenance tasks (see `manifests/10-operational-automation.yaml`):
-
-1. **S3 Media Cleanup** (Daily at 2 AM)
-   - Removes local media files already uploaded to MinIO
-   - Prevents local storage exhaustion
-
-2. **Database Maintenance** (Weekly on Sunday at 4 AM)
-   - Runs VACUUM ANALYZE on PostgreSQL
-   - Monitors table bloat
-   - Reports statistics
-
-3. **Worker Restart** (Weekly on Sunday at 3 AM)
-   - Rolling restart of Synapse workers
-   - Mitigates known memory leak in Synapse workers
-
-**View maintenance job status:**
-```bash
-# List CronJobs
-kubectl get cronjobs -n matrix
-
-# View last execution
-kubectl get jobs -n matrix --sort-by=.status.startTime
-
-# View logs from last run
-kubectl logs -n matrix job/synapse-s3-cleanup-<timestamp>
+# Route media downloads through scanner
+frontend matrix_client
+    acl is_media_download path_beg /_matrix/media/r0/download
+    acl is_media_download path_beg /_matrix/media/r0/thumbnail
+    use_backend content_scanner if is_media_download
 ```
 
-### Scaling
-
-**Add more Synapse workers:**
+Then redeploy HAProxy:
 ```bash
-# Edit worker StatefulSet
-kubectl scale statefulset synapse-sync-worker --replicas=12 -n matrix
+kubectl apply -f main-instance/03-haproxy/deployment.yaml
+kubectl rollout restart deployment/haproxy -n matrix
 ```
 
-**Add more PostgreSQL replicas:**
-```bash
-# Scale PostgreSQL cluster
-kubectl patch cluster synapse-postgres -n matrix \
-  --type='json' -p='[{"op": "replace", "path": "/spec/instances", "value":5}]'
+**Method B: NGINX Ingress Annotation**
+
+Add to Synapse Ingress annotations:
+```yaml
+nginx.ingress.kubernetes.io/configuration-snippet: |
+  location ~ ^/_matrix/media/r0/(download|thumbnail)/ {
+    proxy_pass http://content-scanner.matrix.svc.cluster.local:8080;
+  }
 ```
 
-**Add more storage to PostgreSQL:**
+**✅ Verification:**
 ```bash
-# Resize PVC (if storage class supports it)
-kubectl patch pvc postgres-synapse-postgres-1 -n matrix \
-  -p '{"spec":{"resources":{"requests":{"storage":"1Ti"}}}}'
-```
+# Check ClamAV is running on all nodes
+kubectl get daemonset clamav -n matrix
 
-For detailed scaling procedures, see [`docs/DEPLOYMENT-GUIDE.md`](docs/DEPLOYMENT-GUIDE.md) → Scaling section.
+# Check Content Scanner
+kubectl get deployment content-scanner -n matrix
+kubectl get pods -n matrix -l app.kubernetes.io/name=content-scanner
+
+# Test ClamAV (EICAR test virus)
+kubectl exec -it -n matrix <clamav-pod> -c clamd -- sh
+echo 'X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*' > /tmp/eicar.txt
+clamdscan /tmp/eicar.txt
+# Expected: Eicar-Signature FOUND
+
+# Check Content Scanner logs
+kubectl logs -n matrix -l app.kubernetes.io/name=content-scanner
+```
 
 ---
 
-## Optional Features
+## 🔒 Security Checklist
 
-### Federation (Connecting to Other Matrix Servers)
+Before going to production:
 
-By default, federation is disabled. To enable:
-
-1. Edit `config/deployment.env`:
-   ```bash
-   ENABLE_FEDERATION="true"
-   ```
-
-2. Configure DNS SRV records:
-   ```
-   _matrix._tcp.example.com. 300 IN SRV 10 0 8448 chat.example.com.
-   ```
-
-3. Redeploy Synapse:
-   ```bash
-   kubectl apply -f manifests/05-synapse-main.yaml
-   kubectl rollout restart deployment/synapse-main -n matrix
-   ```
-
-4. Test federation:
-   - Visit: https://federationtester.matrix.org/
-   - Enter your domain
-
-**See:** [`docs/DEPLOYMENT-GUIDE.md`](docs/DEPLOYMENT-GUIDE.md) → Federation section for complete guide.
-
-### Antivirus Scanning
-
-Optionally scan uploaded files for malware using ClamAV.
-
-**Trade-offs:**
-- **Pros**: Protection against malware, ransomware
-- **Cons**: Additional CPU usage, slight upload delay, operational complexity
-
-**Complete antivirus guide:**
-
-See [`docs/ANTIVIRUS-GUIDE.md`](docs/ANTIVIRUS-GUIDE.md) for:
-- Decision framework (should you enable/disable?)
-- Option A: Asynchronous scanning implementation (if enabling)
-- Option B: Alternative security measures (if disabling)
-- Complete deployment steps for both options
-
----
-
-## Troubleshooting
-
-### Common Issues
-
-#### Pods Not Starting
-
-**Symptom:** Pods stuck in `Pending` state
-
-**Check:**
+### **1. Update All Secrets**
 ```bash
-kubectl describe pod <pod-name> -n <namespace>
+# Change ALL instances of CHANGEME_* in:
+grep -r "CHANGEME" deployment/
 ```
 
-**Common causes:**
-- Insufficient node resources
-- Storage class not found
-- Node selector/affinity not matching
+**Critical secrets to update:**
+- PostgreSQL passwords (main + LI)
+- Redis passwords
+- MinIO credentials
+- Synapse secrets (macaroon, registration, form)
+- Signing keys (generate with `generate_signing_key.py`)
+- key_vault encryption keys
 
-**Solutions:**
-- Add more nodes or resize existing nodes
-- Verify storage class exists: `kubectl get storageclass`
-- Check node labels: `kubectl get nodes --show-labels`
+### **2. Configure IP Whitelisting**
 
-#### Can't Access Web Interface
+For LI components, update these Ingress annotations:
+```yaml
+# In li-instance/01-synapse-li/deployment.yaml
+# In li-instance/02-element-web-li/deployment.yaml
+# In li-instance/03-synapse-admin-li/deployment.yaml
 
-**Symptom:** Browser shows "Connection refused" or "This site can't be reached"
-
-**Check:**
-1. Load balancer has IP:
-   ```bash
-   kubectl get svc -n ingress-nginx nginx-ingress-ingress-nginx-controller
-   ```
-
-2. DNS resolves correctly:
-   ```bash
-   nslookup chat.example.com
-   ```
-
-3. TLS certificate is ready:
-   ```bash
-   kubectl get certificate -n matrix
-   ```
-
-4. Ingress is configured:
-   ```bash
-   kubectl get ingress -A
-   ```
-
-#### Database Connection Errors
-
-**Symptom:** Synapse logs show "could not connect to server"
-
-**Check:**
-```bash
-# PostgreSQL cluster status
-kubectl get cluster -n matrix
-
-# Should show 3 instances, 1 primary, 2 replicas
-kubectl get pods -n matrix -l cnpg.io/cluster=synapse-postgres
+nginx.ingress.kubernetes.io/whitelist-source-range: "YOUR_LAW_ENFORCEMENT_IPS"
 ```
 
-**Common causes:**
-- PostgreSQL not ready yet (wait 2-3 minutes)
-- Wrong credentials in secret
-- Network policy blocking connection
+### **3. Enable Authentication**
 
-**Solutions:**
-- Wait for cluster to be ready
-- Verify secret: `kubectl get secret synapse-postgres-credentials -n matrix -o yaml`
-- Check logs: `kubectl logs -n matrix synapse-postgres-1`
+For Synapse Admin LI, generate htpasswd:
+```bash
+htpasswd -c auth admin
+kubectl create secret generic synapse-admin-auth \
+  --from-file=auth -n matrix
+```
 
-### Getting Help
+### **4. Update Domain Names**
 
-1. **Check logs:**
-   ```bash
-   # Component logs
-   kubectl logs -n <namespace> <pod-name>
+Replace `example.com` with your actual domain in:
+- All Ingress manifests
+- `config/synapse/homeserver.yaml`
+- `main-instance/04-element-web/deployment.yaml`
+- `li-instance/02-element-web-li/deployment.yaml`
 
-   # Follow logs
-   kubectl logs -n <namespace> <pod-name> -f
+### **5. Verify NetworkPolicies**
 
-   # Previous crashed container
-   kubectl logs -n <namespace> <pod-name> --previous
-   ```
-
-2. **Check events:**
-   ```bash
-   kubectl get events -n <namespace> --sort-by='.lastTimestamp'
-   ```
-
-3. **Check resource status:**
-   ```bash
-   kubectl get all -n <namespace>
-   kubectl describe <resource-type> <resource-name> -n <namespace>
-   ```
-
-4. **Review architecture documentation:**
-   - [`docs/HAPROXY-ARCHITECTURE.md`](docs/HAPROXY-ARCHITECTURE.md) - **NEW!** Intelligent routing layer (production-grade)
-   - [`docs/MATRIX-AUTHENTICATION-SERVICE.md`](docs/MATRIX-AUTHENTICATION-SERVICE.md) - **NEW!** Enterprise SSO with Keycloak
-   - [`docs/HA-ROUTING-GUIDE.md`](docs/HA-ROUTING-GUIDE.md) - How components connect
-   - [`docs/DEPLOYMENT-GUIDE.md`](docs/DEPLOYMENT-GUIDE.md) - Detailed deployment steps
-
-5. **Community resources:**
-   - Matrix community: https://matrix.to/#/#synapse:matrix.org
-   - Synapse documentation: https://matrix-org.github.io/synapse/latest/
+Check all NetworkPolicies are applied:
+```bash
+kubectl get networkpolicies -n matrix
+# Should show 16+ policies
+```
 
 ---
 
-## Next Steps
+## 📊 Resource Requirements
 
-Now that you've read this overview:
+### Minimum (100 CCU)
+- **CPU**: 10 cores
+- **Memory**: 30Gi
+- **Storage**: 500Gi
 
-1. **If you don't have Kubernetes:**
-   → Go to [`docs/00-KUBERNETES-INSTALLATION-DEBIAN-OVH.md`](docs/00-KUBERNETES-INSTALLATION-DEBIAN-OVH.md)
+### Medium (1K CCU)
+- **CPU**: 20 cores
+- **Memory**: 60Gi
+- **Storage**: 2Ti
 
-2. **If you have Kubernetes:**
-   → Go to [`docs/DEPLOYMENT-GUIDE.md`](docs/DEPLOYMENT-GUIDE.md)
+### Large (20K CCU)
+- **CPU**: 40 cores
+- **Memory**: 120Gi
+- **Storage**: 10Ti
 
-3. **To understand configuration options:**
-   → Go to [`docs/CONFIGURATION-REFERENCE.md`](docs/CONFIGURATION-REFERENCE.md)
-
-4. **To understand intelligent routing:**
-   → Go to [`docs/HAPROXY-ARCHITECTURE.md`](docs/HAPROXY-ARCHITECTURE.md)
-
-5. **For enterprise SSO deployment:**
-   → Go to [`docs/MATRIX-AUTHENTICATION-SERVICE.md`](docs/MATRIX-AUTHENTICATION-SERVICE.md)
-
-6. **To understand how HA works:**
-   → Go to [`docs/HA-ROUTING-GUIDE.md`](docs/HA-ROUTING-GUIDE.md)
-
-5. **Ready to deploy?**
-   ```bash
-   cd deployment/
-   cp config/deployment.env.example config/deployment.env
-   nano config/deployment.env  # Edit all values
-   ./scripts/deploy-all.sh
-   ```
+See `docs/SCALING-GUIDE.md` for detailed sizing.
 
 ---
 
-## Documentation Index
+## 🔍 Verification & Testing
 
-| Document | Purpose | When to Read |
-|----------|---------|--------------|
-| [`SCALING-GUIDE.md`](docs/SCALING-GUIDE.md) | **Infrastructure sizing for 100-20K CCU** | **FIRST** - Determine your server requirements |
-| [`00-WORKSTATION-SETUP.md`](docs/00-WORKSTATION-SETUP.md) | **Install kubectl, helm, git on your laptop/desktop** | **SECOND** - Set up your local workstation tools |
-| [`00-KUBERNETES-INSTALLATION-DEBIAN-OVH.md`](docs/00-KUBERNETES-INSTALLATION-DEBIAN-OVH.md) | Install Kubernetes from scratch | Before deployment, if you don't have Kubernetes |
-| [`CONFIGURATION-CHECKLIST.md`](docs/CONFIGURATION-CHECKLIST.md) | **Complete list of values to replace before deployment** | **Before deployment** - Replace all placeholders |
-| [`SECRETS-MANAGEMENT.md`](docs/SECRETS-MANAGEMENT.md) | **Encryption at rest, external secrets, rotation** | **Before deployment** - Secure your secrets |
-| [`DEPLOYMENT-GUIDE.md`](docs/DEPLOYMENT-GUIDE.md) | Step-by-step deployment walkthrough | During deployment, for detailed explanations |
-| [`HAPROXY-ARCHITECTURE.md`](docs/HAPROXY-ARCHITECTURE.md) | HAProxy routing layer and load balancing | To understand intelligent routing to workers |
-| [`HA-ROUTING-GUIDE.md`](docs/HA-ROUTING-GUIDE.md) | How HA and routing works | To understand architecture and troubleshoot |
-| [`MATRIX-AUTHENTICATION-SERVICE.md`](docs/MATRIX-AUTHENTICATION-SERVICE.md) | **Enterprise SSO with Keycloak (Optional)** | When implementing SSO authentication |
-| [`CONFIGURATION-REFERENCE.md`](docs/CONFIGURATION-REFERENCE.md) | Complete configuration options | When customizing settings |
-| [`OPERATIONS-UPDATE-GUIDE.md`](docs/OPERATIONS-UPDATE-GUIDE.md) | Update, scale, and maintain services | After deployment, for ongoing operations |
-| [`CONTAINER-IMAGES-AND-CUSTOMIZATION.md`](docs/CONTAINER-IMAGES-AND-CUSTOMIZATION.md) | Image sources, custom builds | When using custom Synapse versions |
-| [`ANTIVIRUS-GUIDE.md`](docs/ANTIVIRUS-GUIDE.md) | Complete antivirus guide | If implementing or skipping antivirus |
+### **Complete System Check:**
+```bash
+# All pods should be Running
+kubectl get pods -n matrix
+kubectl get pods -n monitoring
+kubectl get pods -n ingress-nginx
+
+# All services should have endpoints
+kubectl get svc -n matrix
+kubectl get endpoints -n matrix
+
+# Check Ingress has IP address
+kubectl get ingress -n matrix
+```
+
+### **Functional Tests:**
+
+**1. Synapse Health:**
+```bash
+curl https://matrix.example.com/_matrix/client/versions
+```
+
+**2. Element Web:**
+```bash
+open https://element.matrix.example.com
+```
+
+**3. Admin Interface:**
+```bash
+open https://admin.matrix.example.com
+```
+
+**4. LI Instance:**
+```bash
+# Only accessible from whitelisted IPs
+curl https://matrix-li.example.com/_matrix/client/versions
+```
+
+**5. Monitoring:**
+```bash
+# Prometheus: Check all targets are UP
+http://localhost:9090/targets
+
+# Grafana: View dashboards
+http://localhost:3000/dashboards
+```
+
+**6. Antivirus:**
+```bash
+# Upload and download a file via Element
+# Check Content Scanner logs for scan confirmation
+kubectl logs -n matrix -l app.kubernetes.io/name=content-scanner | grep "scan"
+```
 
 ---
 
-**Questions?** Start with the [Troubleshooting](#troubleshooting) section, then check [`docs/DEPLOYMENT-GUIDE.md`](docs/DEPLOYMENT-GUIDE.md) for detailed explanations.
+## 📚 Documentation Reference
 
-**Ready to begin?** Proceed to the documentation that matches your situation above.
+| Document | Purpose |
+|----------|---------|
+| `infrastructure/*/README.md` | Phase 1 component guides |
+| `main-instance/*/README.md` | Phase 2 component guides |
+| `li-instance/README.md` | Complete LI instance guide |
+| `monitoring/README.md` | Monitoring stack guide |
+| `antivirus/README.md` | Antivirus system guide |
+| `docs/DEPLOYMENT-GUIDE.md` | Detailed deployment walkthrough |
+| `docs/SCALING-GUIDE.md` | Infrastructure sizing guide |
+| `docs/OPERATIONS-UPDATE-GUIDE.md` | Updates and maintenance |
+| `docs/CONFIGURATION-REFERENCE.md` | All configuration options |
+| `docs/SECRETS-MANAGEMENT.md` | Security and secrets |
+| `docs/HAPROXY-ARCHITECTURE.md` | Routing architecture |
+| `docs/ANTIVIRUS-GUIDE.md` | Antivirus implementation |
+
+---
+
+## 🆘 Troubleshooting
+
+### Common Issues:
+
+**Synapse won't start:**
+- Check PostgreSQL is ready: `kubectl get cluster -n matrix`
+- Check Redis is ready: `kubectl get pod redis-0 -n matrix`
+- Check logs: `kubectl logs synapse-main-0 -n matrix`
+
+**Workers not connecting:**
+- Check HAProxy is running: `kubectl get deployment haproxy -n matrix`
+- Check NetworkPolicies: `kubectl get networkpolicies -n matrix`
+- Check worker logs: `kubectl logs <worker-pod> -n matrix`
+
+**LI replication lag:**
+- Check replication status (see Phase 3 verification)
+- Check sync system logs: `kubectl logs <sync-system-pod> -n matrix`
+- See `li-instance/README.md` troubleshooting section
+
+**Antivirus not scanning:**
+- Check ClamAV is running: `kubectl get daemonset clamav -n matrix`
+- Check Content Scanner connectivity: `kubectl logs <content-scanner-pod> -n matrix`
+- See `antivirus/README.md` troubleshooting section
+
+**For detailed troubleshooting, see component-specific README files.**
+
+---
+
+## 🎉 Success!
+
+If all verification steps pass, you have successfully deployed:
+- ✅ Production-grade Matrix homeserver
+- ✅ High availability infrastructure
+- ✅ Complete lawful intercept system
+- ✅ Real-time antivirus protection
+- ✅ Comprehensive monitoring
+
+**Next steps:**
+1. Create your first user
+2. Configure federation (if desired)
+3. Set up backups (automated via CloudNativePG + MinIO)
+4. Review monitoring dashboards
+5. Test LI instance access
+
+**For ongoing operations, see `docs/OPERATIONS-UPDATE-GUIDE.md`**
+
+---
+
+**Deployment Version**: 1.0
+**Last Updated**: 2025-11-18
+**Kubernetes**: 1.28+
+**Synapse**: v1.119.0

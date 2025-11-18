@@ -153,7 +153,7 @@ scan:
 ```yaml
 proxy:
   # Upstream Synapse media repository
-  base_homeserver_url: http://synapse-media.matrix.svc.cluster.local:8008
+  base_homeserver_url: http://synapse-media-repository.matrix.svc.cluster.local:8008
 ```
 
 **Result Cache**:

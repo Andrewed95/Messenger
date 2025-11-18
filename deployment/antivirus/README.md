@@ -168,6 +168,8 @@ media_storage_providers:
   - module: synapse.rest.media.v1.media_repository.MediaRepositoryResource
     config:
       download_proxy: http://content-scanner.matrix.svc.cluster.local:8080
+
+# Note: The content scanner proxies to synapse-media-repository.matrix.svc.cluster.local:8008
 ```
 
 ### 4. Verify Integration

@@ -58,7 +58,7 @@ data:
     proxy:
       # Base URL of the Matrix media repository
       # This points to Synapse media workers
-      base_homeserver_url: http://synapse-media.matrix.svc.cluster.local:8008
+      base_homeserver_url: http://synapse-media-repository.matrix.svc.cluster.local:8008
 
     # Result cache (avoid re-scanning)
     result_cache:
@@ -217,7 +217,7 @@ spec:
 
             # Synapse media repository URL
             - name: SYNAPSE_MEDIA_URL
-              value: "http://synapse-media.matrix.svc.cluster.local:8008"
+              value: "http://synapse-media-repository.matrix.svc.cluster.local:8008"
 
           volumeMounts:
             - name: config
