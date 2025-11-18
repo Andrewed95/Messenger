@@ -1,0 +1,267 @@
+# Element Web Deployment
+# The official Matrix web client
+# Provides browser-based access to the Matrix homeserver
+
+---
+# ConfigMap containing Element Web configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: element-web-config
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: element-web
+    app.kubernetes.io/component: webclient
+    matrix.instance: main
+data:
+  config.json: |
+    {
+        "default_server_config": {
+            "m.homeserver": {
+                "base_url": "https://matrix.example.com",
+                "server_name": "matrix.example.com"
+            },
+            "m.identity_server": {
+                "base_url": "https://vector.im"
+            }
+        },
+        "default_server_name": "matrix.example.com",
+        "disable_custom_urls": false,
+        "disable_guests": true,
+        "disable_login_language_selector": false,
+        "disable_3pid_login": false,
+        "brand": "Element",
+        "integrations_ui_url": "https://scalar.vector.im/",
+        "integrations_rest_url": "https://scalar.vector.im/api",
+        "integrations_widgets_urls": [
+            "https://scalar.vector.im/_matrix/integrations/v1",
+            "https://scalar.vector.im/api"
+        ],
+        "bug_report_endpoint_url": "https://element.io/bugreports/submit",
+        "default_country_code": "US",
+        "show_labs_settings": true,
+        "features": {
+            "feature_pinning": "labs",
+            "feature_custom_status": "labs",
+            "feature_state_counters": "labs",
+            "feature_presence_in_room_list": "labs",
+            "feature_custom_themes": "labs"
+        },
+        "default_theme": "light",
+        "room_directory": {
+            "servers": [
+                "matrix.example.com",
+                "matrix.org"
+            ]
+        },
+        "enable_presence_by_hs_url": {
+            "https://matrix.example.com": true,
+            "https://matrix.org": false
+        },
+        "setting_defaults": {
+            "breadcrumbs": true,
+            "UIFeature.urlPreviews": true,
+            "UIFeature.feedback": false,
+            "UIFeature.voip": true,
+            "UIFeature.widgets": true,
+            "UIFeature.advancedSettings": true,
+            "UIFeature.shareQrCode": true,
+            "UIFeature.shareSocial": true
+        },
+        "jitsi": {
+            "preferred_domain": "meet.element.io"
+        },
+        "element_call": {
+            "url": "https://call.element.io",
+            "use_exclusively": false,
+            "participant_limit": 8,
+            "brand": "Element Call"
+        }
+    }
+
+---
+# Element Web Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: element-web
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: element-web
+    app.kubernetes.io/component: webclient
+    app.kubernetes.io/version: "v1.11.96"
+    matrix.instance: main
+spec:
+  replicas: 2  # Run 2 replicas for HA
+
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: element-web
+      app.kubernetes.io/component: webclient
+
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: element-web
+        app.kubernetes.io/component: webclient
+        app.kubernetes.io/version: "v1.11.96"
+        matrix.instance: main
+
+    spec:
+      # Security context
+      securityContext:
+        runAsUser: 101  # nginx user
+        runAsGroup: 101
+        fsGroup: 101
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+
+      # Distribute across nodes
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: element-web
+                topologyKey: kubernetes.io/hostname
+
+      containers:
+        - name: element-web
+          image: vectorim/element-web:v1.11.96
+          imagePullPolicy: IfNotPresent
+
+          ports:
+            - name: http
+              containerPort: 80
+              protocol: TCP
+
+          volumeMounts:
+            - name: config
+              mountPath: /app/config.json
+              subPath: config.json
+              readOnly: true
+            # nginx cache
+            - name: cache
+              mountPath: /var/cache/nginx
+            - name: run
+              mountPath: /var/run
+
+          # Resource limits
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "50m"
+            limits:
+              memory: "128Mi"
+              cpu: "100m"
+
+          # Liveness probe
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+          # Readiness probe
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 2
+
+          # Startup probe
+          startupProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 10
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 101
+            runAsGroup: 101
+            capabilities:
+              drop:
+                - ALL
+
+      volumes:
+        - name: config
+          configMap:
+            name: element-web-config
+        - name: cache
+          emptyDir: {}
+        - name: run
+          emptyDir: {}
+
+---
+# Element Web Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: element-web
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: element-web
+    app.kubernetes.io/component: webclient
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: element-web
+    app.kubernetes.io/component: webclient
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+      protocol: TCP
+
+---
+# Ingress for Element Web
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: element-web
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: element-web
+    app.kubernetes.io/component: webclient
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - element.matrix.example.com
+      secretName: element-web-tls
+  rules:
+    - host: element.matrix.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: element-web
+                port:
+                  number: 80

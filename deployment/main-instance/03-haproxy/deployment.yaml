@@ -1,0 +1,423 @@
+# HAProxy Deployment for Matrix Synapse
+# Intelligent routing to worker pools based on URL patterns
+# Handles client API (8008) and federation API (8448) routing
+
+---
+# ConfigMap containing HAProxy configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: haproxy-config
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: haproxy
+    app.kubernetes.io/component: load-balancer
+    matrix.instance: main
+data:
+  haproxy.cfg: |
+    # HAProxy Configuration for Matrix Synapse
+    # Routes requests to appropriate worker pools based on URL patterns
+
+    global
+        log stdout format raw local0 info
+        maxconn 50000
+        tune.ssl.default-dh-param 2048
+        tune.bufsize 32768
+        tune.maxrewrite 8192
+
+    defaults
+        log global
+        mode http
+        option httplog
+        option dontlognull
+        option forwardfor
+        option http-server-close
+        timeout connect 10s
+        timeout client 600s
+        timeout server 600s
+        timeout tunnel 3600s
+        timeout client-fin 10s
+
+    # Frontend - Client API
+    frontend matrix_client
+        bind *:8008
+
+        http-request set-header X-Forwarded-Proto https if { ssl_fc }
+        http-request set-header X-Forwarded-For %[src]
+
+        acl is_health path /health
+        use_backend health_check if is_health
+
+        acl is_metrics path_beg /_synapse/metrics
+        use_backend synapse_metrics if is_metrics
+
+        # Synchrotron workers - /sync endpoints
+        acl is_sync path_beg /_matrix/client/ path_end /sync
+        acl is_events path_beg /_matrix/client/ path_end /events
+        acl is_initial_sync path_beg /_matrix/client/ path_end /initialSync
+        use_backend synchrotron_workers if is_sync or is_events or is_initial_sync
+
+        # Media workers
+        acl is_media path_beg /_matrix/media/
+        acl is_upload path_beg /_matrix/client/ path_end /upload
+        acl is_download path_beg /_matrix/client/ path_end /download
+        use_backend media_workers if is_media or is_upload or is_download
+
+        # Generic workers - most client endpoints
+        acl is_client path_beg /_matrix/client/
+        use_backend generic_workers if is_client
+
+        # Admin endpoints - main process only
+        acl is_admin path_beg /_synapse/admin/
+        use_backend synapse_main if is_admin
+
+        default_backend synapse_main
+
+    # Frontend - Federation API
+    frontend matrix_federation
+        bind *:8448
+
+        http-request set-header X-Forwarded-Proto https if { ssl_fc }
+        http-request set-header X-Forwarded-For %[src]
+
+        default_backend synapse_main
+
+    # Backend - Synchrotron Workers
+    backend synchrotron_workers
+        balance leastconn
+        option httpchk GET /health HTTP/1.1\r\nHost:\ matrix.example.com
+        timeout server 3600s
+        server-template synchrotron 16 synapse-synchrotron.matrix.svc.cluster.local:8008 check resolvers k8s init-addr none
+
+    # Backend - Media Workers
+    backend media_workers
+        balance roundrobin
+        option httpchk GET /health HTTP/1.1\r\nHost:\ matrix.example.com
+        timeout server 1800s
+        server-template media 8 synapse-media-repository.matrix.svc.cluster.local:8008 check resolvers k8s init-addr none
+
+    # Backend - Generic Workers
+    backend generic_workers
+        balance leastconn
+        option httpchk GET /health HTTP/1.1\r\nHost:\ matrix.example.com
+        server-template generic 16 synapse-generic-worker.matrix.svc.cluster.local:8008 check resolvers k8s init-addr none
+
+    # Backend - Main Process
+    backend synapse_main
+        balance roundrobin
+        option httpchk GET /health HTTP/1.1\r\nHost:\ matrix.example.com
+        server main synapse-main-0.synapse-main.matrix.svc.cluster.local:8008 check
+
+    # Backend - Metrics
+    backend synapse_metrics
+        balance roundrobin
+        server main synapse-main-0.synapse-main.matrix.svc.cluster.local:9090 check
+        server-template generic 16 synapse-generic-worker.matrix.svc.cluster.local:9090 check resolvers k8s init-addr none
+        server-template synchrotron 16 synapse-synchrotron.matrix.svc.cluster.local:9090 check resolvers k8s init-addr none
+        server-template media 8 synapse-media-repository.matrix.svc.cluster.local:9090 check resolvers k8s init-addr none
+
+    # Health Check Backend
+    backend health_check
+        http-request return status 200 content-type text/plain string "OK\n"
+
+    # DNS Resolver for Kubernetes
+    resolvers k8s
+        nameserver dns 10.96.0.10:53
+        accepted_payload_size 8192
+        hold valid 10s
+
+    # HAProxy Statistics
+    listen stats
+        bind *:8404
+        stats enable
+        stats uri /stats
+        stats refresh 30s
+
+---
+# HAProxy Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: haproxy
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: haproxy
+    app.kubernetes.io/component: load-balancer
+    app.kubernetes.io/version: "2.9"
+    matrix.instance: main
+spec:
+  replicas: 2  # Run 2 HAProxy instances for HA
+
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: haproxy
+      app.kubernetes.io/component: load-balancer
+
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: haproxy
+        app.kubernetes.io/component: load-balancer
+        app.kubernetes.io/version: "2.9"
+        matrix.instance: main
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8404"
+        prometheus.io/path: "/stats;csv"
+
+    spec:
+      # Security context
+      securityContext:
+        runAsUser: 99  # haproxy user
+        runAsGroup: 99
+        fsGroup: 99
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+
+      # Distribute across nodes
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: haproxy
+                topologyKey: kubernetes.io/hostname
+
+      containers:
+        - name: haproxy
+          image: haproxy:2.9-alpine
+          imagePullPolicy: IfNotPresent
+
+          ports:
+            - name: client
+              containerPort: 8008
+              protocol: TCP
+            - name: federation
+              containerPort: 8448
+              protocol: TCP
+            - name: stats
+              containerPort: 8404
+              protocol: TCP
+
+          volumeMounts:
+            - name: config
+              mountPath: /usr/local/etc/haproxy/haproxy.cfg
+              subPath: haproxy.cfg
+              readOnly: true
+
+          # Resource limits
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+
+          # Liveness probe
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8008
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+          # Readiness probe
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8008
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 2
+
+          # Startup probe
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8008
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 10
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 99
+            runAsGroup: 99
+            capabilities:
+              drop:
+                - ALL
+
+      volumes:
+        - name: config
+          configMap:
+            name: haproxy-config
+
+---
+# HAProxy Service - Client API
+apiVersion: v1
+kind: Service
+metadata:
+  name: haproxy-client
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: haproxy
+    app.kubernetes.io/component: load-balancer
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: haproxy
+    app.kubernetes.io/component: load-balancer
+  ports:
+    - name: client
+      port: 8008
+      targetPort: 8008
+      protocol: TCP
+
+---
+# HAProxy Service - Federation API
+apiVersion: v1
+kind: Service
+metadata:
+  name: haproxy-federation
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: haproxy
+    app.kubernetes.io/component: load-balancer
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: haproxy
+    app.kubernetes.io/component: load-balancer
+  ports:
+    - name: federation
+      port: 8448
+      targetPort: 8448
+      protocol: TCP
+
+---
+# HAProxy Service - Statistics
+apiVersion: v1
+kind: Service
+metadata:
+  name: haproxy-stats
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: haproxy
+    app.kubernetes.io/component: load-balancer
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: haproxy
+    app.kubernetes.io/component: load-balancer
+  ports:
+    - name: stats
+      port: 8404
+      targetPort: 8404
+      protocol: TCP
+
+---
+# Ingress for Matrix Client API (via HAProxy)
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: matrix-client
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: matrix
+    app.kubernetes.io/component: ingress
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "100m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "10"
+    # WebSocket support for /sync
+    nginx.ingress.kubernetes.io/proxy-http-version: "1.1"
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      proxy_set_header Upgrade $http_upgrade;
+      proxy_set_header Connection "upgrade";
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - matrix.example.com
+      secretName: matrix-client-tls
+  rules:
+    - host: matrix.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: haproxy-client
+                port:
+                  number: 8008
+
+---
+# Ingress for Matrix Federation API (via HAProxy)
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: matrix-federation
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: matrix
+    app.kubernetes.io/component: ingress
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - matrix.example.com
+      secretName: matrix-federation-tls
+  rules:
+    - host: matrix.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: haproxy-federation
+                port:
+                  number: 8448
+
+---
+# PodDisruptionBudget for HAProxy
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: haproxy-pdb
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: haproxy
+    app.kubernetes.io/component: load-balancer
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: haproxy
+      app.kubernetes.io/component: load-balancer
