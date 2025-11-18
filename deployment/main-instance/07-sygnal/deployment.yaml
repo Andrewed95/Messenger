@@ -1,0 +1,319 @@
+# Sygnal Push Notification Gateway
+# Handles push notifications for iOS and Android Matrix clients
+# Integrates with Synapse for real-time notification delivery
+
+---
+# Secret for Sygnal push notification credentials
+apiVersion: v1
+kind: Secret
+metadata:
+  name: sygnal-secrets
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: sygnal
+    app.kubernetes.io/component: push-gateway
+    matrix.instance: main
+type: Opaque
+stringData:
+  # APNs (Apple Push Notification service) credentials
+  # Required for iOS push notifications
+  # Obtain from Apple Developer Portal
+  apns-key.p8: |
+    -----BEGIN PRIVATE KEY-----
+    CHANGEME_APNS_PRIVATE_KEY
+    -----END PRIVATE KEY-----
+
+  apns-key-id: "CHANGEME_APNS_KEY_ID"
+  apns-team-id: "CHANGEME_APNS_TEAM_ID"
+  apns-topic: "io.element.app"  # Your iOS app bundle ID
+
+  # FCM (Firebase Cloud Messaging) credentials
+  # Required for Android push notifications
+  # Obtain from Firebase Console
+  fcm-service-account.json: |
+    {
+      "type": "service_account",
+      "project_id": "CHANGEME_FCM_PROJECT_ID",
+      "private_key_id": "CHANGEME_FCM_PRIVATE_KEY_ID",
+      "private_key": "CHANGEME_FCM_PRIVATE_KEY",
+      "client_email": "CHANGEME_FCM_CLIENT_EMAIL",
+      "client_id": "CHANGEME_FCM_CLIENT_ID",
+      "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+      "token_uri": "https://oauth2.googleapis.com/token",
+      "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs"
+    }
+
+---
+# ConfigMap for Sygnal configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sygnal-config
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: sygnal
+    app.kubernetes.io/component: push-gateway
+    matrix.instance: main
+data:
+  sygnal.yaml: |
+    # Sygnal Push Gateway Configuration
+
+    # HTTP server configuration
+    http:
+      bind_addresses: ['0.0.0.0']
+      port: 5000
+
+    # Logging
+    log:
+      setup:
+        version: 1
+        formatters:
+          normal:
+            format: '%(asctime)s [%(process)d] %(levelname)-5s %(name)s %(message)s'
+        handlers:
+          console:
+            class: logging.StreamHandler
+            formatter: normal
+            stream: ext://sys.stdout
+        root:
+          handlers: [console]
+          level: INFO
+        loggers:
+          sygnal:
+            level: INFO
+          sygnal.gcmpushkin:
+            level: INFO
+          sygnal.apnspushkin:
+            level: INFO
+
+    # Metrics for Prometheus
+    metrics:
+      prometheus:
+        enabled: true
+        address: '0.0.0.0'
+        port: 9000
+
+    # Push notification apps configuration
+    apps:
+      # iOS app (APNs)
+      io.element.app.ios:
+        type: apns
+        certfile: /secrets/apns-key.p8
+        keyfile: /secrets/apns-key.p8
+        key_id: APNS_KEY_ID_FROM_SECRET
+        team_id: APNS_TEAM_ID_FROM_SECRET
+        topic: io.element.app
+        platform: production  # or 'sandbox' for development
+
+      # Android app (FCM)
+      io.element.app.android:
+        type: gcm
+        api_key: /secrets/fcm-service-account.json
+
+      # Element iOS (if using Element branding)
+      im.vector.app.ios:
+        type: apns
+        certfile: /secrets/apns-key.p8
+        keyfile: /secrets/apns-key.p8
+        key_id: APNS_KEY_ID_FROM_SECRET
+        team_id: APNS_TEAM_ID_FROM_SECRET
+        topic: im.vector.app
+        platform: production
+
+      # Element Android (if using Element branding)
+      im.vector.app.android:
+        type: gcm
+        api_key: /secrets/fcm-service-account.json
+
+---
+# Sygnal Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sygnal
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: sygnal
+    app.kubernetes.io/component: push-gateway
+    app.kubernetes.io/version: "v0.14.0"
+    matrix.instance: main
+spec:
+  replicas: 2  # Run 2 replicas for HA
+
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: sygnal
+      app.kubernetes.io/component: push-gateway
+
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: sygnal
+        app.kubernetes.io/component: push-gateway
+        app.kubernetes.io/version: "v0.14.0"
+        matrix.instance: main
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9000"
+        prometheus.io/path: "/metrics"
+
+    spec:
+      # Security context
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+
+      # Distribute across nodes
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: sygnal
+                topologyKey: kubernetes.io/hostname
+
+      containers:
+        - name: sygnal
+          image: matrixdotorg/sygnal:v0.14.0
+          imagePullPolicy: IfNotPresent
+
+          ports:
+            - name: http
+              containerPort: 5000
+              protocol: TCP
+            - name: metrics
+              containerPort: 9000
+              protocol: TCP
+
+          env:
+            - name: SYGNAL_CONF
+              value: "/config/sygnal.yaml"
+
+          volumeMounts:
+            - name: config
+              mountPath: /config
+              readOnly: true
+            - name: secrets
+              mountPath: /secrets
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+
+          # Resource limits
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "200m"
+
+          # Liveness probe
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 5000
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+          # Readiness probe
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 5000
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 2
+
+          # Startup probe
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 5000
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 10
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            capabilities:
+              drop:
+                - ALL
+
+      volumes:
+        - name: config
+          configMap:
+            name: sygnal-config
+        - name: secrets
+          secret:
+            secretName: sygnal-secrets
+        - name: tmp
+          emptyDir: {}
+
+---
+# Sygnal Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: sygnal
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: sygnal
+    app.kubernetes.io/component: push-gateway
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: sygnal
+    app.kubernetes.io/component: push-gateway
+  ports:
+    - name: http
+      port: 5000
+      targetPort: 5000
+      protocol: TCP
+    - name: metrics
+      port: 9000
+      targetPort: 9000
+      protocol: TCP
+
+---
+# ServiceMonitor for Prometheus
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: sygnal
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: sygnal
+    prometheus: kube-prometheus
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: sygnal
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 10s
+  namespaceSelector:
+    matchNames:
+      - matrix

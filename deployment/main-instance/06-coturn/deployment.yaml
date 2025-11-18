@@ -1,0 +1,339 @@
+# coturn TURN/STUN Server Deployment
+# Provides NAT traversal for WebRTC voice/video calls
+# Required for P2P calls when clients are behind NAT/firewalls
+#
+# Runs as DaemonSet with hostNetwork for optimal connectivity
+
+---
+# Secret for coturn configuration
+apiVersion: v1
+kind: Secret
+metadata:
+  name: coturn-secrets
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: coturn
+    app.kubernetes.io/component: turn-server
+    matrix.instance: main
+type: Opaque
+stringData:
+  # Shared secret for TURN credential generation
+  # MUST match turn_shared_secret in Synapse homeserver.yaml
+  TURN_SHARED_SECRET: "CHANGEME_SECURE_TURN_SECRET"
+
+  # Static auth (alternative to shared secret)
+  TURN_USERNAME: "matrix"
+  TURN_PASSWORD: "CHANGEME_TURN_PASSWORD"
+
+---
+# ConfigMap for coturn configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: coturn-config
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: coturn
+    app.kubernetes.io/component: turn-server
+    matrix.instance: main
+data:
+  turnserver.conf: |
+    # coturn TURN/STUN Server Configuration
+    # For Matrix Synapse WebRTC NAT traversal
+
+    # Listener port for TURN/STUN (UDP and TCP)
+    listening-port=3478
+
+    # TLS listener port (for TURNS)
+    tls-listening-port=5349
+
+    # Relay ports for media
+    min-port=49152
+    max-port=65535
+
+    # External IP (will be set via environment variable)
+    # external-ip=AUTO_DETECTED
+
+    # Realm for TURN authentication
+    realm=turn.matrix.example.com
+
+    # Use shared secret for dynamic credentials (matches Synapse)
+    use-auth-secret
+    # static-auth-secret will be set via environment variable
+
+    # Server name
+    server-name=turn.matrix.example.com
+
+    # Logging
+    verbose
+    log-file=stdout
+
+    # Deny loopback and private IPs from being relayed
+    no-loopback-peers
+    no-multicast-peers
+
+    # Allowed peer IPs (allow all by default)
+    # Uncomment to restrict:
+    # denied-peer-ip=0.0.0.0-0.255.255.255
+    # denied-peer-ip=10.0.0.0-10.255.255.255
+    # denied-peer-ip=172.16.0.0-172.31.255.255
+    # denied-peer-ip=192.168.0.0-192.168.255.255
+
+    # Quota and limits
+    total-quota=100
+    bps-capacity=0
+    stale-nonce=600
+
+    # TLS certificates (mounted from Secret)
+    cert=/etc/coturn/certs/tls.crt
+    pkey=/etc/coturn/certs/tls.key
+
+    # Security
+    fingerprint
+    lt-cred-mech
+    no-tlsv1
+    no-tlsv1_1
+
+    # Mobility
+    mobility
+
+    # CLI access (disabled for security)
+    no-cli
+
+---
+# coturn DaemonSet (runs on all nodes for optimal connectivity)
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: coturn
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: coturn
+    app.kubernetes.io/component: turn-server
+    app.kubernetes.io/version: "4.6"
+    matrix.instance: main
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: coturn
+      app.kubernetes.io/component: turn-server
+
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: coturn
+        app.kubernetes.io/component: turn-server
+        app.kubernetes.io/version: "4.6"
+        matrix.instance: main
+      annotations:
+        prometheus.io/scrape: "false"  # coturn doesn't expose Prometheus metrics
+
+    spec:
+      # CRITICAL: Use host network for TURN to work properly
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+
+      # Security context
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+
+      # Tolerate all taints to run on all nodes
+      tolerations:
+        - operator: Exists
+
+      # Init container to detect external IP
+      initContainers:
+        - name: detect-external-ip
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              # Try to detect external IP (fallback to node IP if not available)
+              EXTERNAL_IP=$(wget -qO- ifconfig.me || hostname -i | awk '{print $1}')
+              echo "Detected external IP: $EXTERNAL_IP"
+              echo "external-ip=$EXTERNAL_IP" > /tmp/external-ip.conf
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 1000
+            capabilities:
+              drop:
+                - ALL
+
+      containers:
+        - name: coturn
+          image: coturn/coturn:4.6-alpine
+          imagePullPolicy: IfNotPresent
+
+          command:
+            - turnserver
+            - -c
+            - /etc/coturn/turnserver.conf
+            - -X
+            - /tmp/external-ip.conf
+
+          ports:
+            # TURN/STUN UDP
+            - name: turn-udp
+              containerPort: 3478
+              protocol: UDP
+              hostPort: 3478
+            # TURN/STUN TCP
+            - name: turn-tcp
+              containerPort: 3478
+              protocol: TCP
+              hostPort: 3478
+            # TURNS (TLS) TCP
+            - name: turns-tcp
+              containerPort: 5349
+              protocol: TCP
+              hostPort: 5349
+            # Media relay ports (49152-65535)
+            # Note: These are allocated dynamically by coturn
+
+          env:
+            - name: TURN_SHARED_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: coturn-secrets
+                  key: TURN_SHARED_SECRET
+            - name: TURN_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: coturn-secrets
+                  key: TURN_USERNAME
+            - name: TURN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: coturn-secrets
+                  key: TURN_PASSWORD
+
+          volumeMounts:
+            - name: config
+              mountPath: /etc/coturn/turnserver.conf
+              subPath: turnserver.conf
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+            - name: tls
+              mountPath: /etc/coturn/certs
+              readOnly: true
+
+          # Resource limits
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+
+          # Liveness probe (check if turnserver is running)
+          livenessProbe:
+            exec:
+              command:
+                - pgrep
+                - turnserver
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+          # Readiness probe (check TURN/STUN ports)
+          readinessProbe:
+            tcpSocket:
+              port: 3478
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 2
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            capabilities:
+              drop:
+                - ALL
+              add:
+                - NET_BIND_SERVICE  # Required for binding to ports < 1024
+
+      volumes:
+        - name: config
+          configMap:
+            name: coturn-config
+        - name: tmp
+          emptyDir: {}
+        - name: tls
+          secret:
+            secretName: coturn-tls
+            optional: true  # Will use self-signed if not provided
+
+---
+# Service for coturn (for Kubernetes DNS)
+apiVersion: v1
+kind: Service
+metadata:
+  name: coturn
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: coturn
+    app.kubernetes.io/component: turn-server
+spec:
+  type: NodePort  # Expose on all nodes
+  selector:
+    app.kubernetes.io/name: coturn
+    app.kubernetes.io/component: turn-server
+  ports:
+    - name: turn-udp
+      port: 3478
+      targetPort: 3478
+      protocol: UDP
+      nodePort: 30478
+    - name: turn-tcp
+      port: 3478
+      targetPort: 3478
+      protocol: TCP
+      nodePort: 30478
+    - name: turns-tcp
+      port: 5349
+      targetPort: 5349
+      protocol: TCP
+      nodePort: 30549
+
+---
+# Certificate for TURNS (TLS) - optional, can use self-signed
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: coturn-tls
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: coturn
+    app.kubernetes.io/component: turn-server
+spec:
+  secretName: coturn-tls
+  issuerRef:
+    name: letsencrypt-prod
+    kind: ClusterIssuer
+  dnsNames:
+    - turn.matrix.example.com
+  usages:
+    - digital signature
+    - key encipherment
+    - server auth

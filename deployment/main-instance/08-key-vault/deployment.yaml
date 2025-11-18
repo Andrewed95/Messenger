@@ -1,0 +1,497 @@
+# key_vault Django Application
+# ⭐ CRITICAL FOR LAWFUL INTERCEPT (LI) ⭐
+#
+# Stores encrypted E2EE recovery keys for Matrix end-to-end encryption
+# Enables lawful intercept to recover encrypted message history
+#
+# SECURITY:
+# - ONLY accessible from Synapse main process (NetworkPolicy enforced)
+# - NOT accessible from LI instance (prevents unauthorized key access)
+# - Encryption keys stored separately in PostgreSQL
+# - RSA 2048-bit encryption for recovery keys
+
+---
+# Secret for key_vault application
+apiVersion: v1
+kind: Secret
+metadata:
+  name: key-vault-secrets
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: key-vault
+    app.kubernetes.io/component: recovery-key-storage
+    matrix.instance: main
+type: Opaque
+stringData:
+  # Django secret key (generate using: python -c 'from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())')
+  DJANGO_SECRET_KEY: "CHANGEME_DJANGO_SECRET_KEY_GENERATE_SECURE_RANDOM_STRING"
+
+  # Database credentials (dedicated database for key_vault)
+  DB_NAME: "key_vault"
+  DB_USER: "key_vault"
+  DB_PASSWORD: "CHANGEME_SECURE_KEY_VAULT_DB_PASSWORD"
+  DB_HOST: "matrix-postgresql-rw.matrix.svc.cluster.local"
+  DB_PORT: "5432"
+
+  # API key for Synapse to access key_vault
+  # MUST match KEY_VAULT_API_KEY in Synapse secrets
+  API_KEY: "CHANGEME_SECURE_KEY_VAULT_API_KEY"
+
+  # Encryption key for storing recovery keys (RSA 2048-bit)
+  # Generate using: openssl genrsa -out private.pem 2048
+  RSA_PRIVATE_KEY: |
+    -----BEGIN RSA PRIVATE KEY-----
+    CHANGEME_GENERATE_RSA_2048_BIT_PRIVATE_KEY
+    Use: openssl genrsa -out private.pem 2048
+    Then paste the content here
+    -----END RSA PRIVATE KEY-----
+
+---
+# ConfigMap for key_vault configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: key-vault-config
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: key-vault
+    app.kubernetes.io/component: recovery-key-storage
+    matrix.instance: main
+data:
+  # Django settings (simplified)
+  settings.py: |
+    import os
+    from pathlib import Path
+
+    # Build paths
+    BASE_DIR = Path(__file__).resolve().parent.parent
+
+    # Security
+    SECRET_KEY = os.environ['DJANGO_SECRET_KEY']
+    DEBUG = False
+    ALLOWED_HOSTS = ['*']  # Only accessible within cluster
+
+    # Applications
+    INSTALLED_APPS = [
+        'django.contrib.admin',
+        'django.contrib.auth',
+        'django.contrib.contenttypes',
+        'django.contrib.sessions',
+        'django.contrib.messages',
+        'django.contrib.staticfiles',
+        'rest_framework',
+        'recovery_keys',  # Custom app for key storage
+    ]
+
+    MIDDLEWARE = [
+        'django.middleware.security.SecurityMiddleware',
+        'django.contrib.sessions.middleware.SessionMiddleware',
+        'django.middleware.common.CommonMiddleware',
+        'django.middleware.csrf.CsrfViewMiddleware',
+        'django.contrib.auth.middleware.AuthenticationMiddleware',
+        'django.contrib.messages.middleware.MessageMiddleware',
+        'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    ]
+
+    ROOT_URLCONF = 'key_vault.urls'
+
+    # Database
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.postgresql',
+            'NAME': os.environ['DB_NAME'],
+            'USER': os.environ['DB_USER'],
+            'PASSWORD': os.environ['DB_PASSWORD'],
+            'HOST': os.environ['DB_HOST'],
+            'PORT': os.environ['DB_PORT'],
+            'CONN_MAX_AGE': 600,
+        }
+    }
+
+    # Logging
+    LOGGING = {
+        'version': 1,
+        'disable_existing_loggers': False,
+        'handlers': {
+            'console': {
+                'class': 'logging.StreamHandler',
+            },
+        },
+        'root': {
+            'handlers': ['console'],
+            'level': 'INFO',
+        },
+    }
+
+    # REST Framework (API configuration)
+    REST_FRAMEWORK = {
+        'DEFAULT_AUTHENTICATION_CLASSES': [
+            'rest_framework.authentication.TokenAuthentication',
+        ],
+        'DEFAULT_PERMISSION_CLASSES': [
+            'rest_framework.permissions.IsAuthenticated',
+        ],
+    }
+
+    # Encryption settings
+    RSA_PRIVATE_KEY_PATH = '/secrets/rsa-private-key.pem'
+
+---
+# key_vault Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: key-vault
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: key-vault
+    app.kubernetes.io/component: recovery-key-storage
+    app.kubernetes.io/version: "1.0.0"
+    matrix.instance: main
+spec:
+  replicas: 2  # Run 2 replicas for HA
+
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: key-vault
+      app.kubernetes.io/component: recovery-key-storage
+
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: key-vault
+        app.kubernetes.io/component: recovery-key-storage
+        app.kubernetes.io/version: "1.0.0"
+        matrix.instance: main
+      annotations:
+        prometheus.io/scrape: "false"  # No Prometheus metrics (security consideration)
+
+    spec:
+      # Security context
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+
+      # Distribute across nodes
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: key-vault
+                topologyKey: kubernetes.io/hostname
+
+      # Init container for database migrations
+      initContainers:
+        - name: migrate
+          image: python:3.11-slim
+          command:
+            - sh
+            - -c
+            - |
+              pip install --quiet psycopg2-binary djangorestframework cryptography
+              cd /app
+              python manage.py migrate --noinput
+              echo "Database migrations complete"
+          env:
+            - name: DJANGO_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: key-vault-secrets
+                  key: DJANGO_SECRET_KEY
+            - name: DB_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: key-vault-secrets
+                  key: DB_NAME
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: key-vault-secrets
+                  key: DB_USER
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: key-vault-secrets
+                  key: DB_PASSWORD
+            - name: DB_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: key-vault-secrets
+                  key: DB_HOST
+            - name: DB_PORT
+              valueFrom:
+                secretKeyRef:
+                  name: key-vault-secrets
+                  key: DB_PORT
+          volumeMounts:
+            - name: app
+              mountPath: /app
+            - name: config
+              mountPath: /app/key_vault/settings.py
+              subPath: settings.py
+              readOnly: true
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 1000
+            capabilities:
+              drop:
+                - ALL
+
+      containers:
+        - name: key-vault
+          image: python:3.11-slim
+          imagePullPolicy: IfNotPresent
+
+          # Run Django with gunicorn
+          command:
+            - sh
+            - -c
+            - |
+              pip install --quiet gunicorn psycopg2-binary djangorestframework cryptography
+              cd /app
+              gunicorn key_vault.wsgi:application \
+                --bind 0.0.0.0:8000 \
+                --workers 4 \
+                --threads 2 \
+                --timeout 60 \
+                --access-logfile - \
+                --error-logfile - \
+                --log-level info
+
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+
+          env:
+            - name: DJANGO_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: key-vault-secrets
+                  key: DJANGO_SECRET_KEY
+            - name: DB_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: key-vault-secrets
+                  key: DB_NAME
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: key-vault-secrets
+                  key: DB_USER
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: key-vault-secrets
+                  key: DB_PASSWORD
+            - name: DB_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: key-vault-secrets
+                  key: DB_HOST
+            - name: DB_PORT
+              valueFrom:
+                secretKeyRef:
+                  name: key-vault-secrets
+                  key: DB_PORT
+            - name: API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: key-vault-secrets
+                  key: API_KEY
+
+          volumeMounts:
+            - name: app
+              mountPath: /app
+            - name: config
+              mountPath: /app/key_vault/settings.py
+              subPath: settings.py
+              readOnly: true
+            - name: secrets
+              mountPath: /secrets
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+
+          # Resource limits
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "200m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+
+          # Liveness probe
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+          # Readiness probe
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 2
+
+          # Startup probe
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 20
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            capabilities:
+              drop:
+                - ALL
+
+      volumes:
+        - name: app
+          emptyDir: {}
+        - name: config
+          configMap:
+            name: key-vault-config
+        - name: secrets
+          secret:
+            secretName: key-vault-secrets
+            items:
+              - key: RSA_PRIVATE_KEY
+                path: rsa-private-key.pem
+                mode: 0400
+        - name: tmp
+          emptyDir: {}
+
+---
+# key_vault Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: key-vault
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: key-vault
+    app.kubernetes.io/component: recovery-key-storage
+  annotations:
+    # CRITICAL: This service should ONLY be accessible from Synapse main
+    # Enforced by NetworkPolicy: key-vault-isolation
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: key-vault
+    app.kubernetes.io/component: recovery-key-storage
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
+      protocol: TCP
+
+---
+# PodDisruptionBudget for key_vault
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: key-vault-pdb
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: key-vault
+    app.kubernetes.io/component: recovery-key-storage
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: key-vault
+      app.kubernetes.io/component: recovery-key-storage
+
+---
+# Job to create initial database and user (run once)
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: key-vault-init-db
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: key-vault
+    app.kubernetes.io/component: database-init
+spec:
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: create-db
+          image: postgres:16-alpine
+          command:
+            - sh
+            - -c
+            - |
+              # Create database and user for key_vault
+              PGPASSWORD="$POSTGRES_PASSWORD" psql -h "$DB_HOST" -U postgres -tc \
+                "SELECT 1 FROM pg_database WHERE datname = '$DB_NAME'" | grep -q 1 || \
+                PGPASSWORD="$POSTGRES_PASSWORD" psql -h "$DB_HOST" -U postgres -c \
+                "CREATE DATABASE $DB_NAME"
+
+              PGPASSWORD="$POSTGRES_PASSWORD" psql -h "$DB_HOST" -U postgres -tc \
+                "SELECT 1 FROM pg_user WHERE usename = '$DB_USER'" | grep -q 1 || \
+                PGPASSWORD="$POSTGRES_PASSWORD" psql -h "$DB_HOST" -U postgres -c \
+                "CREATE USER $DB_USER WITH PASSWORD '$DB_PASSWORD'"
+
+              PGPASSWORD="$POSTGRES_PASSWORD" psql -h "$DB_HOST" -U postgres -c \
+                "GRANT ALL PRIVILEGES ON DATABASE $DB_NAME TO $DB_USER"
+
+              echo "key_vault database initialized successfully"
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: synapse-secrets  # Main postgres admin password
+                  key: DB_PASSWORD
+            - name: DB_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: key-vault-secrets
+                  key: DB_NAME
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: key-vault-secrets
+                  key: DB_USER
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: key-vault-secrets
+                  key: DB_PASSWORD
+            - name: DB_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: key-vault-secrets
+                  key: DB_HOST
