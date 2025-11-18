@@ -1,0 +1,342 @@
+# Generic Worker Deployment
+# Handles client API endpoints (/_matrix/client/*)
+# Can be scaled horizontally (2-16 replicas based on load)
+#
+# Endpoints handled:
+# - /_matrix/client/*/sync (lightweight sync, not /sync)
+# - /_matrix/client/*/events
+# - /_matrix/client/*/initialSync
+# - /_matrix/client/*/rooms/{roomId}/messages
+# - And many other read-only client endpoints
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: synapse-generic-worker
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: synapse
+    app.kubernetes.io/component: generic-worker
+    app.kubernetes.io/instance: main
+    matrix.instance: main
+spec:
+  replicas: 2  # Scale based on load: 2-16 replicas
+
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: synapse
+      app.kubernetes.io/component: generic-worker
+
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0  # Ensure zero downtime
+
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: synapse
+        app.kubernetes.io/component: generic-worker
+        app.kubernetes.io/instance: main
+        matrix.instance: main
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/_synapse/metrics"
+
+    spec:
+      # Security context
+      securityContext:
+        runAsUser: 991
+        runAsGroup: 991
+        fsGroup: 991
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+
+      # Distribute workers across nodes
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/component: generic-worker
+                topologyKey: kubernetes.io/hostname
+
+      # Init container for config generation
+      initContainers:
+        - name: generate-worker-config
+          image: matrixdotorg/synapse:v1.119.0
+          command:
+            - sh
+            - -c
+            - |
+              # Create worker-specific config
+              cat > /config/worker.yaml <<EOF
+              worker_app: synapse.app.generic_worker
+              worker_name: generic_worker_${HOSTNAME}
+
+              # Replication
+              worker_replication_host: synapse-main-0.synapse-main.matrix.svc.cluster.local
+              worker_replication_http_port: 9093
+              worker_replication_http_tls: false
+
+              # Worker listener
+              worker_listeners:
+                - type: http
+                  port: 8008
+                  resources:
+                    - names: [client]
+                  x_forwarded: true
+
+                - type: metrics
+                  port: 9090
+                  resources:
+                    - names: [metrics]
+
+              # Worker log config
+              worker_log_config: /config/log.yaml
+              EOF
+
+              # Process shared homeserver.yaml with environment variables
+              envsubst < /config-template/homeserver.yaml > /config/homeserver.yaml
+              cp /config-template/log.yaml /config/log.yaml
+              cp /config-template/signing.key /config/signing.key
+
+              # Set permissions
+              chown -R 991:991 /config
+              chmod 600 /config/signing.key
+
+              echo "Worker configuration generated for ${HOSTNAME}"
+          env:
+            - name: HOSTNAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: synapse-secrets
+                  key: DB_PASSWORD
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: synapse-secrets
+                  key: REDIS_PASSWORD
+            - name: S3_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: synapse-secrets
+                  key: S3_ACCESS_KEY
+            - name: S3_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: synapse-secrets
+                  key: S3_SECRET_KEY
+            - name: REPLICATION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: synapse-secrets
+                  key: REPLICATION_SECRET
+            - name: MACAROON_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: synapse-secrets
+                  key: MACAROON_SECRET
+            - name: REGISTRATION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: synapse-secrets
+                  key: REGISTRATION_SECRET
+            - name: FORM_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: synapse-secrets
+                  key: FORM_SECRET
+            - name: TURN_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: synapse-secrets
+                  key: TURN_SECRET
+            - name: KEY_VAULT_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: synapse-secrets
+                  key: KEY_VAULT_API_KEY
+          volumeMounts:
+            - name: config-template
+              mountPath: /config-template
+            - name: config
+              mountPath: /config
+            - name: signing-key
+              mountPath: /config-template/signing.key
+              subPath: signing.key
+
+      containers:
+        - name: worker
+          image: matrixdotorg/synapse:v1.119.0
+          imagePullPolicy: IfNotPresent
+
+          command:
+            - python
+            - -m
+            - synapse.app.generic_worker
+            - --config-path=/config/homeserver.yaml
+            - --config-path=/config/worker.yaml
+
+          ports:
+            - name: http
+              containerPort: 8008
+              protocol: TCP
+            - name: metrics
+              containerPort: 9090
+              protocol: TCP
+
+          env:
+            - name: SYNAPSE_WORKER
+              value: "synapse.app.generic_worker"
+            - name: SYNAPSE_WORKER_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            - name: tmp
+              mountPath: /tmp
+
+          # Resource limits (adjust based on load)
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "1Gi"
+              cpu: "500m"
+
+          # Health probes
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8008
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8008
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 2
+
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8008
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 20  # 100 seconds max
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 991
+            runAsGroup: 991
+            capabilities:
+              drop:
+                - ALL
+
+      volumes:
+        - name: config-template
+          configMap:
+            name: synapse-config
+        - name: config
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+        - name: signing-key
+          secret:
+            secretName: synapse-secrets
+            items:
+              - key: signing.key
+                path: signing.key
+                mode: 0600
+
+---
+# Service for generic workers (used by HAProxy)
+apiVersion: v1
+kind: Service
+metadata:
+  name: synapse-generic-worker
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: synapse
+    app.kubernetes.io/component: generic-worker
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: synapse
+    app.kubernetes.io/component: generic-worker
+  ports:
+    - name: http
+      port: 8008
+      targetPort: 8008
+      protocol: TCP
+    - name: metrics
+      port: 9090
+      targetPort: 9090
+      protocol: TCP
+
+---
+# HorizontalPodAutoscaler for automatic scaling based on CPU/memory
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: synapse-generic-worker
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: synapse
+    app.kubernetes.io/component: generic-worker
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: synapse-generic-worker
+  minReplicas: 2
+  maxReplicas: 16
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300  # Wait 5 minutes before scaling down
+      policies:
+        - type: Percent
+          value: 50
+          periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 60  # Quick scale up
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 30

@@ -1,0 +1,312 @@
+# Synapse Main Process StatefulSet
+# The primary Synapse homeserver process
+# Handles background tasks, pushers, and client/federation endpoints
+# Workers will be configured separately for horizontal scaling
+
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: synapse-main
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: synapse
+    app.kubernetes.io/component: homeserver
+    app.kubernetes.io/instance: main
+    matrix.instance: main
+spec:
+  serviceName: synapse-main
+  replicas: 1  # Main process should always be 1 replica
+  podManagementPolicy: Parallel
+
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: synapse
+      app.kubernetes.io/component: homeserver
+      app.kubernetes.io/instance: main
+
+  updateStrategy:
+    type: RollingUpdate
+
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: local-path  # Adjust for your storage class
+        resources:
+          requests:
+            storage: 100Gi  # Main process data (media will use S3)
+
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: synapse
+        app.kubernetes.io/component: homeserver
+        app.kubernetes.io/instance: main
+        matrix.instance: main
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/_synapse/metrics"
+
+    spec:
+      # Security context
+      securityContext:
+        runAsUser: 991
+        runAsGroup: 991
+        fsGroup: 991
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+
+      # Ensure pods are distributed across nodes for HA
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: synapse
+                topologyKey: kubernetes.io/hostname
+
+      # Init container to set up permissions and wait for database
+      initContainers:
+        - name: wait-for-postgres
+          image: postgres:16-alpine
+          command:
+            - sh
+            - -c
+            - |
+              until pg_isready -h matrix-postgresql-rw.matrix.svc.cluster.local -p 5432 -U synapse; do
+                echo "Waiting for PostgreSQL..."
+                sleep 2
+              done
+              echo "PostgreSQL is ready!"
+          env:
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: synapse-secrets
+                  key: DB_PASSWORD
+
+        - name: wait-for-redis
+          image: redis:7.2-alpine
+          command:
+            - sh
+            - -c
+            - |
+              until redis-cli -h redis.matrix.svc.cluster.local -p 6379 -a "$REDIS_PASSWORD" ping; do
+                echo "Waiting for Redis..."
+                sleep 2
+              done
+              echo "Redis is ready!"
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: synapse-secrets
+                  key: REDIS_PASSWORD
+
+        - name: generate-config
+          image: matrixdotorg/synapse:v1.119.0
+          command:
+            - sh
+            - -c
+            - |
+              # Process homeserver.yaml with environment variable substitution
+              envsubst < /config-template/homeserver.yaml > /config/homeserver.yaml
+              cp /config-template/log.yaml /config/log.yaml
+              cp /config-template/signing.key /config/signing.key
+
+              # Set proper permissions
+              chown -R 991:991 /config /data
+              chmod 600 /config/signing.key
+
+              echo "Configuration prepared successfully"
+          env:
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: synapse-secrets
+                  key: DB_PASSWORD
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: synapse-secrets
+                  key: REDIS_PASSWORD
+            - name: S3_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: synapse-secrets
+                  key: S3_ACCESS_KEY
+            - name: S3_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: synapse-secrets
+                  key: S3_SECRET_KEY
+            - name: REPLICATION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: synapse-secrets
+                  key: REPLICATION_SECRET
+            - name: MACAROON_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: synapse-secrets
+                  key: MACAROON_SECRET
+            - name: REGISTRATION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: synapse-secrets
+                  key: REGISTRATION_SECRET
+            - name: FORM_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: synapse-secrets
+                  key: FORM_SECRET
+            - name: TURN_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: synapse-secrets
+                  key: TURN_SECRET
+            - name: KEY_VAULT_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: synapse-secrets
+                  key: KEY_VAULT_API_KEY
+          volumeMounts:
+            - name: config-template
+              mountPath: /config-template
+            - name: config
+              mountPath: /config
+            - name: data
+              mountPath: /data
+            - name: signing-key
+              mountPath: /config-template/signing.key
+              subPath: signing.key
+
+      containers:
+        - name: synapse
+          image: matrixdotorg/synapse:v1.119.0
+          imagePullPolicy: IfNotPresent
+
+          # Run as main process (not worker)
+          command:
+            - python
+            - -m
+            - synapse.app.homeserver
+            - --config-path=/config/homeserver.yaml
+
+          ports:
+            - name: http
+              containerPort: 8008
+              protocol: TCP
+            - name: replication
+              containerPort: 9093
+              protocol: TCP
+            - name: metrics
+              containerPort: 9090
+              protocol: TCP
+
+          env:
+            - name: SYNAPSE_CONFIG_PATH
+              value: "/config/homeserver.yaml"
+            - name: UID
+              value: "991"
+            - name: GID
+              value: "991"
+
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            - name: data
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+
+          # Resource limits (adjust based on load)
+          resources:
+            requests:
+              memory: "2Gi"
+              cpu: "1000m"
+            limits:
+              memory: "4Gi"
+              cpu: "2000m"
+
+          # Liveness probe - check if Synapse is responding
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8008
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 5
+
+          # Readiness probe - check if Synapse is ready to serve traffic
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8008
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+          # Startup probe - give Synapse time to start (can be slow)
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8008
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 30  # 5 minutes max startup time
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 991
+            runAsGroup: 991
+            capabilities:
+              drop:
+                - ALL
+
+      volumes:
+        - name: config-template
+          configMap:
+            name: synapse-config
+        - name: config
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+        - name: signing-key
+          secret:
+            secretName: synapse-secrets
+            items:
+              - key: signing.key
+                path: signing.key
+                mode: 0600
+
+      # Pod disruption budget to ensure availability during updates
+      # Applied via separate PDB resource below
+
+---
+# PodDisruptionBudget to ensure main process stays available
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: synapse-main-pdb
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: synapse
+    app.kubernetes.io/component: homeserver
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: synapse
+      app.kubernetes.io/component: homeserver
+      app.kubernetes.io/instance: main

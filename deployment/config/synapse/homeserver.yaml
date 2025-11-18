@@ -1,13 +1,18 @@
 # Synapse Homeserver Configuration
 # Integrates with Phase 1 infrastructure (PostgreSQL, Redis, MinIO)
-# For production Matrix deployment with LI capabilities
+# Production Matrix deployment with LI capabilities and worker support
+
+# ==================== CORE SETTINGS ====================
 
 server_name: "matrix.example.com"
 public_baseurl: "https://matrix.example.com"
 pid_file: /data/homeserver.pid
+web_client_location: "https://element.matrix.example.com"
 
-# Listeners
+# ==================== LISTENERS ====================
+
 listeners:
+  # Client and Federation API (proxied via HAProxy)
   - port: 8008
     tls: false
     type: http
@@ -17,7 +22,20 @@ listeners:
       - names: [client, federation]
         compress: false
 
-# Database - CloudNativePG
+  # Replication endpoint for workers (internal only)
+  - port: 9093
+    type: http
+    bind_addresses: ['127.0.0.1']
+    resources:
+      - names: [replication]
+
+  # Metrics endpoint
+  - port: 9090
+    type: metrics
+    bind_addresses: ['0.0.0.0']
+
+# ==================== DATABASE ====================
+
 database:
   name: psycopg2
   args:
@@ -28,16 +46,42 @@ database:
     port: 5432
     sslmode: require
     cp_min: 5
-    cp_max: 10
+    cp_max: 50
 
-# Redis for worker replication
+# ==================== REDIS & WORKERS ====================
+
 redis:
   enabled: true
   host: redis.matrix.svc.cluster.local
   port: 6379
   password: CHANGEME_REDIS_PASSWORD
 
-# Media Storage - MinIO S3
+# Worker replication secret for security
+worker_replication_secret: "CHANGEME_REPLICATION_SECRET"
+
+# Instance mapping for workers
+instance_map:
+  main:
+    host: 127.0.0.1
+    port: 9093
+
+# Stream writers for distributed event persistence
+# Will be populated when workers are configured
+stream_writers:
+  events: main
+  typing: main
+  to_device: main
+  account_data: main
+  receipts: main
+  presence: main
+
+# ==================== MEDIA STORAGE ====================
+
+# Enable media repository on main process
+enable_media_repo: true
+media_store_path: "/data/media_store"
+
+# S3 storage provider for MinIO
 media_storage_providers:
   - module: s3_storage_provider.S3StorageProviderBackend
     store_local: true
@@ -49,20 +93,188 @@ media_storage_providers:
       access_key_id: synapse-s3-user
       secret_access_key: CHANGEME_S3_PASSWORD
 
-# Security
+# Media limits
+max_upload_size: 100M
+max_image_pixels: 32M
+
+# ==================== LAWFUL INTERCEPT (LI) ====================
+
+# CRITICAL: Infinite retention for deleted messages (LI compliance)
+redaction_retention_period: null
+
+# Recovery key module for E2EE key storage (integrates with key_vault)
+modules:
+  - module: synapse_recovery_key_storage.RecoveryKeyStorageModule
+    config:
+      backend_url: "http://key-vault.matrix.svc.cluster.local:8000"
+      api_key: "CHANGEME_KEY_VAULT_API_KEY"
+
+# ==================== FEDERATION ====================
+
+# Allow federation for production use
+federation_domain_whitelist: null  # null means allow all domains
+
+# Verify TLS certificates
+federation_verify_certificates: true
+
+# Federation rate limiting
+rc_federation:
+  window_size: 1000
+  sleep_limit: 10
+  sleep_delay: 500
+  reject_limit: 50
+  concurrent: 3
+
+# ==================== SECURITY & SECRETS ====================
+
 macaroon_secret_key: "CHANGEME_MACAROON"
 registration_shared_secret: "CHANGEME_REGISTRATION"
 form_secret: "CHANGEME_FORM"
+signing_key_path: "/config/signing.key"
 
-# Registration
+# Trusted key servers for federation
+trusted_key_servers:
+  - server_name: "matrix.org"
+
+# ==================== REGISTRATION & USERS ====================
+
+# Disable open registration (admin-only via shared secret)
 enable_registration: false
+enable_registration_without_verification: false
 
-# Performance
-event_cache_size: "10K"
+# Allow password changes
+enable_set_displayname: true
+enable_set_avatar_url: true
+enable_3pid_changes: true
 
-# Metrics
+# User directory
+user_directory:
+  enabled: true
+  search_all_users: false
+  prefer_local_users: true
+
+# ==================== RATE LIMITING ====================
+
+rc_message:
+  per_second: 0.2
+  burst_count: 10
+
+rc_registration:
+  per_second: 0.17
+  burst_count: 3
+
+rc_login:
+  address:
+    per_second: 0.17
+    burst_count: 3
+  account:
+    per_second: 0.17
+    burst_count: 3
+  failed_attempts:
+    per_second: 0.17
+    burst_count: 3
+
+rc_admin_redaction:
+  per_second: 1
+  burst_count: 50
+
+rc_joins:
+  local:
+    per_second: 0.1
+    burst_count: 10
+  remote:
+    per_second: 0.01
+    burst_count: 10
+
+rc_invites:
+  per_room:
+    per_second: 0.3
+    burst_count: 10
+  per_user:
+    per_second: 0.003
+    burst_count: 5
+
+# ==================== PERFORMANCE ====================
+
+event_cache_size: "50K"
+caches:
+  global_factor: 2.0
+  per_cache_factors:
+    get_users_in_room: 5.0
+
+# Background update performance
+background_updates:
+  min_batch_size: 1
+  default_batch_size: 100
+  sleep_enabled: true
+
+# ==================== TURN/STUN (coturn integration) ====================
+
+turn_uris:
+  - "turn:turn.matrix.example.com:3478?transport=udp"
+  - "turn:turn.matrix.example.com:3478?transport=tcp"
+  - "turns:turn.matrix.example.com:5349?transport=tcp"
+turn_shared_secret: "CHANGEME_TURN_SECRET"
+turn_user_lifetime: 86400000
+turn_allow_guests: false
+
+# ==================== PUSH NOTIFICATIONS (Sygnal) ====================
+
+push:
+  enabled: true
+
+# ==================== MONITORING ====================
+
 enable_metrics: true
-metrics_port: 9090
+metrics_flags:
+  known_servers: true
 
-# Logging
+# Report statistics
+report_stats: false
+
+# ==================== LOGGING ====================
+
 log_config: "/config/log.yaml"
+
+# ==================== EMAIL (Optional - configure for notifications) ====================
+
+# email:
+#   smtp_host: "smtp.example.com"
+#   smtp_port: 587
+#   smtp_user: "notifications@matrix.example.com"
+#   smtp_pass: "CHANGEME"
+#   force_tls: true
+#   notif_from: "Matrix Server <notifications@matrix.example.com>"
+#   app_name: "Matrix"
+
+# ==================== ADVANCED ====================
+
+# Presence tracking (can disable for performance)
+presence:
+  enabled: true
+
+# Room statistics (useful for admin tools)
+stats:
+  enabled: true
+
+# Forgotten room retention (LI: keep forever)
+forgotten_room_retention_period: null
+
+# Enable room list publication
+allow_public_rooms_without_auth: false
+allow_public_rooms_over_federation: true
+
+# URL preview settings
+url_preview_enabled: true
+url_preview_ip_range_blacklist:
+  - '127.0.0.0/8'
+  - '10.0.0.0/8'
+  - '172.16.0.0/12'
+  - '192.168.0.0/16'
+  - '100.64.0.0/10'
+  - '169.254.0.0/16'
+  - '::1/128'
+  - 'fe80::/64'
+  - 'fc00::/7'
+
+max_spider_size: 10M

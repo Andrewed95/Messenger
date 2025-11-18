@@ -1,0 +1,132 @@
+# Synapse Services
+# Provides network access to the Synapse main process and workers
+# HAProxy will route traffic to appropriate endpoints
+
+---
+# Headless service for StatefulSet (required for stable network identity)
+apiVersion: v1
+kind: Service
+metadata:
+  name: synapse-main
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: synapse
+    app.kubernetes.io/component: homeserver
+    app.kubernetes.io/instance: main
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: synapse
+    app.kubernetes.io/component: homeserver
+    app.kubernetes.io/instance: main
+  ports:
+    - name: http
+      port: 8008
+      targetPort: 8008
+      protocol: TCP
+    - name: replication
+      port: 9093
+      targetPort: 9093
+      protocol: TCP
+    - name: metrics
+      port: 9090
+      targetPort: 9090
+      protocol: TCP
+
+---
+# Client API service (used by HAProxy for routing)
+apiVersion: v1
+kind: Service
+metadata:
+  name: synapse-client
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: synapse
+    app.kubernetes.io/component: client-api
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9090"
+    prometheus.io/path: "/_synapse/metrics"
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: synapse
+    app.kubernetes.io/component: homeserver
+  ports:
+    - name: http
+      port: 8008
+      targetPort: 8008
+      protocol: TCP
+
+---
+# Federation API service (used by HAProxy for routing)
+apiVersion: v1
+kind: Service
+metadata:
+  name: synapse-federation
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: synapse
+    app.kubernetes.io/component: federation-api
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9090"
+    prometheus.io/path: "/_synapse/metrics"
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: synapse
+    app.kubernetes.io/component: homeserver
+  ports:
+    - name: http
+      port: 8008
+      targetPort: 8008
+      protocol: TCP
+    - name: https
+      port: 8448  # Standard Matrix federation port
+      targetPort: 8008
+      protocol: TCP
+
+---
+# Metrics service (used by Prometheus ServiceMonitor)
+apiVersion: v1
+kind: Service
+metadata:
+  name: synapse-metrics
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: synapse
+    app.kubernetes.io/component: metrics
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: synapse
+  ports:
+    - name: metrics
+      port: 9090
+      targetPort: 9090
+      protocol: TCP
+
+---
+# ServiceMonitor for Prometheus Operator
+# Automatically discovers and scrapes Synapse metrics
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: synapse
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: synapse
+    prometheus: kube-prometheus
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: synapse
+  endpoints:
+    - port: metrics
+      path: /_synapse/metrics
+      interval: 30s
+      scrapeTimeout: 10s
+  namespaceSelector:
+    matchNames:
+      - matrix

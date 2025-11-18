@@ -1,0 +1,305 @@
+# Federation Sender Worker Deployment
+# Handles outbound federation traffic to other Matrix servers
+# Runs federation_sender process type
+#
+# Scale: 1-8 replicas based on federation load
+# Multiple instances send to different remote servers
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: synapse-federation-sender
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: synapse
+    app.kubernetes.io/component: federation-sender
+    app.kubernetes.io/instance: main
+    matrix.instance: main
+spec:
+  replicas: 2  # Scale based on federation load: 1-8 replicas
+
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: synapse
+      app.kubernetes.io/component: federation-sender
+
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: synapse
+        app.kubernetes.io/component: federation-sender
+        app.kubernetes.io/instance: main
+        matrix.instance: main
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/_synapse/metrics"
+
+    spec:
+      securityContext:
+        runAsUser: 991
+        runAsGroup: 991
+        fsGroup: 991
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/component: federation-sender
+                topologyKey: kubernetes.io/hostname
+
+      initContainers:
+        - name: generate-worker-config
+          image: matrixdotorg/synapse:v1.119.0
+          command:
+            - sh
+            - -c
+            - |
+              # Create worker-specific config
+              cat > /config/worker.yaml <<EOF
+              worker_app: synapse.app.federation_sender
+              worker_name: federation_sender_${HOSTNAME}
+
+              # Replication
+              worker_replication_host: synapse-main-0.synapse-main.matrix.svc.cluster.local
+              worker_replication_http_port: 9093
+              worker_replication_http_tls: false
+
+              # Federation sender workers only need replication and metrics
+              worker_listeners:
+                - type: http
+                  port: 9093
+                  resources:
+                    - names: [replication]
+
+                - type: metrics
+                  port: 9090
+                  resources:
+                    - names: [metrics]
+
+              # Worker log config
+              worker_log_config: /config/log.yaml
+              EOF
+
+              # Process shared config
+              envsubst < /config-template/homeserver.yaml > /config/homeserver.yaml
+              cp /config-template/log.yaml /config/log.yaml
+              cp /config-template/signing.key /config/signing.key
+              chown -R 991:991 /config
+              chmod 600 /config/signing.key
+
+              echo "Federation sender worker configured for ${HOSTNAME}"
+          env:
+            - name: HOSTNAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: synapse-secrets
+                  key: DB_PASSWORD
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: synapse-secrets
+                  key: REDIS_PASSWORD
+            - name: S3_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: synapse-secrets
+                  key: S3_ACCESS_KEY
+            - name: S3_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: synapse-secrets
+                  key: S3_SECRET_KEY
+            - name: REPLICATION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: synapse-secrets
+                  key: REPLICATION_SECRET
+            - name: MACAROON_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: synapse-secrets
+                  key: MACAROON_SECRET
+            - name: REGISTRATION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: synapse-secrets
+                  key: REGISTRATION_SECRET
+            - name: FORM_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: synapse-secrets
+                  key: FORM_SECRET
+            - name: TURN_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: synapse-secrets
+                  key: TURN_SECRET
+            - name: KEY_VAULT_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: synapse-secrets
+                  key: KEY_VAULT_API_KEY
+          volumeMounts:
+            - name: config-template
+              mountPath: /config-template
+            - name: config
+              mountPath: /config
+            - name: signing-key
+              mountPath: /config-template/signing.key
+              subPath: signing.key
+
+      containers:
+        - name: worker
+          image: matrixdotorg/synapse:v1.119.0
+          imagePullPolicy: IfNotPresent
+
+          command:
+            - python
+            - -m
+            - synapse.app.federation_sender
+            - --config-path=/config/homeserver.yaml
+            - --config-path=/config/worker.yaml
+
+          ports:
+            - name: replication
+              containerPort: 9093
+              protocol: TCP
+            - name: metrics
+              containerPort: 9090
+              protocol: TCP
+
+          env:
+            - name: SYNAPSE_WORKER
+              value: "synapse.app.federation_sender"
+            - name: SYNAPSE_WORKER_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            - name: tmp
+              mountPath: /tmp
+
+          # Federation senders are network-heavy
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "1Gi"
+              cpu: "500m"
+
+          # Health probes via metrics endpoint
+          livenessProbe:
+            httpGet:
+              path: /_synapse/metrics
+              port: 9090
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+          readinessProbe:
+            httpGet:
+              path: /_synapse/metrics
+              port: 9090
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 2
+
+          startupProbe:
+            httpGet:
+              path: /_synapse/metrics
+              port: 9090
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 20
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 991
+            runAsGroup: 991
+            capabilities:
+              drop:
+                - ALL
+
+      volumes:
+        - name: config-template
+          configMap:
+            name: synapse-config
+        - name: config
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+        - name: signing-key
+          secret:
+            secretName: synapse-secrets
+            items:
+              - key: signing.key
+                path: signing.key
+                mode: 0600
+
+---
+# Headless service for federation senders
+apiVersion: v1
+kind: Service
+metadata:
+  name: synapse-federation-sender
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: synapse
+    app.kubernetes.io/component: federation-sender
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: synapse
+    app.kubernetes.io/component: federation-sender
+  ports:
+    - name: replication
+      port: 9093
+      targetPort: 9093
+      protocol: TCP
+    - name: metrics
+      port: 9090
+      targetPort: 9090
+      protocol: TCP
+
+---
+# PodDisruptionBudget - keep at least 1 federation sender running
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: synapse-federation-sender-pdb
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: synapse
+    app.kubernetes.io/component: federation-sender
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: synapse
+      app.kubernetes.io/component: federation-sender

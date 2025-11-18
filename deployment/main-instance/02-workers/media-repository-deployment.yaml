@@ -1,0 +1,342 @@
+# Media Repository Worker Deployment
+# Handles media upload and download endpoints
+# Endpoints: /_matrix/media/*, /_matrix/client/*/upload, /_matrix/client/*/download
+#
+# Scale: 2-8 replicas based on media traffic
+# Media is stored in MinIO S3, not locally
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: synapse-media-repository
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: synapse
+    app.kubernetes.io/component: media-repository
+    app.kubernetes.io/instance: main
+    matrix.instance: main
+spec:
+  replicas: 2  # Scale based on media load: 2-8 replicas
+
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: synapse
+      app.kubernetes.io/component: media-repository
+
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: synapse
+        app.kubernetes.io/component: media-repository
+        app.kubernetes.io/instance: main
+        matrix.instance: main
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/_synapse/metrics"
+
+    spec:
+      securityContext:
+        runAsUser: 991
+        runAsGroup: 991
+        fsGroup: 991
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/component: media-repository
+                topologyKey: kubernetes.io/hostname
+
+      initContainers:
+        - name: generate-worker-config
+          image: matrixdotorg/synapse:v1.119.0
+          command:
+            - sh
+            - -c
+            - |
+              # Create worker-specific config
+              cat > /config/worker.yaml <<EOF
+              worker_app: synapse.app.generic_worker
+              worker_name: media_repository_${HOSTNAME}
+
+              # Replication
+              worker_replication_host: synapse-main-0.synapse-main.matrix.svc.cluster.local
+              worker_replication_http_port: 9093
+              worker_replication_http_tls: false
+
+              # Media workers handle media endpoints
+              worker_listeners:
+                - type: http
+                  port: 8008
+                  resources:
+                    - names: [media]
+                  x_forwarded: true
+
+                - type: metrics
+                  port: 9090
+                  resources:
+                    - names: [metrics]
+
+              # CRITICAL: Enable media repo on this worker
+              enable_media_repo: true
+
+              # Worker log config
+              worker_log_config: /config/log.yaml
+              EOF
+
+              # Process shared config
+              envsubst < /config-template/homeserver.yaml > /config/homeserver.yaml
+              cp /config-template/log.yaml /config/log.yaml
+              cp /config-template/signing.key /config/signing.key
+              chown -R 991:991 /config
+              chmod 600 /config/signing.key
+
+              echo "Media repository worker configured for ${HOSTNAME}"
+          env:
+            - name: HOSTNAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: synapse-secrets
+                  key: DB_PASSWORD
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: synapse-secrets
+                  key: REDIS_PASSWORD
+            - name: S3_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: synapse-secrets
+                  key: S3_ACCESS_KEY
+            - name: S3_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: synapse-secrets
+                  key: S3_SECRET_KEY
+            - name: REPLICATION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: synapse-secrets
+                  key: REPLICATION_SECRET
+            - name: MACAROON_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: synapse-secrets
+                  key: MACAROON_SECRET
+            - name: REGISTRATION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: synapse-secrets
+                  key: REGISTRATION_SECRET
+            - name: FORM_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: synapse-secrets
+                  key: FORM_SECRET
+            - name: TURN_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: synapse-secrets
+                  key: TURN_SECRET
+            - name: KEY_VAULT_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: synapse-secrets
+                  key: KEY_VAULT_API_KEY
+          volumeMounts:
+            - name: config-template
+              mountPath: /config-template
+            - name: config
+              mountPath: /config
+            - name: signing-key
+              mountPath: /config-template/signing.key
+              subPath: signing.key
+
+      containers:
+        - name: worker
+          image: matrixdotorg/synapse:v1.119.0
+          imagePullPolicy: IfNotPresent
+
+          command:
+            - python
+            - -m
+            - synapse.app.generic_worker
+            - --config-path=/config/homeserver.yaml
+            - --config-path=/config/worker.yaml
+
+          ports:
+            - name: http
+              containerPort: 8008
+              protocol: TCP
+            - name: metrics
+              containerPort: 9090
+              protocol: TCP
+
+          env:
+            - name: SYNAPSE_WORKER
+              value: "synapse.app.generic_worker"
+            - name: SYNAPSE_WORKER_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            - name: tmp
+              mountPath: /tmp
+            # Media cache (optional local cache before S3)
+            - name: media-cache
+              mountPath: /data/media_store
+
+          # Media workers need more memory for thumbnailing
+          resources:
+            requests:
+              memory: "1Gi"
+              cpu: "500m"
+            limits:
+              memory: "2Gi"
+              cpu: "1000m"
+
+          # Health probes
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8008
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8008
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 2
+
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8008
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 20
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 991
+            runAsGroup: 991
+            capabilities:
+              drop:
+                - ALL
+
+      volumes:
+        - name: config-template
+          configMap:
+            name: synapse-config
+        - name: config
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+        - name: media-cache
+          emptyDir:
+            sizeLimit: 10Gi  # Local cache before S3
+        - name: signing-key
+          secret:
+            secretName: synapse-secrets
+            items:
+              - key: signing.key
+                path: signing.key
+                mode: 0600
+
+---
+# Service for media workers (used by HAProxy)
+apiVersion: v1
+kind: Service
+metadata:
+  name: synapse-media-repository
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: synapse
+    app.kubernetes.io/component: media-repository
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: synapse
+    app.kubernetes.io/component: media-repository
+  ports:
+    - name: http
+      port: 8008
+      targetPort: 8008
+      protocol: TCP
+    - name: metrics
+      port: 9090
+      targetPort: 9090
+      protocol: TCP
+
+---
+# HPA for media workers
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: synapse-media-repository
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: synapse
+    app.kubernetes.io/component: media-repository
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: synapse-media-repository
+  minReplicas: 2
+  maxReplicas: 8
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Percent
+          value: 50
+          periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 30
