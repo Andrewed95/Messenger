@@ -496,7 +496,6 @@ promtail:
 
 - **Retention Period**:  ()
 - **Storage Size**: 50Gi
-- **Estimated Log Volume**: 10-20GB/day at 20K CCU
 
 ### Adjusting Retention
 

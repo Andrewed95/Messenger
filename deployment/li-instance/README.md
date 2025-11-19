@@ -273,14 +273,18 @@ kubectl apply -f ../infrastructure/04-networking/sync-system-networkpolicy.yaml
 kubectl apply -f 04-sync-system/deployment.yaml
 
 # 4. Run replication setup job (CRITICAL - must run once)
+# Store job name in variable to use consistently
+JOB_NAME="sync-setup-$(date +%s)"
+
+# Create the job
 kubectl create job --from=job/sync-system-setup-replication \
-  sync-setup-$(date +%s) -n matrix
+  $JOB_NAME -n matrix
 
-# Wait for job to complete
-kubectl wait --for=condition=complete job/sync-setup-$(date +%s) -n matrix --timeout=300s
+# Wait for job to complete (using same job name)
+kubectl wait --for=condition=complete job/$JOB_NAME -n matrix --timeout=300s
 
-# Check replication status
-kubectl logs job/sync-setup-$(date +%s) -n matrix
+# Check replication status (using same job name)
+kubectl logs job/$JOB_NAME -n matrix
 
 # 5. Deploy Synapse LI
 kubectl apply -f 01-synapse-li/deployment.yaml

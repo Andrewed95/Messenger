@@ -198,8 +198,6 @@
 | MAS PostgreSQL | 3 | 4 vCPU | 8Gi | 50Gi |
 | **Total** | - | **9 vCPU** | **13Gi** | **50Gi** |
 
-**Cost Impact:** +$50-100/month for 100 CCU, +$150-300/month for 20K CCU
-
 ---
 
 ## 4. Architecture & Integration

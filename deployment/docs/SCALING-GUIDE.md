@@ -995,13 +995,13 @@ autovacuum_analyze_scale_factor = 0.025
 
 ### 8.1 Quick Reference Table
 
-| Scale | Servers | Total vCPU | Total RAM | Usable Storage | Monthly Cost (Cloud) | Monthly Cost (On-Prem) |
-|-------|---------|------------|-----------|----------------|---------------------|----------------------|
-| **100 CCU** | 15 | 92 | 180GB | 1TB | $480-730 | $470-830 |
-| **1K CCU** | 19 | 228 | 468GB | 2TB | $1,750-2,950 | $1,390-2,220 |
-| **5K CCU** | 24 | 448 | 1,056GB | 4TB | $5,700-9,300 | $4,170-6,940 |
-| **10K CCU** | 34 | 704 | 2,144GB | 8TB | $11,400-18,600 | $8,330-13,890 |
-| **20K CCU** | 51 | 1,024 | 3,712GB | 12TB | $22,800-37,300 | $16,670-27,780 |
+| Scale | Servers | Total vCPU | Total RAM | Usable Storage |
+|-------|---------|------------|-----------|----------------|
+| **100 CCU** | 15 | 92 | 180GB | 1TB |
+| **1K CCU** | 19 | 228 | 468GB | 2TB |
+| **5K CCU** | 24 | 448 | 1,056GB | 4TB |
+| **10K CCU** | 34 | 704 | 2,144GB | 8TB |
+| **20K CCU** | 51 | 1,024 | 3,712GB | 12TB |
 
 ### 8.2 When to Scale Up
 
@@ -1010,7 +1010,7 @@ autovacuum_analyze_scale_factor = 0.025
 | Indicator | Threshold | Action |
 |-----------|-----------|--------|
 | **Average CCU** | >70% of current tier | Plan upgrade to next tier |
-| **Peak CCU** | >90% of current tier | Urgent: Upgrade within  |
+| **Peak CCU** | >90% of current tier | Urgent: Plan immediate upgrade |
 | **CPU Usage** | >75% sustained | Add workers or upgrade nodes |
 | **Memory Usage** | >85% sustained | Upgrade node RAM |
 | **Database Connections** | >70% of max_connections | Add workers or scale database |

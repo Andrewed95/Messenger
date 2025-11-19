@@ -123,6 +123,8 @@ This section guides you through ALL configuration that must be done FIRST.
 
 Every `CHANGEME` value must be replaced with secure random strings.
 
+**WHERE:** Run these commands on your **management node** (the machine where kubectl is installed)
+
 **Generate secrets:**
 ```bash
 # Helper function to generate secure random strings
@@ -148,27 +150,36 @@ echo "KEY_VAULT_ENCRYPTION_KEY=$(generate_secret 32)"
 
 ### Step 2: Update All Secret Files
 
-Replace ALL `CHANGEME` placeholders with the secrets you generated:
+Replace ALL `CHANGEME` placeholders with the secrets you generated.
+
+**WHERE:** On your **management node**, in the `deployment/` directory (root of this repository)
+
+**WHAT:** You need to edit 7 YAML files to replace CHANGEME values with your generated secrets
 
 **Files to update:**
 ```bash
-# Find all files with CHANGEME values
-grep -r "CHANGEME" deployment/ --include="*.yaml" | cut -d: -f1 | sort -u
+# First, find all files with CHANGEME values
+# Run from the deployment directory:
+grep -r "CHANGEME" . --include="*.yaml" | cut -d: -f1 | sort -u
 
-# Key files that MUST be updated:
-deployment/main-instance/01-synapse/secrets.yaml              # 12 secrets
-deployment/li-instance/01-synapse-li/deployment.yaml          # 7 secrets
-deployment/main-instance/08-key-vault/deployment.yaml         # 4 secrets
-deployment/main-instance/06-coturn/deployment.yaml            # 2 secrets
-deployment/main-instance/07-sygnal/deployment.yaml            # 8 secrets (APNs/FCM)
-deployment/infrastructure/03-minio/secrets.yaml               # 2 secrets
-deployment/li-instance/04-sync-system/deployment.yaml         # 5 secrets
+# Key files that MUST be updated (paths relative to deployment/):
+main-instance/01-synapse/secrets.yaml              # 12 secrets
+li-instance/01-synapse-li/deployment.yaml          # 7 secrets
+main-instance/08-key-vault/deployment.yaml         # 4 secrets
+main-instance/06-coturn/deployment.yaml            # 2 secrets
+main-instance/07-sygnal/deployment.yaml            # 8 secrets (APNs/FCM)
+infrastructure/03-minio/secrets.yaml               # 2 secrets
+li-instance/04-sync-system/deployment.yaml         # 5 secrets
 ```
 
-**For each file:**
-1. Open with text editor: `nano <file>`
-2. Find and replace each `CHANGEME_*` with corresponding secret
-3. Save and close
+**HOW TO EDIT each file:**
+1. Open with text editor (from deployment directory):
+   ```bash
+   nano main-instance/01-synapse/secrets.yaml
+   ```
+2. Find each `CHANGEME_*` placeholder and replace with the corresponding secret from Step 1
+3. Save (Ctrl+O, Enter) and close (Ctrl+X)
+4. Repeat for all 7 files above
 
 ### Step 3: Configure Domains
 
@@ -183,57 +194,87 @@ element-li.example.com    → li-chat.your-domain.com  # Element LI
 turn.matrix.example.com   → turn.your-domain.com     # TURN server
 ```
 
-**Files to update (85 occurrences):**
+**Files to update (85 occurrences across multiple files):**
+
+**WHERE:** On your **management node**, in the `deployment/` directory
+
+**Key files that contain domain references (paths relative to deployment/):**
 ```bash
 # Main configuration
-deployment/main-instance/01-synapse/configmap.yaml
+main-instance/01-synapse/configmap.yaml
 
 # LI configuration
-deployment/li-instance/01-synapse-li/deployment.yaml
-deployment/li-instance/02-element-web-li/deployment.yaml
+li-instance/01-synapse-li/deployment.yaml
+li-instance/02-element-web-li/deployment.yaml
 
 # Element Web
-deployment/main-instance/02-element-web/deployment.yaml
+main-instance/02-element-web/deployment.yaml
 
 # Coturn, Ingress, Certificates
-deployment/main-instance/06-coturn/deployment.yaml
-deployment/infrastructure/04-networking/cert-manager-install.yaml
+main-instance/06-coturn/deployment.yaml
+infrastructure/04-networking/cert-manager-install.yaml
 ```
 
-**Use find-and-replace:**
+**HOW TO UPDATE - Option 1: Automated find-and-replace**
 ```bash
-# Example: Replace all occurrences
-find deployment/ -name "*.yaml" -type f -exec sed -i 's/matrix\.example\.com/your-domain.com/g' {} +
+# Run from the deployment directory:
+# Replace all occurrences (replace YOUR-DOMAIN.COM with your actual domain):
+find . -name "*.yaml" -type f -exec sed -i 's/matrix\.example\.com/YOUR-DOMAIN.COM/g' {} +
+find . -name "*.yaml" -type f -exec sed -i 's/matrix-li\.example\.com/li.YOUR-DOMAIN.COM/g' {} +
+find . -name "*.yaml" -type f -exec sed -i 's/element\.example\.com/chat.YOUR-DOMAIN.COM/g' {} +
+find . -name "*.yaml" -type f -exec sed -i 's/element-li\.example\.com/li-chat.YOUR-DOMAIN.COM/g' {} +
+find . -name "*.yaml" -type f -exec sed -i 's/turn\.matrix\.example\.com/turn.YOUR-DOMAIN.COM/g' {} +
 ```
+
+**HOW TO UPDATE - Option 2: Manual editing**
+Edit each file individually using nano and search/replace example.com with your domain.
 
 ### Step 4: Verify Storage Class
 
-Check your Kubernetes storage class exists:
+Check your Kubernetes storage class exists.
+
+**WHERE:** Run from your **management node**
+
+**WHAT:** Check which storage class your cluster uses for persistent volumes
 
 ```bash
 # List available storage classes
 kubectl get storageclass
 
-# Common names: standard, local-path, gp2, fast-ssd
+# Look for a default storage class (marked with "(default)")
+# Common names: standard, local-path, gp2, fast-ssd, longhorn
 ```
 
-**If your cluster uses a different name**, update these files:
-- `deployment/infrastructure/01-postgresql/main-cluster.yaml` (line 33)
-- `deployment/infrastructure/01-postgresql/li-cluster.yaml` (line 32)
-- `deployment/infrastructure/02-redis/redis-statefulset.yaml` (line 312)
-- `deployment/main-instance/01-synapse/main-statefulset.yaml` (line 35)
+**If your cluster uses a non-"standard" storage class name**, you must update these files:
 
-**Replace:**
+**WHERE TO EDIT:** On your **management node**, in the deployment directory, edit these 4 files:
+
+1. `infrastructure/01-postgresql/main-cluster.yaml` (line 33)
+2. `infrastructure/01-postgresql/li-cluster.yaml` (line 32)
+3. `infrastructure/02-redis/redis-statefulset.yaml` (line 312)
+4. `main-instance/01-synapse/main-statefulset.yaml` (line 35)
+
+**WHAT TO CHANGE:**
 ```yaml
-storageClassName: standard  # Change to your storage class name
+# Find this line in each file:
+storageClassName: standard
+
+# Replace "standard" with your actual storage class name:
+storageClassName: YOUR-STORAGE-CLASS-NAME
 ```
+
+**HOW TO EDIT:** Use nano to edit each file, find the line, replace "standard", save and exit.
 
 ### Step 5: Generate Synapse Signing Key
 
-Synapse requires a unique signing key:
+Synapse requires a unique signing key for federation.
+
+**WHERE:** Run on your **management node** (or any machine with Docker installed)
+
+**WHAT:** Generate a unique ed25519 signing key for your homeserver
 
 ```bash
-# Generate signing key
+# Generate signing key using Docker
 docker run --rm matrixdotorg/synapse:v1.119.0 generate_signing_key
 
 # Or if you have Synapse installed locally:
@@ -242,9 +283,22 @@ python -m synapse.app.homeserver \
     --generate-keys
 ```
 
-**Copy the output** (starts with `ed25519`) and update:
-- `deployment/main-instance/01-synapse/secrets.yaml`
-- `deployment/li-instance/01-synapse-li/deployment.yaml`
+**The output will look like:**
+```
+ed25519 a_long ed25519_key_string_here
+```
+
+**Copy the entire output** (starts with `ed25519`) and update these 2 files:
+
+**WHERE TO UPDATE:** On your **management node**, in the deployment directory, edit:
+
+1. `main-instance/01-synapse/secrets.yaml`
+   - Find the `signing.key` field
+   - Replace the value with your generated key
+
+2. `li-instance/01-synapse-li/deployment.yaml`
+   - Find `SYNAPSE_SIGNING_KEY` environment variable
+   - Replace the value with your generated key (same key for both)
 
 ### Step 6: Review Configuration Parameters
 
@@ -311,10 +365,19 @@ Before proceeding to deployment, verify:
 
 ## 📋 Deployment Steps (Execute After Configuration Above)
 
+**⚠️ IMPORTANT:** ALL commands below must be run from your **management node** (where kubectl and helm are installed)
+
+---
+
 ### **Phase 1: Core Infrastructure** (HA Database, Storage, Networking)
+
+**WHERE:** Run ALL commands in this phase from your **management node**
+
+**WORKING DIRECTORY:** `deployment/` (root of this repository)
 
 **Deploy PostgreSQL Clusters:**
 ```bash
+# Run from the deployment directory:
 # Main cluster (3 instances, HA)
 kubectl apply -f infrastructure/01-postgresql/main-cluster.yaml
 
@@ -328,6 +391,7 @@ kubectl wait --for=condition=Ready cluster/matrix-postgresql-li -n matrix --time
 
 **Deploy Redis Sentinel:**
 ```bash
+# Run from your management node in the deployment directory:
 kubectl apply -f infrastructure/02-redis/redis-statefulset.yaml
 
 # Wait for Redis to be ready
@@ -385,8 +449,13 @@ kubectl get pods -n ingress-nginx                # Ingress controller
 
 ### **Phase 2: Main Instance** (Synapse, Workers, Clients)
 
+**WHERE:** Run ALL commands in this phase from your **management node**
+
+**WORKING DIRECTORY:** `deployment/` (root of this repository)
+
 **1. Deploy Synapse Main Process:**
 ```bash
+# Run from your management node in the deployment directory:
 # Deploy configuration and secrets
 kubectl apply -f main-instance/01-synapse/configmap.yaml
 kubectl apply -f main-instance/01-synapse/secrets.yaml
@@ -455,20 +524,29 @@ kubectl exec -n matrix synapse-main-0 -- curl http://localhost:8008/health
 
 ### **Phase 3: LI Instance** (Lawful Intercept)
 
+**WHERE:** Run ALL commands in this phase from your **management node**
+
+**WORKING DIRECTORY:** `deployment/` (root of this repository)
+
 **1. Deploy Sync System (PostgreSQL Replication):**
 ```bash
+# Run from your management node in the deployment directory:
 # Deploy sync system components
 kubectl apply -f li-instance/04-sync-system/deployment.yaml
 
 # Run replication setup (ONE TIME ONLY)
+# Store job name in variable to use consistently
+JOB_NAME="sync-setup-$(date +%s)"
+
+# Create the job
 kubectl create job --from=job/sync-system-setup-replication \
-  sync-setup-$(date +%s) -n matrix
+  $JOB_NAME -n matrix
 
-# Wait for setup to complete
-kubectl wait --for=condition=complete job/sync-setup-$(date +%s) -n matrix --timeout=300s
+# Wait for setup to complete (using same job name)
+kubectl wait --for=condition=complete job/$JOB_NAME -n matrix --timeout=300s
 
-# Check replication status
-kubectl logs job/sync-setup-$(date +%s) -n matrix
+# Check replication status (using same job name)
+kubectl logs job/$JOB_NAME -n matrix
 ```
 
 **2. Deploy Synapse LI:**
@@ -515,8 +593,13 @@ kubectl get jobs -n matrix | grep sync-system-media
 
 ### **Phase 4: Monitoring Stack** (Prometheus, Grafana, Loki)
 
+**WHERE:** Run ALL commands in this phase from your **management node**
+
+**WORKING DIRECTORY:** `deployment/` (root of this repository)
+
 **1. Install Prometheus + Grafana:**
 ```bash
+# Run from your management node:
 helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
 helm repo update
 
@@ -596,8 +679,13 @@ kubectl port-forward -n monitoring svc/prometheus-grafana 3000:80
 
 ### **Phase 5: Antivirus System** (ClamAV + Content Scanner)
 
+**WHERE:** Run ALL commands in this phase from your **management node**
+
+**WORKING DIRECTORY:** `deployment/` (root of this repository)
+
 **1. Deploy ClamAV DaemonSet:**
 ```bash
+# Run from the deployment directory:
 kubectl apply -f antivirus/01-clamav/deployment.yaml
 
 # Wait for ClamAV to download virus definitions

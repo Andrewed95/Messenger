@@ -1,16 +1,16 @@
 # The Big Picture: Your Complete Matrix/Synapse Deployment Journey
 
-**This document provides the 10,000-foot view of your entire deployment journey from start to finish.**
+**This document provides the high-level conceptual view of your entire deployment journey from start to finish.**
 
 ---
 
 ## 📖 Table of Contents
 
 1. [What Are You Building?](#what-are-you-building)
-2. [The Complete Journey (Step by Step)](#the-complete-journey)
+2. [The Complete Journey](#the-complete-journey)
 3. [Architecture & Component Diagrams](#architecture--component-diagrams)
 4. [Directory Structure Explained](#directory-structure-explained)
-5. [Configuration Files Deep Dive](#configuration-files-deep-dive)
+5. [Configuration Overview](#configuration-overview)
 6. [The Data Flow](#the-data-flow)
 7. [Why Each Component Exists](#why-each-component-exists)
 8. [Final Topology Diagram](#final-topology-diagram)
@@ -37,7 +37,7 @@ You're building a **production-grade Matrix homeserver** with these capabilities
 
 ### 🏗️ Infrastructure Features
 - **High Availability**: Automatic failover for database, cache, storage
-- **Scalable**: From 100 to 20,000+ concurrent users
+- **Scalable**: Support for growing concurrent user base
 - **Secure**: Zero-trust networking, TLS everywhere, antivirus scanning
 - **Observable**: Prometheus metrics, Grafana dashboards, Loki logs
 
@@ -52,30 +52,30 @@ Here's your path from zero to a running production Matrix homeserver:
 │                    YOUR DEPLOYMENT JOURNEY                      │
 └─────────────────────────────────────────────────────────────────┘
 
-📚 PHASE 0: UNDERSTAND & PREPARE (1-2 hours)
+📚 PHASE 0: UNDERSTAND & PREPARE
    ├─ Read this document (BIGPICTURE.md)
    ├─ Understand what you're building
    └─ Gather prerequisites (servers, domains, etc.)
         ↓
-🔧 PHASE 1: SETUP FOUNDATION (2-4 hours)
+🔧 PHASE 1: SETUP FOUNDATION
    ├─ Setup management node (docs/00-WORKSTATION-SETUP.md)
    ├─ Deploy Kubernetes cluster (docs/00-KUBERNETES-INSTALLATION-DEBIAN-OVH.md)
    └─ Determine resource requirements (docs/SCALING-GUIDE.md)
         ↓
-⚙️ PHASE 2: CONFIGURATION (1-2 hours)
+⚙️ PHASE 2: CONFIGURATION
    ├─ Generate secrets
    ├─ Update YAML files with secrets
    ├─ Configure domains
    ├─ Verify storage class
    └─ Review all parameters
         ↓
-🚀 PHASE 3: INFRASTRUCTURE DEPLOYMENT (30-60 min)
+🚀 PHASE 3: INFRASTRUCTURE DEPLOYMENT
    ├─ PostgreSQL (main + LI databases)
    ├─ Redis Sentinel (caching + workers)
    ├─ MinIO (S3-compatible object storage)
    └─ Networking (ingress, TLS, network policies)
         ↓
-💬 PHASE 4: MAIN INSTANCE DEPLOYMENT (30-60 min)
+💬 PHASE 4: MAIN INSTANCE DEPLOYMENT
    ├─ Synapse main process
    ├─ Synapse workers (5 types for horizontal scaling)
    ├─ HAProxy (load balancer)
@@ -85,22 +85,22 @@ Here's your path from zero to a running production Matrix homeserver:
    ├─ key_vault (E2EE recovery)
    └─ LiveKit (optional video/voice)
         ↓
-🔍 PHASE 5: LI INSTANCE DEPLOYMENT (20-40 min)
+🔍 PHASE 5: LI INSTANCE DEPLOYMENT
    ├─ Sync system (DB replication + media sync)
    ├─ Synapse LI (read-only instance)
    ├─ Element Web LI (shows deleted messages)
    └─ Synapse Admin LI (forensics interface)
         ↓
-📊 PHASE 6: MONITORING DEPLOYMENT (20-30 min)
+📊 PHASE 6: MONITORING DEPLOYMENT
    ├─ Prometheus (metrics collection)
    ├─ Grafana (dashboards)
    └─ Loki (log aggregation)
         ↓
-🛡️ PHASE 7: ANTIVIRUS DEPLOYMENT (15-30 min)
+🛡️ PHASE 7: ANTIVIRUS DEPLOYMENT
    ├─ ClamAV (virus scanner)
    └─ Content Scanner (media proxy with AV)
         ↓
-✅ PHASE 8: VERIFICATION & TESTING (30 min)
+✅ PHASE 8: VERIFICATION & TESTING
    ├─ Verify all pods running
    ├─ Create first user
    ├─ Test login via Element Web
@@ -114,7 +114,7 @@ Here's your path from zero to a running production Matrix homeserver:
 
 ## Architecture & Component Diagrams
 
-### 1. **The Foundation Layer** (What you deploy in Phase 3)
+### 1. **The Foundation Layer** (Phase 3: Infrastructure)
 
 ```
 ┌────────────────────────────────────────────────────────────────────┐
@@ -162,10 +162,9 @@ Here's your path from zero to a running production Matrix homeserver:
 │  │  ┌──────┐  ┌──────┐  ┌──────┐  ┌──────┐             │        │
 │  │  │ Node │  │ Node │  │ Node │  │ Node │             │        │
 │  │  │  1   │  │  2   │  │  3   │  │  4   │             │        │
-│  │  │ 2 TB │  │ 2 TB │  │ 2 TB │  │ 2 TB │             │        │
 │  │  └──────┘  └──────┘  └──────┘  └──────┘             │        │
-│  │  Total: 8 TB raw = 4 TB usable (50% efficiency)      │        │
-│  │  Fault tolerance: Can lose ANY 4 drives              │        │
+│  │  Distributed across nodes with fault tolerance        │        │
+│  │  Erasure coding provides data redundancy              │        │
 │  │  Buckets: synapse-media, synapse-media-li, backups   │        │
 │  └────────────────────────────────────────────────────────┘        │
 │  Files: infrastructure/03-minio/                                   │
@@ -198,15 +197,15 @@ Here's your path from zero to a running production Matrix homeserver:
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-**What you do in this phase:**
-- **Directory**: `infrastructure/`
-- **Action**: Run kubectl apply commands to deploy databases, cache, storage, networking
-- **Configuration**: Minimal - mostly just secrets (already configured in Phase 2)
-- **Result**: You now have a secure, highly-available data platform ready for Synapse
+**What this phase provides:**
+- **Location**: `infrastructure/` directory
+- **Purpose**: Deploy databases, cache, storage, networking - the foundation that Synapse builds upon
+- **Configuration**: Primarily secrets and storage class configuration (done in Phase 2)
+- **Outcome**: A secure, highly-available data platform ready for the Matrix homeserver
 
 ---
 
-### 2. **The Main Instance** (What you deploy in Phase 4)
+### 2. **The Main Instance** (Phase 4: Your Production Homeserver)
 
 ```
 ┌────────────────────────────────────────────────────────────────────┐
@@ -290,15 +289,15 @@ Purpose: Handle all Matrix protocol operations
 └────────────────────────────────────────────────────────────────────┘
 ```
 
-**What you do in this phase:**
-- **Directory**: `main-instance/`
-- **Action**: Deploy Synapse main, workers, HAProxy, and all supporting services
-- **Configuration**: Already done in Phase 2 (secrets, domains)
-- **Result**: You have a fully functional Matrix homeserver accepting chat, calls, media
+**What this phase provides:**
+- **Location**: `main-instance/` directory
+- **Purpose**: Deploy the actual Matrix homeserver with all supporting services
+- **Configuration**: Secrets, domains, and service-specific settings (configured in Phase 2)
+- **Outcome**: A fully functional Matrix homeserver accepting chat, calls, media uploads
 
 ---
 
-### 3. **The LI (Lawful Intercept) Instance** (What you deploy in Phase 5)
+### 3. **The LI (Lawful Intercept) Instance** (Phase 5: Compliance)
 
 ```
 ┌────────────────────────────────────────────────────────────────────┐
@@ -315,7 +314,7 @@ Purpose: Handle all Matrix protocol operations
 │  │  │  (Primary)     │ Stream  │  (Read-only    │          │  │
 │  │  │                │ WAL     │   Replica)     │          │  │
 │  │  └────────────────┘         └────────────────┘          │  │
-│  │  • Streaming replication (< 1 second lag)               │  │
+│  │  • Streaming replication with minimal lag               │  │
 │  │  • Deleted messages PRESERVED in LI DB                  │  │
 │  │  • redaction_retention_period: null (infinite)          │  │
 │  └──────────────────────────────────────────────────────────┘  │
@@ -324,8 +323,7 @@ Purpose: Handle all Matrix protocol operations
 │  │  ┌────────────────┐         ┌────────────────┐          │  │
 │  │  │  Main MinIO    │────────►│   LI MinIO     │          │  │
 │  │  │  Bucket        │ Sync    │   Bucket       │          │  │
-│  │  │                │ Every   │                │          │  │
-│  │  │                │ 1 hour  │                │          │  │
+│  │  │                │ Periodic│                │          │  │
 │  │  └────────────────┘         └────────────────┘          │  │
 │  │  • Deleted media files PRESERVED in LI bucket           │  │
 │  │  • Full media history maintained                        │  │
@@ -384,13 +382,13 @@ Purpose: Handle all Matrix protocol operations
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-**What you do in this phase:**
-- **Directory**: `li-instance/`
-- **Action**: Deploy sync system, then Synapse LI, Element Web LI, Admin LI
-- **Configuration**: Already done in Phase 2
-- **Result**: You have a compliance-ready forensics system with complete message history
+**What this phase provides:**
+- **Location**: `li-instance/` directory
+- **Purpose**: Deploy compliance-ready forensics system with complete message history
+- **Configuration**: LI-specific credentials and database/storage endpoints (configured in Phase 2)
+- **Outcome**: Legal compliance with preserved deleted messages while maintaining E2EE privacy
 
-**Why this exists**: 
+**Why this exists**:
 - Legal requirement for enterprise deployments
 - Preserves deleted messages for law enforcement requests
 - Cannot access E2EE keys (privacy preserved for encrypted rooms)
@@ -398,7 +396,7 @@ Purpose: Handle all Matrix protocol operations
 
 ---
 
-### 4. **Monitoring Stack** (What you deploy in Phase 6)
+### 4. **Monitoring Stack** (Phase 6: Observability)
 
 ```
 ┌────────────────────────────────────────────────────────────────────┐
@@ -417,7 +415,7 @@ Purpose: Handle all Matrix protocol operations
 │  │  • HAProxy (stats endpoint)                              │  │
 │  │  • Kubernetes (node metrics, pod metrics)                │  │
 │  │                                                           │  │
-│  │  Stores: 30 days of metrics history                      │  │
+│  │  Stores metrics history for trend analysis               │  │
 │  │  Alerts: PrometheusRules for critical conditions         │  │
 │  └──────────────────────────────────────────────────────────┘  │
 │  Files: monitoring/01-prometheus/                              │
@@ -448,7 +446,7 @@ Purpose: Handle all Matrix protocol operations
 │  │  • PostgreSQL pods                                       │  │
 │  │  • All infrastructure components                         │  │
 │  │                                                           │  │
-│  │  Retention: 30 days                                      │  │
+│  │  Configurable retention period                           │  │
 │  │  Searchable via Grafana Explore                          │  │
 │  └──────────────────────────────────────────────────────────┘  │
 │  Files: monitoring/03-loki/                                    │
@@ -456,21 +454,21 @@ Purpose: Handle all Matrix protocol operations
 └─────────────────────────────────────────────────────────────────┘
 
                     ┌──────────────────┐
-                    │  You access via: │
+                    │  Access via:     │
                     │  Grafana UI      │
-                    │  Port 3000       │
+                    │  Web interface   │
                     └──────────────────┘
 ```
 
-**What you do in this phase:**
-- **Directory**: `monitoring/`
-- **Action**: Install Prometheus/Grafana via Helm, deploy ServiceMonitors and dashboards
-- **Configuration**: Minimal (already in values/ directory)
-- **Result**: You have complete visibility into system health and performance
+**What this phase provides:**
+- **Location**: `monitoring/` directory
+- **Purpose**: Deploy comprehensive observability stack with metrics, dashboards, and logs
+- **Configuration**: Primarily Helm values for Prometheus/Grafana/Loki installation
+- **Outcome**: Complete visibility into system health, performance, and troubleshooting capabilities
 
 ---
 
-### 5. **Antivirus Protection** (What you deploy in Phase 7)
+### 5. **Antivirus Protection** (Phase 7: Security)
 
 ```
 ┌────────────────────────────────────────────────────────────────────┐
@@ -500,7 +498,7 @@ CLIENT UPLOADS MEDIA
 │  │  5. If clean: Serve + cache result                      │  │
 │  │     If infected: Return HTTP 403 + cache result         │  │
 │  └──────────────────────────────────────────────────────────┘  │
-│  Replicas: 3 (horizontal scaling)                              │
+│  Replicas: Multiple pods for horizontal scaling                │
 │  Files: antivirus/02-scan-workers/                             │
 │  Purpose: Intercept all media requests for scanning            │
 └──────────────┬──────────────────────────────────────────────────┘
@@ -510,8 +508,8 @@ CLIENT UPLOADS MEDIA
 │                    ClamAV DaemonSet                             │
 │  ┌──────────────────────────────────────────────────────────┐  │
 │  │  • ClamAV daemon (clamd) - Virus scanning engine        │  │
-│  │  • FreshClam - Auto-update virus definitions (hourly)   │  │
-│  │  • 8M+ virus signatures                                 │  │
+│  │  • FreshClam - Auto-update virus definitions            │  │
+│  │  • Extensive virus signature database                   │  │
 │  │  • Scans: executables, archives, PDFs, Office docs      │  │
 │  │  • Deployed on EVERY application node (DaemonSet)       │  │
 │  └──────────────────────────────────────────────────────────┘  │
@@ -520,11 +518,11 @@ CLIENT UPLOADS MEDIA
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-**What you do in this phase:**
-- **Directory**: `antivirus/`
-- **Action**: Deploy ClamAV DaemonSet, then Content Scanner
-- **Configuration**: Minimal (default settings work)
-- **Result**: All uploaded media is automatically scanned for malware
+**What this phase provides:**
+- **Location**: `antivirus/` directory
+- **Purpose**: Deploy malware protection for all uploaded media files
+- **Configuration**: Minimal configuration (default settings are production-ready)
+- **Outcome**: Automatic virus scanning for all media uploads/downloads
 
 **Why this exists**:
 - Protect users from malware in uploaded files
@@ -540,113 +538,113 @@ Here's what each directory contains and WHY it exists:
 ```
 deployment/
 ├── README.md                    ← YOUR STARTING POINT
-│   Purpose: Complete deployment guide with all steps
+│   Purpose: Complete deployment guide with all detailed steps
 │   When: Read AFTER 00-WORKSTATION-SETUP and 00-KUBERNETES-INSTALLATION
 │
 ├── BIGPICTURE.md               ← YOU ARE HERE
-│   Purpose: Understand the entire journey
+│   Purpose: Understand the conceptual architecture and journey
 │   When: Read FIRST to get oriented
 │
 ├── namespace.yaml              ← Creates "matrix" namespace
 │   Purpose: Kubernetes namespace where everything deploys
-│   When: Auto-applied by scripts, or manual first step
+│   When: First deployment step (or auto-applied by scripts)
 │
 ├── infrastructure/             ← PHASE 3: Foundation
 │   │
-│   ├── 01-postgresql/         
-│   │   ├── main-cluster.yaml       → Main database (3 replicas, HA)
-│   │   └── li-cluster.yaml         → LI database (2 replicas, read-only)
+│   ├── 01-postgresql/
+│   │   ├── main-cluster.yaml       → Main database (HA cluster)
+│   │   └── li-cluster.yaml         → LI database (read-only replicas)
 │   │   Purpose: Store messages, users, rooms, events
-│   │   Configuration: Secrets (already done), storage class
+│   │   Configuration: Secrets, storage class, replica count
 │   │
 │   ├── 02-redis/
-│   │   └── redis-statefulset.yaml  → Redis + Sentinel (3 pods, HA)
+│   │   └── redis-statefulset.yaml  → Redis + Sentinel (HA)
 │   │   Purpose: Cache hot data, worker communication
-│   │   Configuration: Password (already in secrets)
+│   │   Configuration: Password, memory limits
 │   │
 │   ├── 03-minio/
-│   │   ├── tenant.yaml             → MinIO cluster (4 nodes, EC:4)
+│   │   ├── tenant.yaml             → MinIO cluster (distributed)
 │   │   └── secrets.yaml            → MinIO credentials
 │   │   Purpose: S3-compatible object storage for media
-│   │   Configuration: Access keys (you update secrets.yaml)
+│   │   Configuration: Access keys, storage size
 │   │
 │   └── 04-networking/
-│       ├── networkpolicies.yaml    → 13 security policies
+│       ├── networkpolicies.yaml    → Zero-trust security policies
 │       ├── cert-manager-install.yaml → TLS certificates
 │       └── sync-system-networkpolicy.yaml → LI sync isolation
-│       Purpose: Ingress routing, TLS, zero-trust security
-│       Configuration: Domains (via Helm values)
+│       Purpose: Ingress routing, TLS, network security
+│       Configuration: Domains, TLS issuers
 │
 ├── main-instance/              ← PHASE 4: Your Homeserver
 │   │
 │   ├── 01-synapse/
 │   │   ├── configmap.yaml          → homeserver.yaml + log.yaml
-│   │   ├── secrets.yaml            → 12 Synapse secrets
-│   │   ├── main-statefulset.yaml   → Synapse main process (1 pod)
+│   │   ├── secrets.yaml            → Synapse secrets
+│   │   ├── main-statefulset.yaml   → Synapse main process
 │   │   ├── services.yaml           → Kubernetes services
 │   │   └── README.md               → Technical architecture details
 │   │   Purpose: Core Matrix homeserver process
-│   │   Configuration: Secrets, domains (in configmap.yaml)
+│   │   Configuration: Secrets, domains, federation settings
 │   │
 │   ├── 02-element-web/
-│   │   └── deployment.yaml         → Element Web UI (2 replicas)
+│   │   └── deployment.yaml         → Element Web UI
 │   │   Purpose: Web-based chat interface
 │   │   Configuration: Domain, homeserver URL
 │   │
 │   ├── 02-workers/
-│   │   ├── synchrotron-deployment.yaml    → /sync workers (2 pods)
-│   │   ├── generic-worker-deployment.yaml → General APIs (2 pods)
+│   │   ├── synchrotron-deployment.yaml    → /sync workers
+│   │   ├── generic-worker-deployment.yaml → General APIs
 │   │   ├── media-repository-deployment.yaml → (future expansion)
-│   │   ├── event-persister-deployment.yaml → DB writes (2 pods)
-│   │   └── federation-sender-deployment.yaml → Outbound federation (2 pods)
+│   │   ├── event-persister-deployment.yaml → DB writes
+│   │   └── federation-sender-deployment.yaml → Outbound federation
 │   │   Purpose: Horizontal scaling for Matrix APIs
 │   │   Configuration: Inherits from main configmap
 │   │
 │   ├── 03-haproxy/
-│   │   └── deployment.yaml         → HAProxy (2 replicas) + config
+│   │   └── deployment.yaml         → HAProxy + routing config
 │   │   Purpose: Intelligent routing to workers
-│   │   Configuration: Embedded in deployment.yaml
+│   │   Configuration: Worker endpoints, routing rules
 │   │
 │   ├── 04-livekit/
-│   │   └── README.md               → Helm reference only
+│   │   └── README.md               → Helm installation reference
 │   │   Purpose: Optional high-quality video/voice calls
 │   │   Configuration: values/livekit-values.yaml
 │   │
 │   ├── 06-coturn/
-│   │   └── deployment.yaml         → coturn (2 replicas)
+│   │   └── deployment.yaml         → coturn TURN/STUN server
 │   │   Purpose: NAT traversal for voice/video calls
-│   │   Configuration: Shared secret, domains
+│   │   Configuration: Shared secret, domains, port ranges
 │   │
 │   ├── 07-sygnal/
-│   │   └── deployment.yaml         → Sygnal (1 replica)
+│   │   └── deployment.yaml         → Sygnal push gateway
 │   │   Purpose: Push notifications to mobile apps
-│   │   Configuration: APNs/FCM credentials (8 secrets)
+│   │   Configuration: APNs/FCM credentials
 │   │
 │   └── 08-key-vault/
-│       └── deployment.yaml         → Django app (1 replica)
-│       Purpose: E2EE backup key storage
-│       Configuration: API key, Django secret, encryption key
+│       └── deployment.yaml         → E2EE key backup service
+│       Purpose: Store encryption key backups
+│       Configuration: API keys, Django secret, encryption key
 │
 ├── li-instance/                ← PHASE 5: Compliance
 │   │
 │   ├── 01-synapse-li/
-│   │   └── deployment.yaml         → Read-only Synapse (1 pod)
+│   │   └── deployment.yaml         → Read-only Synapse instance
 │   │   Purpose: Forensics access to deleted messages
-│   │   Configuration: Points to LI database/MinIO
+│   │   Configuration: LI database/MinIO endpoints
 │   │
 │   ├── 02-element-web-li/
-│   │   └── deployment.yaml         → Element Web for LI (1 pod)
+│   │   └── deployment.yaml         → Element Web for LI
 │   │   Purpose: UI showing deleted messages
 │   │   Configuration: Domain, LI homeserver URL
 │   │
 │   ├── 03-synapse-admin-li/
-│   │   └── deployment.yaml         → Admin interface (1 pod)
+│   │   └── deployment.yaml         → Admin interface
 │   │   Purpose: Forensics and user management
 │   │   Configuration: LI homeserver URL
 │   │
 │   ├── 04-sync-system/
-│   │   └── deployment.yaml         → Replication + sync (1 pod + job)
-│   │   Purpose: Keep LI database and media in sync
+│   │   └── deployment.yaml         → Replication + sync jobs
+│   │   Purpose: Keep LI database and media synchronized
 │   │   Configuration: DB credentials, MinIO credentials
 │   │
 │   └── README.md               → Complete LI architecture guide
@@ -666,7 +664,7 @@ deployment/
 │   │   Configuration: Via Helm values
 │   │
 │   └── 03-loki/
-│       └── README.md               → Helm reference
+│       └── README.md               → Helm installation reference
 │       Purpose: Log aggregation
 │       Configuration: values/loki-values.yaml
 │
@@ -675,12 +673,12 @@ deployment/
 │   ├── 01-clamav/
 │   │   └── deployment.yaml         → ClamAV DaemonSet
 │   │   Purpose: Virus scanning engine on every node
-│   │   Configuration: Auto-updates enabled
+│   │   Configuration: Auto-updates, resource limits
 │   │
 │   ├── 02-scan-workers/
-│   │   └── deployment.yaml         → Content Scanner (3 replicas)
+│   │   └── deployment.yaml         → Content Scanner workers
 │   │   Purpose: Media proxy with AV scanning
-│   │   Configuration: ClamAV endpoint
+│   │   Configuration: ClamAV endpoint, replica count
 │   │
 │   └── README.md               → Antivirus architecture
 │       Purpose: Understand AV integration
@@ -700,8 +698,8 @@ deployment/
 │   └── livekit-values.yaml          → LiveKit media server
 │
 ├── scripts/                    ← Automation Scripts
-│   ├── deploy-all.sh           → Deploy all 5 phases automatically
-│   ├── validate-deployment.sh  → Verify everything is healthy
+│   ├── deploy-all.sh           → Automated multi-phase deployment
+│   ├── validate-deployment.sh  → Comprehensive health checks
 │   └── README.md               → Script documentation
 │
 └── docs/                       ← Reference Documentation
@@ -719,71 +717,61 @@ deployment/
 
 ---
 
-## Configuration Files Deep Dive
+## Configuration Overview
 
-### What Files You Actually Edit
+### High-Level Configuration Areas
 
-During **Phase 2: Configuration**, you edit these files:
+During **Phase 2: Configuration**, you'll prepare the deployment by editing specific files. The main README.md provides detailed step-by-step instructions, but here's the conceptual overview:
 
-#### 1. **Secret Files** (Replace CHANGEME values)
+#### 1. **Secrets Management**
 
-| File | Secrets | Purpose |
-|------|---------|---------|
-| `main-instance/01-synapse/secrets.yaml` | 12 secrets | Synapse main passwords/keys |
-| `li-instance/01-synapse-li/deployment.yaml` | 7 secrets | LI instance credentials |
-| `main-instance/08-key-vault/deployment.yaml` | 4 secrets | Key vault API, Django, encryption |
-| `main-instance/06-coturn/deployment.yaml` | 2 secrets | TURN shared secret |
-| `main-instance/07-sygnal/deployment.yaml` | 8 secrets | APNs/FCM push credentials |
-| `infrastructure/03-minio/secrets.yaml` | 2 secrets | MinIO root credentials |
-| `li-instance/04-sync-system/deployment.yaml` | 5 secrets | Replication credentials |
+You need to generate and configure secrets across multiple components:
 
-**Total: 40 secrets to generate and update**
+| Component Area | What Needs Configuration | Purpose |
+|----------------|-------------------------|---------|
+| Synapse | Registration shared secret, macaroon secret key, form secret, signing key | Core homeserver authentication and security |
+| PostgreSQL | Database passwords for main and LI clusters | Database access control |
+| Redis | Redis password | Cache access control |
+| MinIO | Root credentials, application access keys | Object storage authentication |
+| coturn | Shared secret for TURN authentication | VoIP relay access control |
+| Sygnal | APNs and FCM credentials | Push notification authentication |
+| key_vault | API keys, Django secret, encryption key | E2EE backup security |
+| LI Instance | Replication credentials, sync credentials | Compliance system access |
 
-**How to update**:
-1. Generate secret: `openssl rand -base64 32`
-2. Find `CHANGEME_*` in file
-3. Replace with generated value
-4. Save file
+**Conceptual approach**: Generate strong random secrets and systematically update all `CHANGEME_*` placeholders in YAML files.
 
-#### 2. **Domain Files** (Replace example.com)
+#### 2. **Domain Configuration**
 
-| File | What to Change |
-|------|----------------|
-| `main-instance/01-synapse/configmap.yaml` | `server_name`, `public_baseurl` |
-| `main-instance/02-element-web/deployment.yaml` | `default_server_config.m.homeserver.base_url` |
-| `li-instance/01-synapse-li/deployment.yaml` | `server_name`, `public_baseurl` |
-| `li-instance/02-element-web-li/deployment.yaml` | homeserver URL |
-| `main-instance/06-coturn/deployment.yaml` | realm |
-| `infrastructure/04-networking/cert-manager-install.yaml` | certificate domains |
-| All Ingress manifests | `spec.rules[].host` |
+Your deployment will be accessed via domain names. You'll need to:
 
-**Total: ~85 occurrences of example.com**
+- Configure your primary Matrix server domain (server_name)
+- Set up subdomains for various services (Element Web, Grafana, etc.)
+- Update Ingress resources with actual domain names
+- Configure TLS certificates for each domain
+- Update service URLs in homeserver configuration
 
-**How to update**:
-Use find-and-replace:
-```bash
-find deployment/ -name "*.yaml" -exec sed -i 's/matrix\.example\.com/your-domain.com/g' {} +
-```
+**Conceptual approach**: Replace all `example.com` references with your actual domain throughout the YAML files.
 
-#### 3. **Storage Class** (If not using "standard")
+#### 3. **Storage Configuration**
 
-| File | Line | What to Change |
-|------|------|----------------|
-| `infrastructure/01-postgresql/main-cluster.yaml` | 33 | `storageClassName` |
-| `infrastructure/01-postgresql/li-cluster.yaml` | 32 | `storageClassName` |
-| `infrastructure/02-redis/redis-statefulset.yaml` | 312 | `storageClassName` |
-| `main-instance/01-synapse/main-statefulset.yaml` | 35 | `storageClassName` |
+The deployment uses Kubernetes persistent volumes:
 
-#### 4. **Synapse Signing Key** (Generate once)
+- Verify your cluster has a default `StorageClass`
+- Optionally specify custom storage classes for databases, media, etc.
+- Configure storage sizes based on your scale requirements
 
-Generate:
-```bash
-docker run --rm matrixdotorg/synapse:latest generate_signing_key
-```
+**Conceptual approach**: Ensure storage infrastructure is ready before deployment begins.
 
-Update:
-- `main-instance/01-synapse/secrets.yaml` → `signing.key`
-- `li-instance/01-synapse-li/deployment.yaml` → `SYNAPSE_SIGNING_KEY`
+#### 4. **Scaling Parameters**
+
+Based on your expected user load (see SCALING-GUIDE.md):
+
+- Adjust replica counts for workers
+- Configure resource requests/limits for pods
+- Scale database storage sizes
+- Tune MinIO node count and storage per node
+
+**Conceptual approach**: Start with baseline configuration, scale up as needed.
 
 ---
 
@@ -826,11 +814,11 @@ Update:
         ▼
 7. POSTGRESQL MAIN
    └─ Store event in events table
-   └─ Stream WAL to LI replica (immediately)
+   └─ Stream WAL to LI replica (real-time)
         │
         ▼
 8. POSTGRESQL LI REPLICA
-   └─ Receive WAL stream (< 1 second lag)
+   └─ Receive WAL stream
    └─ Apply to LI database
    └─ Event now visible in LI instance
         │
@@ -847,7 +835,7 @@ Update:
 
 PARALLEL: If message has media attachment
     └─ Media upload → Content Scanner → ClamAV scan → MinIO storage
-    └─ MinIO replication (rclone) → LI MinIO bucket (hourly)
+    └─ MinIO replication (rclone) → LI MinIO bucket (periodic)
 ```
 
 ### How a Voice Call Works
@@ -883,11 +871,11 @@ PARALLEL: If message has media attachment
         ▼
 6. CALL EVENTS
    └─ Call start/end sent as Matrix events
-   └─ Follows normal message flow (above)
+   └─ Follows normal message flow
 
 OPTIONAL: If LiveKit enabled
    └─ Group calls use LiveKit SFU
-   └─ Better performance for >2 participants
+   └─ Better performance for multi-party calls
    └─ Screen sharing support
 ```
 
@@ -1004,7 +992,7 @@ OPTIONAL: If LiveKit enabled
     ┌──────────────┐ ┌──────────────┐ ┌──────────────┐
     │  PostgreSQL  │ │    Redis     │ │    MinIO     │
     │     Main     │ │   Sentinel   │ │ (S3 Storage) │
-    │  (3 nodes)   │ │  (3 nodes)   │ │  (4 nodes)   │
+    │  (HA cluster)│ │  (HA cluster)│ │ (Distributed)│
     └──────┬───────┘ └──────────────┘ └──────┬───────┘
            │                                  │
            │ WAL Streaming                   │ rclone sync
@@ -1013,7 +1001,7 @@ OPTIONAL: If LiveKit enabled
     ┌──────────────┐                  ┌──────────────┐
     │ PostgreSQL   │                  │   MinIO      │
     │     LI       │◄─────────────────┤   Bucket LI  │
-    │  (2 nodes)   │  Sync System     └──────────────┘
+    │ (Replicas)   │  Sync System     └──────────────┘
     └──────┬───────┘  Replication
            │
            │
@@ -1077,164 +1065,12 @@ SECURITY HIGHLIGHTS:
 
 ---
 
-## Your Actual Steps (Practical Walkthrough)
-
-### Week 1: Preparation & Setup
-
-**Day 1: Understand (2 hours)**
-1. Read this document (BIGPICTURE.md)
-2. Read README.md overview
-3. Understand what you're building
-
-**Day 2: Management Node (2-4 hours)**
-1. Choose a machine for management (server/VM/laptop)
-2. Follow `docs/00-WORKSTATION-SETUP.md`
-3. Install kubectl, helm, git
-4. Test: `kubectl version` works
-
-**Day 3: Kubernetes Cluster (4-8 hours)**
-1. Get access to your servers (SSH keys)
-2. Follow `docs/00-KUBERNETES-INSTALLATION-DEBIAN-OVH.md`
-3. Deploy Kubernetes cluster
-4. Test: `kubectl get nodes` shows all nodes
-
-**Day 4: Determine Resources (1 hour)**
-1. Read `docs/SCALING-GUIDE.md`
-2. Decide your scale (100 CCU? 1K CCU? 5K CCU?)
-3. Adjust YAML files if > 100 CCU (optional)
-
-**Day 5: Configuration (2-4 hours)**
-1. Clone this repository to management node
-2. Generate 40+ secrets (README Configuration section)
-3. Update all secrets.yaml files
-4. Update all domains (find-replace example.com)
-5. Verify storage class exists
-6. Generate Synapse signing key
-7. Review README Configuration checklist
-
-### Week 2: Deployment
-
-**Day 6: Infrastructure (1 hour)**
-```bash
-# PostgreSQL
-kubectl apply -f infrastructure/01-postgresql/main-cluster.yaml
-kubectl apply -f infrastructure/01-postgresql/li-cluster.yaml
-# Wait for ready...
-
-# Redis
-kubectl apply -f infrastructure/02-redis/redis-statefulset.yaml
-# Wait for ready...
-
-# MinIO (install operator first via Helm)
-helm repo add minio-operator https://operator.min.io
-helm install minio-operator minio-operator/operator --namespace minio-operator --create-namespace
-kubectl apply -f infrastructure/03-minio/tenant.yaml
-# Wait for ready...
-
-# Networking
-kubectl apply -f infrastructure/04-networking/networkpolicies.yaml
-# Install Ingress + cert-manager via Helm...
-```
-
-**Day 7: Main Instance (1-2 hours)**
-```bash
-# Synapse
-kubectl apply -f main-instance/01-synapse/configmap.yaml
-kubectl apply -f main-instance/01-synapse/secrets.yaml
-kubectl apply -f main-instance/01-synapse/main-statefulset.yaml
-kubectl apply -f main-instance/01-synapse/services.yaml
-# Wait for ready...
-
-# Workers
-kubectl apply -f main-instance/02-workers/synchrotron-deployment.yaml
-kubectl apply -f main-instance/02-workers/generic-worker-deployment.yaml
-kubectl apply -f main-instance/02-workers/event-persister-deployment.yaml
-kubectl apply -f main-instance/02-workers/federation-sender-deployment.yaml
-# Wait for ready...
-
-# HAProxy
-kubectl apply -f main-instance/03-haproxy/deployment.yaml
-# Wait for ready...
-
-# Clients
-kubectl apply -f main-instance/02-element-web/deployment.yaml
-kubectl apply -f main-instance/06-coturn/deployment.yaml
-kubectl apply -f main-instance/07-sygnal/deployment.yaml
-kubectl apply -f main-instance/08-key-vault/deployment.yaml
-```
-
-**Day 8: LI Instance (30 min)**
-```bash
-# Sync System
-kubectl apply -f li-instance/04-sync-system/deployment.yaml
-# Run replication setup job...
-
-# LI Synapse + Clients
-kubectl apply -f li-instance/01-synapse-li/deployment.yaml
-kubectl apply -f li-instance/02-element-web-li/deployment.yaml
-kubectl apply -f li-instance/03-synapse-admin-li/deployment.yaml
-```
-
-**Day 9: Monitoring (30 min)**
-```bash
-# Install Prometheus + Grafana via Helm
-helm install prometheus prometheus-community/kube-prometheus-stack \
-  --namespace monitoring --values values/prometheus-stack-values.yaml
-
-# Deploy ServiceMonitors
-kubectl apply -f monitoring/01-prometheus/servicemonitors.yaml
-kubectl apply -f monitoring/01-prometheus/prometheusrules.yaml
-kubectl apply -f monitoring/02-grafana/dashboards-configmap.yaml
-```
-
-**Day 10: Antivirus (30 min)**
-```bash
-kubectl apply -f antivirus/01-clamav/deployment.yaml
-kubectl apply -f antivirus/02-scan-workers/deployment.yaml
-```
-
-**Day 11: Testing (2-4 hours)**
-1. Verify all pods running: `kubectl get pods -n matrix`
-2. Create first user
-3. Login via Element Web
-4. Send test message
-5. Test voice call
-6. Test media upload (check AV scanning)
-7. Check Grafana dashboards
-8. Test LI instance (see deleted messages)
-
-**Day 12: Production Readiness**
-1. Configure DNS for your domains
-2. Test federation
-3. Create additional users
-4. Set up monitoring alerts
-5. Document your deployment
-
-### Ongoing: Operations
-
-**Weekly:**
-- Check Grafana dashboards
-- Review Prometheus alerts
-- Monitor disk space
-
-**Monthly:**
-- Update ClamAV virus definitions (automatic)
-- Review logs for errors
-- Check backups
-
-**Quarterly:**
-- Rotate secrets (docs/SECRETS-MANAGEMENT.md)
-- Update Synapse version (docs/OPERATIONS-UPDATE-GUIDE.md)
-- Review resource usage, scale if needed
-
----
-
 ## Summary: The Big Picture
 
 1. **You build a production Matrix homeserver** with HA, LI compliance, monitoring, antivirus
 2. **You follow a linear path**: Prepare → Setup → Configure → Deploy (5 phases) → Verify
 3. **Configuration is the key**: Generate secrets, update YAML files, configure domains
-4. **Deployment is mostly automated**: kubectl apply commands in correct order
+4. **Deployment follows a sequence**: Infrastructure first, then main instance, then LI, then observability, then security
 5. **Each component has a purpose**: Nothing is optional except LiveKit (group calls)
 6. **The system is resilient**: PostgreSQL failover, Redis HA, MinIO erasure coding
 7. **Security is built-in**: Zero-trust networking, TLS everywhere, AV scanning
@@ -1242,12 +1078,12 @@ kubectl apply -f antivirus/02-scan-workers/deployment.yaml
 9. **Observability is complete**: Prometheus, Grafana, Loki for full visibility
 10. **You own and control everything**: No vendor lock-in, runs on your infrastructure
 
-**Total time investment**: ~40-60 hours from zero to production-ready homeserver
-
-**Ongoing effort**: ~2-4 hours/month for maintenance
-
-**Result**: Enterprise-grade Matrix deployment serving 100-20,000+ users
+**Result**: Enterprise-grade Matrix deployment for your specified scale requirements
 
 ---
 
-**Questions or need clarification?** Re-read the relevant sections of this document or consult the specific README files in each directory.
+**For detailed step-by-step deployment instructions, see the main README.md**
+
+**For specific component details, see the README.md file in each directory**
+
+**Questions or need clarification?** Consult the relevant sections of this document or the specific README files in each directory.
