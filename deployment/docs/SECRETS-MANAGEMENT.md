@@ -173,7 +173,7 @@ spec:
 kube-apiserver automatically restarts when you save the manifest:
 
 ```bash
-# Wait for restart (takes 1-2 minutes)
+# Wait for restart (takes )
 kubectl get pods -n kube-system | grep kube-apiserver
 
 # Verify it's running
@@ -227,7 +227,7 @@ resources:
 2. Keep old key as second entry (key1)
 3. Restart kube-apiserver
 4. Re-encrypt all Secrets: `kubectl get secrets --all-namespaces -o json | kubectl replace -f -`
-5. Wait 24 hours (ensure nothing breaks)
+5. Wait  (ensure nothing breaks)
 6. Remove old key (key1) from config
 7. Restart kube-apiserver again
 
@@ -553,7 +553,7 @@ spec:
 
 **Process:**
 1. Rotate secret in Vault
-2. ESO detects change (within 1 hour)
+2. ESO detects change (within )
 3. K8s Secret updated automatically
 4. Trigger pod restart (manual or via Reloader)
 
@@ -690,7 +690,7 @@ For **SOC 2, ISO 27001, HIPAA, PCI-DSS**:
 
 **Additional for PCI-DSS:**
 - ✅ External secrets management (Vault/AWS Secrets Manager)
-- ✅ Automated rotation (90 days for DB passwords)
+- ✅ Automated rotation ( for DB passwords)
 
 ---
 
@@ -737,7 +737,7 @@ Your deployment uses **standard Kubernetes Secrets**:
 ### Recommended Improvements
 
 **Minimum (All Deployments):**
-1. ✅ **Enable encryption at rest** (1 hour setup)
+1. ✅ **Enable encryption at rest** ( setup)
    - Follow [Encryption at Rest](#encryption-at-rest) section
    - Zero operational overhead
    - Massive security improvement

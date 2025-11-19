@@ -333,7 +333,7 @@ kubectl describe prometheusrule matrix-alerts -n matrix
 
 ### Default Configuration
 
-- **Retention Period**: 30 days
+- **Retention Period**: 
 - **Retention Size**: 100GB
 - **Storage**: PVC with 100Gi
 - **Scrape Interval**: 30s (general), 60s (infrequent targets)
@@ -345,7 +345,7 @@ Edit Prometheus StatefulSet or Helm values:
 ```yaml
 prometheus:
   prometheusSpec:
-    retention: 60d  # Increase to 60 days
+    retention: 60d  # Increase to 
     retentionSize: "200GB"  # Increase to 200GB
     storageSpec:
       volumeClaimTemplate:

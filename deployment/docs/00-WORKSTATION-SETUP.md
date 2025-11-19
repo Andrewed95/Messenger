@@ -3,7 +3,7 @@
 **Purpose:** Install and configure client tools on your local workstation to manage the Kubernetes cluster
 **Applies to:** Your laptop/desktop computer (NOT the Kubernetes nodes)
 **Supported OS:** Linux, macOS, Windows (WSL2)
-**Time Required:** 15-30 minutes
+
 
 ---
 
@@ -11,11 +11,11 @@
 
 Before deploying Matrix/Synapse, you need to install tools on your **local workstation** (your laptop/desktop) to manage the Kubernetes cluster remotely.
 
-**Required Tools:**
-1. **kubectl** - Kubernetes command-line tool
-2. **helm** - Kubernetes package manager
-3. **git** - Version control (to clone this repository)
-4. **SSH client** - To access Kubernetes nodes (usually pre-installed)
+**REQUIRED Tools:**
+1. **kubectl** - Kubernetes command-line tool (REQUIRED)
+2. **helm** - Kubernetes package manager (REQUIRED)
+3. **git** - Version control to clone this repository (REQUIRED)
+4. **SSH client** - To access Kubernetes nodes (usually pre-installed, REQUIRED)
 
 **What This Guide Does NOT Cover:**
 - Installing Kubernetes on the VMs (see `00-KUBERNETES-INSTALLATION-DEBIAN-OVH.md`)
@@ -35,9 +35,9 @@ Before deploying Matrix/Synapse, you need to install tools on your **local works
 
 ## 1. Linux Workstation Setup
 
-### 1.1 Install kubectl (Linux)
+### 1.1 Install kubectl (Linux) - REQUIRED
 
-**Option A: Using Native Package Manager (Recommended)**
+**Option A: Using Native Package Manager (RECOMMENDED)**
 
 ```bash
 # Add Kubernetes GPG key
@@ -71,7 +71,7 @@ sudo mv kubectl /usr/local/bin/
 kubectl version --client
 ```
 
-### 1.2 Install Helm (Linux)
+### 1.2 Install Helm (Linux) - REQUIRED
 
 **Option A: Using Install Script (Recommended)**
 
@@ -99,7 +99,7 @@ rm -rf linux-amd64 helm-v3.13.0-linux-amd64.tar.gz
 helm version
 ```
 
-### 1.3 Install Git (Linux)
+### 1.3 Install Git (Linux) - REQUIRED
 
 ```bash
 # Debian/Ubuntu
@@ -125,7 +125,7 @@ echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> ~/.zprofile
 eval "$(/opt/homebrew/bin/brew shellenv)"
 ```
 
-### 2.2 Install kubectl (macOS)
+### 2.2 Install kubectl (macOS) - REQUIRED
 
 ```bash
 # Install kubectl using Homebrew
@@ -151,7 +151,7 @@ sudo mv kubectl /usr/local/bin/
 kubectl version --client
 ```
 
-### 2.3 Install Helm (macOS)
+### 2.3 Install Helm (macOS) - REQUIRED
 
 ```bash
 # Install Helm using Homebrew
@@ -161,7 +161,7 @@ brew install helm
 helm version
 ```
 
-### 2.4 Install Git (macOS)
+### 2.4 Install Git (macOS) - REQUIRED
 
 ```bash
 # Git is usually pre-installed on macOS, verify:
@@ -193,7 +193,7 @@ wsl --install -d Ubuntu
 wsl
 ```
 
-### 3.2 Install kubectl in WSL2
+### 3.2 Install kubectl in WSL2 - REQUIRED
 
 Once in WSL2 Ubuntu terminal, follow the Linux instructions above:
 
@@ -211,7 +211,7 @@ sudo apt-get install -y kubectl
 kubectl version --client
 ```
 
-### 3.3 Install Helm in WSL2
+### 3.3 Install Helm in WSL2 - REQUIRED
 
 ```bash
 # Install Helm using script
@@ -221,7 +221,7 @@ curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
 helm version
 ```
 
-### 3.4 Install Git in WSL2
+### 3.4 Install Git in WSL2 - REQUIRED
 
 ```bash
 # Update package list
@@ -496,6 +496,4 @@ You should now have:
 
 ---
 
-**Document Version:** 1.0
-**Last Updated:** 2025-11-11
-**Tested On:** Ubuntu 22.04, macOS 14.0, Windows 11 WSL2
+

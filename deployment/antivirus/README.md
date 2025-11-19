@@ -68,7 +68,7 @@ The antivirus system provides real-time scanning of all uploaded and downloaded 
 
 **Features**:
 - ✅ ClamAV daemon (clamd) for scanning
-- ✅ FreshClam for automatic virus definition updates (every 6 hours)
+- ✅ FreshClam for automatic virus definition updates (every )
 - ✅ ~8M+ virus signatures
 - ✅ Support for archives, PDFs, Office documents
 - ✅ 1GB memory per node
@@ -434,7 +434,7 @@ kubectl logs -n matrix -l app.kubernetes.io/name=content-scanner | grep "scan_du
 kubectl edit configmap clamav-config -n matrix
 
 # Add:
-# ReadTimeout 1200  # 20 minutes
+# ReadTimeout 1200  # 
 
 # 3. Restart ClamAV
 kubectl delete pod <clamav-pod> -n matrix
@@ -491,7 +491,7 @@ All scans are logged:
 
 ### Retention
 
-**Scan logs**: 30 days (via Loki)
+**Scan logs**:  (via Loki)
 
 **Infected files**:
 - Not served to users (HTTP 403)
@@ -509,7 +509,7 @@ All scans are logged:
 
 ## Best Practices
 
-1. **Keep virus definitions updated**: FreshClam runs every 6 hours (default)
+1. **Keep virus definitions updated**: FreshClam runs every  (default)
 2. **Monitor scan latency**: Alert if > 2 seconds average
 3. **Monitor infected file rate**: Alert if sudden spike
 4. **Test monthly**: Upload EICAR test file to verify scanning works

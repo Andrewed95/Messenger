@@ -192,7 +192,7 @@ kubectl exec -n matrix synapse-main-0 -- \
 **Custom timeout for resource readiness:**
 ```bash
 # Modify wait_for_condition timeout in deploy-all.sh
-# Default: 600 seconds (10 minutes)
+# Default: 600 seconds ()
 ```
 
 **Skip specific components:**
@@ -215,5 +215,5 @@ kubectl exec -n matrix synapse-main-0 -- \
 
 ---
 
-**Last Updated:** 2025-11-18
+
 **Script Version:** 1.0

@@ -3,8 +3,6 @@
 
 **📊 Scaling Notice:** This guide applies to all deployment scales. MAS is optional and typically deployed for enterprise customers requiring SSO integration.
 
-**Last Updated:** November 11, 2025
-**Document Version:** 1.0
 
 ---
 
@@ -201,17 +199,6 @@
 | **Total** | - | **9 vCPU** | **13Gi** | **50Gi** |
 
 **Cost Impact:** +$50-100/month for 100 CCU, +$150-300/month for 20K CCU
-
-### 3.4 Network Requirements
-
-**Ports:**
-- MAS HTTP Server: `8080` (internal)
-- MAS Health Check: `8081` (internal, optional separate listener)
-- Ingress: `443` (TLS)
-
-**DNS Records:**
-- MAS: `account.example.com` (or subdomain of your choice)
-- Must be publicly accessible for OIDC flows
 
 ---
 
@@ -1549,11 +1536,11 @@ session:
   cookie_name: "matrix_auth_session"
   
   # Session lifetime (seconds)
-  # 30 days = 2592000
+  #  = 2592000
   lifetime: 2592000
   
   # Idle timeout (seconds)
-  # 7 days = 604800
+  #  = 604800
   idle_timeout: 604800
 
 # =============================================================================
@@ -2161,7 +2148,7 @@ If you have existing Synapse users with password authentication, you can migrate
    kubectl exec -n database postgres-cluster-1 -- \
      pg_dump -U postgres -Fc mas > mas_backup_$(date +%Y%m%d).dump
    ```
-4. ✅ **Maintenance window scheduled** (1-4 hours depending on user count)
+4. ✅ **Maintenance window scheduled** ( depending on user count)
 5. ✅ **Users notified** of upcoming authentication changes
 6. ✅ **Rollback plan prepared**
 
@@ -2299,11 +2286,11 @@ kubectl logs -n matrix -l app=synapse,component=main --tail=100
 
 | User Count | Estimated Time | Notes |
 |------------|---------------|-------|
-| < 100 | 1-2 minutes | Fast migration |
-| 100-1,000 | 5-10 minutes | Typical small org |
-| 1,000-10,000 | 15-30 minutes | Medium org |
-| 10,000-50,000 | 1-2 hours | Large org, plan accordingly |
-| > 50,000 | 2-4 hours | Enterprise, may need chunked migration |
+| < 100 |  | Fast migration |
+| 100-1,000 |  | Typical small org |
+| 1,000-10,000 |  | Medium org |
+| 10,000-50,000 |  | Large org, plan accordingly |
+| > 50,000 |  | Enterprise, may need chunked migration |
 
 ---
 
@@ -3055,8 +3042,7 @@ You now have complete documentation for deploying and operating Matrix Authentic
 
 ---
 
-**Document Version:** 1.0  
-**Last Updated:** 2025-11-11  
+
 **Synapse Compatibility:** 1.136.0+  
 **MAS Version:** 0.12.0  
 **Keycloak Compatibility:** 18.0+

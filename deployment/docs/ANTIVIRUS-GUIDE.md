@@ -1,10 +1,8 @@
 # Antivirus Implementation Guide
 ## Complete Guide for Matrix/Synapse (All Scales)
 
-**📊 Scaling Notice:** This guide applies to all deployment scales (100 CCU to 20K+ CCU). Examples use 20K CCU for demonstration, but principles apply at any scale. See [SCALING-GUIDE.md](SCALING-GUIDE.md) for scale-specific infrastructure sizing.
+**📊 Scaling Notice:** This guide applies to all deployment scales (100 CCU to 20K+ CCU). Examples use 20K CCU for demonstration, but principles apply at any scale. 
 
-**Last Updated:** November 11, 2025
-**Document Version:** 2.1
 
 ---
 
@@ -67,7 +65,7 @@ Use this matrix to determine the right approach:
 
 **Cost of Running Antivirus:**
 - Infrastructure: $150-250/month (10-20 vCPU, 24Gi RAM)
-- Operational: 2-4 hours/month (monitoring, updates, incident response)
+- Operational: /month (monitoring, updates, incident response)
 - Complexity: Moderate (queue management, ClamAV updates, false positives)
 - Development: Included in deployment package
 
@@ -101,7 +99,7 @@ If you implement antivirus, you **MUST** use asynchronous background scanning (d
 
 **Solution:** Asynchronous scanning (files are available for 30-60 seconds before scan completes).
 
-**📊 Scale-Specific Sizing:** See [SCALING-GUIDE.md](SCALING-GUIDE.md) for ClamAV and scan worker counts at your scale.
+**📊 Scale-Specific Sizing:** 
 
 ---
 
@@ -556,7 +554,7 @@ data:
     MaxFileSize 100M
 
     # Timeouts
-    ReadTimeout 300           # 5 minutes max per scan
+    ReadTimeout 300           #  max per scan
     CommandReadTimeout 30
 
     # Logging
@@ -692,7 +690,7 @@ metadata:
   name: clamav-freshclam
   namespace: antivirus
 spec:
-  schedule: "0 */6 * * *"  # Every 6 hours
+  schedule: "0 */6 * * *"  # Every 
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3
   jobTemplate:
@@ -771,7 +769,7 @@ export STORAGE_CLASS_GENERAL="your-storage-class"  # e.g., "longhorn", "ceph-fs"
 # Apply ClamAV deployment
 envsubst < deployment/manifests/11-antivirus.yaml | kubectl apply -f -
 
-# Wait for ClamAV pods to be ready (takes 2-5 minutes for first signature download)
+# Wait for ClamAV pods to be ready (takes  for first signature download)
 kubectl wait --for=condition=ready pod -l app=clamav -n antivirus --timeout=600s
 
 # Verify ClamAV is running
@@ -1436,7 +1434,7 @@ kubectl exec -it deployment/synapse-postgres-1 -n matrix -- \
       user_id,
       media_length
     FROM local_media_repository
-    WHERE created_ts > extract(epoch from now() - interval '30 days') * 1000
+    WHERE created_ts > extract(epoch from now() - interval '') * 1000
     ORDER BY created_ts DESC
     LIMIT 100;
   "
@@ -1491,7 +1489,7 @@ USE ANTIVIRUS SOFTWARE ON YOUR DEVICE.
 
 **Update Strategy:**
 
-CronJob updates signatures every 6 hours (already included in Section 2.3).
+CronJob updates signatures every  (already included in Section 2.3).
 
 **Verification:**
 
@@ -1505,7 +1503,7 @@ CronJob updates signatures every 6 hours (already included in Section 2.3).
 kubectl exec -n antivirus deployment/clamav -- \
   ls -lh /var/lib/clamav/
 
-# Expected: Files modified within last 6 hours
+# Expected: Files modified within last 
 
 # Check signature count
 kubectl exec -n antivirus deployment/clamav -- \
@@ -1706,7 +1704,7 @@ for root, dirs, files in os.walk(media_dir):
             print(f"Error scanning {file_path}: {e}")
 ```
 
-Estimated Time: 10-50 hours (depending on media volume)
+Estimated Time:  (depending on media volume)
 
 **Step 3: Remove File Type Whitelist (Optional)**
 
@@ -1753,7 +1751,7 @@ kubectl delete deployment av-scan-worker -n matrix
 
 ### Option A: With Antivirus
 **Choose if:** Public deployment, compliance requirements, >100 users, low risk tolerance
-**Cost:** $150-250/month infrastructure, 2-4 hours/month ops
+**Cost:** $150-250/month infrastructure, /month ops
 **Protection:** 90-95% malware detection
 **Trade-off:** ~60 second scan delay (async), operational complexity
 
@@ -1774,6 +1772,4 @@ kubectl delete deployment av-scan-worker -n matrix
 
 ---
 
-**Document Version:** 2.0
-**Last Updated:** November 11, 2025
-**Maintained By:** Matrix/Synapse Production Deployment Team
+

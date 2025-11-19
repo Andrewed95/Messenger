@@ -1,8 +1,6 @@
 # Operations and Update Guide
 ## Complete Guide for Managing, Updating, and Scaling Your Matrix/Synapse Deployment
 
-**Last Updated:** November 11, 2025
-**Document Version:** 1.0
 
 ---
 
@@ -38,7 +36,7 @@
 **After change:**
 1. Validate service health
 2. Test functionality
-3. Monitor for 24-48 hours
+3. Monitor for 
 4. Document what changed
 
 ### 1.2 Safety Levels
@@ -182,7 +180,7 @@ curl https://your-domain.com/_matrix/federation/v1/version
 # - Error rates (should not increase)
 # - Database connections (should be stable)
 
-# 6. Check logs for 1 hour
+# 6. Check logs for 
 kubectl logs -n matrix deployment/synapse-main --tail=100 --follow
 # Watch for any errors or warnings
 ```
@@ -723,12 +721,12 @@ done
 # HOW:
 
 # IMPORTANT: Scale down gradually (one or two replicas at a time)
-# Wait 5-10 minutes between steps to ensure traffic redistributes
+# Wait  between steps to ensure traffic redistributes
 
 # Scale from 12 → 10
 kubectl scale statefulset synapse-sync-worker --replicas=10 -n matrix
 
-# Wait 10 minutes
+# Wait 
 sleep 600
 
 # Check remaining workers handling load okay
@@ -1112,19 +1110,19 @@ gpg --encrypt --recipient your-email@example.com secrets-backup-*.yaml
 **Preparation:**
 
 ```bash
-# 1-2 weeks before:
+#  before:
 # - Announce maintenance window to users
 # - Create detailed runbook
 # - Test procedure in staging (if available)
 # - Identify rollback points
 
-# 1 day before:
+#  before:
 # - Backup all data
 # - Verify backup integrity
 # - Prepare rollback procedures
 # - Review runbook with team
 
-# 1 hour before:
+#  before:
 # - Verify system health
 # - Check no critical issues ongoing
 # - Ensure team members available
@@ -1275,7 +1273,7 @@ curl https://your-domain.com/_matrix/client/versions
 
 **After Operation:**
 - Compare to baseline
-- Monitor for 24-48 hours
+- Monitor for 
 - Check for memory leaks (gradually increasing memory)
 - Verify no elevated error rates
 
@@ -1439,7 +1437,7 @@ kubectl rollout restart deployment/synapse-main -n matrix
 
 # Verify pods restarted
 kubectl get pods -n matrix -l component=main
-# AGE should be < 1 minute
+# AGE should be < 
 
 # Check logs to confirm new config loaded
 kubectl logs -n matrix deployment/synapse-main | grep "config"
@@ -1603,6 +1601,4 @@ kubectl logs -n matrix deployment/synapse-main --tail=50
 
 ---
 
-**Document Version:** 1.0
-**Last Updated:** November 11, 2025
-**Maintained By:** Matrix/Synapse Production Deployment Team
+

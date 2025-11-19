@@ -11,7 +11,7 @@ ClamAV is deployed as a **DaemonSet**, running one instance on every node in the
 
 **Components**:
 - **clamd**: Antivirus scanning daemon (port 3310)
-- **freshclam**: Virus definition updater (updates every 6 hours)
+- **freshclam**: Virus definition updater (updates every )
 
 ## Architecture
 
@@ -172,7 +172,7 @@ Key settings:
 DatabaseDirectory /var/lib/clamav
 
 # Update frequency
-Checks 4            # 4 times per day = every 6 hours
+Checks 4            # 4 times per day = every 
 
 # Database mirror
 DatabaseMirror database.clamav.net
@@ -182,7 +182,7 @@ DatabaseMirror database.clamav.net
 
 ### Automatic Updates
 
-FreshClam runs as a sidecar container and updates virus definitions every 6 hours:
+FreshClam runs as a sidecar container and updates virus definitions every :
 
 ```bash
 # Check freshclam logs
@@ -337,7 +337,7 @@ kubectl top pod <clamav-pod> -n matrix
 ```yaml
 data:
   clamd.conf: |
-    ReadTimeout 1200  # Increase to 20 minutes
+    ReadTimeout 1200  # Increase to 
 ```
 
 **3. Increase resource limits**:

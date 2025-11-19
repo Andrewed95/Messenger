@@ -1,9 +1,6 @@
 # Scaling Guide: 100 to 20,000 Concurrent Users
 ## Infrastructure Sizing and Configuration for Different Scales
 
-**Last Updated:** November 11, 2025
-**Document Version:** 1.0
-
 ---
 
 ## Table of Contents
@@ -122,7 +119,7 @@ Our sizing model uses these formulas:
 **CPU Requirements:**
 ```
 Synapse CPU = (sync_workers + generic_workers) × 1.5 vCPU + event_persisters × 2 vCPU + main × 2 vCPU
-PostgreSQL CPU = 2 vCPU (base) + (CCU / 5000) × 2 vCPU
+PostgreSQL CPU = 2 vCPU (base) + (CCU / 5000) × 2 vCPU (per PostgreSQL instance)
 Redis CPU = 1 vCPU (Synapse) + 1 vCPU (LiveKit)
 MinIO CPU = 1 vCPU per node
 LiveKit CPU = 8 vCPU per instance (baseline from benchmarks)
@@ -132,7 +129,7 @@ coturn CPU = 4 vCPU per instance
 **Memory Requirements:**
 ```
 Synapse RAM per worker = 0.5GB (base) + (CCU / 10000) × 0.5GB
-PostgreSQL RAM = 4GB (base) + (CCU / 1000) × 1GB
+PostgreSQL RAM = 4GB (base) + (CCU / 1000) × 1GB (per PostgreSQL instance)
 Redis RAM (Synapse) = 2GB (base) + (CCU / 5000) × 1GB
 Redis RAM (LiveKit) = 1GB (base) + (active_calls / 1000) × 0.5GB
 MinIO RAM = 8GB per node (minimum for production)
@@ -312,7 +309,7 @@ caches:
 
 event_cache_size: 5K  # Events in memory
 
-max_upload_size: 50M
+max_upload_size: 50M  # Maximum file size for media uploads (images, documents, etc.)
 
 rate_limiting:
   rc_message:
@@ -342,30 +339,6 @@ max_wal_size = 4GB
 checkpoint_completion_target = 0.9
 ```
 
-### 3.4 Network Requirements
-
-**Bandwidth:**
-- Internet uplink: 100 Mbps minimum
-- Internal cluster network: 1 Gbps minimum
-
-**Traffic Estimates:**
-- Average: 5 Mbps
-- Peak: 20 Mbps (during media uploads + calls)
-- Per user average: 50 Kbps
-
-### 3.5 Cost Estimate
-
-**Infrastructure (Cloud):**
-- Compute: $400-600/month
-- Storage: $50-80/month
-- Network: $30-50/month
-- **Total: $480-730/month**
-
-**Infrastructure (On-Premises):**
-- Servers: $15,000-25,000 (upfront)
-- Network equipment: $2,000-5,000
-- **Amortized over 3 years: $470-830/month**
-
 ---
 
 ## 4. 1,000 CCU Scale
@@ -373,7 +346,7 @@ checkpoint_completion_target = 0.9
 ### 4.1 Use Case Profile
 
 **Typical Deployments:**
-- Medium-sized organizations (100-500 employees)
+- Medium-sized organizations
 - University departments
 - Large community servers
 - Regional service providers
@@ -503,7 +476,7 @@ caches:
 
 event_cache_size: 10K
 
-max_upload_size: 100M
+max_upload_size: 100M  # Maximum file size for media uploads (images, documents, etc.)
 
 rate_limiting:
   rc_message:
@@ -525,29 +498,6 @@ max_wal_size = 8GB
 checkpoint_completion_target = 0.9
 autovacuum_max_workers = 4
 ```
-
-### 4.4 Network Requirements
-
-**Bandwidth:**
-- Internet uplink: 500 Mbps minimum
-- Internal cluster network: 10 Gbps (recommended)
-
-**Traffic Estimates:**
-- Average: 50 Mbps
-- Peak: 200 Mbps
-- Per user average: 50 Kbps
-
-### 4.5 Cost Estimate
-
-**Infrastructure (Cloud):**
-- Compute: $1,500-2,500/month
-- Storage: $150-250/month
-- Network: $100-200/month
-- **Total: $1,750-2,950/month**
-
-**Infrastructure (On-Premises):**
-- Servers: $50,000-80,000 (upfront)
-- **Amortized over 3 years: $1,390-2,220/month**
 
 ---
 
@@ -649,7 +599,7 @@ Usable capacity: ~4TB
 
 Expected usage:
   Year 1: ~10TB (will need expansion or additional pool)
-  Recommendation: Add second pool of 4 nodes within 6 months
+  Recommendation: Add second pool of 4 nodes within 
 ```
 
 **LiveKit:**
@@ -686,7 +636,7 @@ caches:
 
 event_cache_size: 20K
 
-max_upload_size: 100M
+max_upload_size: 100M  # Maximum file size for media uploads (images, documents, etc.)
 
 rate_limiting:
   rc_message:
@@ -709,29 +659,6 @@ checkpoint_completion_target = 0.9
 autovacuum_max_workers = 6
 autovacuum_naptime = 30s
 ```
-
-### 5.4 Network Requirements
-
-**Bandwidth:**
-- Internet uplink: 2 Gbps minimum
-- Internal cluster network: 10 Gbps (required)
-
-**Traffic Estimates:**
-- Average: 250 Mbps
-- Peak: 1 Gbps
-- Per user average: 50 Kbps
-
-### 5.5 Cost Estimate
-
-**Infrastructure (Cloud):**
-- Compute: $5,000-8,000/month
-- Storage: $400-700/month
-- Network: $300-600/month
-- **Total: $5,700-9,300/month**
-
-**Infrastructure (On-Premises):**
-- Servers: $150,000-250,000 (upfront)
-- **Amortized over 3 years: $4,170-6,940/month**
 
 ---
 
@@ -870,7 +797,7 @@ caches:
 
 event_cache_size: 30K
 
-max_upload_size: 100M
+max_upload_size: 100M  # Maximum file size for media uploads (images, documents, etc.)
 
 rate_limiting:
   rc_message:
@@ -893,29 +820,6 @@ checkpoint_completion_target = 0.9
 autovacuum_max_workers = 8
 autovacuum_naptime = 20s
 ```
-
-### 6.4 Network Requirements
-
-**Bandwidth:**
-- Internet uplink: 5 Gbps minimum
-- Internal cluster network: 25 Gbps (recommended)
-
-**Traffic Estimates:**
-- Average: 500 Mbps
-- Peak: 2 Gbps
-- Per user average: 50 Kbps
-
-### 6.5 Cost Estimate
-
-**Infrastructure (Cloud):**
-- Compute: $10,000-16,000/month
-- Storage: $800-1,400/month
-- Network: $600-1,200/month
-- **Total: $11,400-18,600/month**
-
-**Infrastructure (On-Premises):**
-- Servers: $300,000-500,000 (upfront)
-- **Amortized over 3 years: $8,330-13,890/month**
 
 ---
 
@@ -1059,7 +963,7 @@ caches:
 
 event_cache_size: 50K
 
-max_upload_size: 100M
+max_upload_size: 100M  # Maximum file size for media uploads (images, documents, etc.)
 
 rate_limiting:
   rc_message:
@@ -1085,29 +989,6 @@ autovacuum_vacuum_scale_factor = 0.05
 autovacuum_analyze_scale_factor = 0.025
 ```
 
-### 7.4 Network Requirements
-
-**Bandwidth:**
-- Internet uplink: 10 Gbps minimum
-- Internal cluster network: 25-40 Gbps (required)
-
-**Traffic Estimates:**
-- Average: 1 Gbps
-- Peak: 4 Gbps
-- Per user average: 50 Kbps
-
-### 7.5 Cost Estimate
-
-**Infrastructure (Cloud):**
-- Compute: $20,000-32,000/month
-- Storage: $1,600-2,800/month
-- Network: $1,200-2,500/month
-- **Total: $22,800-37,300/month**
-
-**Infrastructure (On-Premises):**
-- Servers: $600,000-1,000,000 (upfront)
-- **Amortized over 3 years: $16,670-27,780/month**
-
 ---
 
 ## 8. Scaling Decision Matrix
@@ -1129,11 +1010,11 @@ autovacuum_analyze_scale_factor = 0.025
 | Indicator | Threshold | Action |
 |-----------|-----------|--------|
 | **Average CCU** | >70% of current tier | Plan upgrade to next tier |
-| **Peak CCU** | >90% of current tier | Urgent: Upgrade within 2 weeks |
+| **Peak CCU** | >90% of current tier | Urgent: Upgrade within  |
 | **CPU Usage** | >75% sustained | Add workers or upgrade nodes |
 | **Memory Usage** | >85% sustained | Upgrade node RAM |
 | **Database Connections** | >70% of max_connections | Add workers or scale database |
-| **Storage Growth** | <3 months capacity remaining | Add MinIO pool |
+| **Storage Growth** | < capacity remaining | Add MinIO pool |
 | **Message Latency** | >500ms p99 | Add sync workers |
 | **Call Quality Issues** | >5% call failures | Add LiveKit/coturn instances |
 
@@ -1256,15 +1137,16 @@ Annual Storage Growth = CCU × 10% × 20GB
 ### 10.4 Media Retention Policies
 
 **Recommended:**
-- Local cache: 30 days (Synapse media_retention)
+- Local cache:  (Synapse media_retention)
 - MinIO (S3): Permanent (unless explicitly deleted)
-- Backup: 90 days rolling
+- Backup:  rolling
 
 **Configuration:**
 ```yaml
 # In homeserver.yaml
 media_retention:
-  local_media_lifetime: 30d
+  local_media_lifetime: 30d  # How long to keep local media files cached on disk before deletion
+  # Files remain in MinIO (S3) permanently unless explicitly deleted
   remote_media_lifetime: 14d
 ```
 
@@ -1292,7 +1174,7 @@ media_retention:
 
 **Concurrent Call Assumptions:**
 - 10% of CCU in calls at peak
-- Average call duration: 15 minutes
+- Average call duration: 
 - Peak hours: 10 AM - 4 PM
 
 ### 11.2 LiveKit Capacity Planning
@@ -1374,7 +1256,7 @@ media_retention:
 
 1. **Architecture is consistent across all scales** - Only numbers change
 2. **HA is maintained at all scales** - Minimum 2 instances of each component
-3. **Plan for growth** - Provision 6-12 months ahead
+3. **Plan for growth** - Provision  ahead
 4. **Monitor continuously** - Use thresholds to trigger scaling actions
 5. **Storage grows fastest** - Plan MinIO pool expansions quarterly
 6. **Database is critical** - Connection pool tuning is essential
@@ -1399,12 +1281,8 @@ Before deploying at any scale:
 3. Monitor metrics to identify bottlenecks
 4. Upgrade to next tier (5K) when consistently hitting limits
 
-**Resource:** See [OPERATIONS-UPDATE-GUIDE.md](OPERATIONS-UPDATE-GUIDE.md) for scaling procedures.
+**Resource:** 
 
 ---
 
-**Document Version:** 1.0
-**Last Updated:** November 11, 2025
-**Maintained By:** Matrix/Synapse Production Deployment Team
 
-**Next Review:** When deploying at new scale or experiencing performance issues

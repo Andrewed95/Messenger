@@ -1,13 +1,12 @@
-# Kubernetes Installation on Debian 12 (OVH VMs)
+# Kubernetes Installation on Debian 12
 ## Complete Step-by-Step Guide for Production Matrix/Synapse Deployment
 
-**Target Environment:** OVH Virtual Machines running Debian 12 (Bookworm)
+**Prerequisites:** VMs already provisioned with SSH access
+**Target Environment:** Virtual Machines running Debian 12 (Bookworm)
 **Kubernetes Version:** 1.28+
 **Container Runtime:** containerd
 **Network Plugin:** Calico
 **Target Deployment:** Matrix/Synapse HA Cluster (scalable 100-20K+ CCU)
-
-**📊 Scale Planning:** Server count and specifications depend on your target scale. See [SCALING-GUIDE.md](SCALING-GUIDE.md) first to determine your requirements.
 
 ---
 
@@ -29,11 +28,11 @@
 
 ## 1. Infrastructure Requirements
 
-### 1.1 OVH VM Specifications
+### 1.1 Server/VM Prerequisites
 
-**📊 IMPORTANT:** Server count and specifications depend on your deployment scale.
+**ASSUMPTION:** You have already provisioned VMs with SSH root access.
 
-**See [SCALING-GUIDE.md](SCALING-GUIDE.md) for detailed requirements for your target scale (100 CCU, 1K, 5K, 10K, or 20K CCU).**
+Server specifications depend on your deployment scale. See SCALING-GUIDE.md for detailed requirements.
 
 The examples below show typical node types. Actual quantities and resources vary by scale:
 
@@ -118,68 +117,6 @@ The examples below show typical node types. Actual quantities and resources vary
 - **OS:** Debian 12 (Bookworm) 64-bit
 - **Purpose:** Monitoring (Prometheus, Grafana, Loki), Ingress controller
 - **Label:** `node-role=infrastructure`
-
-### 1.2 Network Requirements
-
-#### IP Addressing
-- **Private Network:** All nodes must be on same private network (e.g., 192.168.0.0/16)
-- **Node IPs:** Static IP assignments recommended
-- **Service Network:** 10.96.0.0/12 (Kubernetes default ClusterIP range)
-- **Pod Network:** 10.244.0.0/16 (Calico default, configurable)
-- **MetalLB Pool:** Dedicated range (e.g., 192.168.1.240-192.168.1.250)
-
-#### Port Requirements
-
-**Control Plane Nodes:**
-| Port | Protocol | Purpose | Source |
-|------|----------|---------|--------|
-| 6443 | TCP | Kubernetes API | All nodes, external clients |
-| 2379-2380 | TCP | etcd server client API | Control plane nodes |
-| 10250 | TCP | Kubelet API | Control plane nodes |
-| 10259 | TCP | kube-scheduler | localhost |
-| 10257 | TCP | kube-controller-manager | localhost |
-
-**Worker Nodes:**
-| Port | Protocol | Purpose | Source |
-|------|----------|---------|--------|
-| 10250 | TCP | Kubelet API | Control plane |
-| 30000-32767 | TCP/UDP | NodePort Services | External (if used) |
-
-**Calico Network:**
-| Port | Protocol | Purpose | Source |
-|------|----------|---------|--------|
-| 179 | TCP | BGP | All nodes |
-| 4789 | UDP | VXLAN | All nodes |
-| 5473 | TCP | Typha (if enabled) | All nodes |
-
-#### Firewall Configuration
-
-OVH provides firewall at multiple levels. You need to configure:
-
-1. **OVH Network Security Groups** (if applicable)
-2. **Debian iptables/nftables** on each node
-
-**Example iptables rules for control plane node:**
-
-```bash
-# Allow Kubernetes API
-iptables -A INPUT -p tcp --dport 6443 -j ACCEPT
-
-# Allow etcd
-iptables -A INPUT -p tcp --dport 2379:2380 -s 192.168.0.0/16 -j ACCEPT
-
-# Allow kubelet API
-iptables -A INPUT -p tcp --dport 10250 -s 192.168.0.0/16 -j ACCEPT
-
-# Allow BGP for Calico
-iptables -A INPUT -p tcp --dport 179 -j ACCEPT
-
-# Allow VXLAN for Calico
-iptables -A INPUT -p udp --dport 4789 -j ACCEPT
-
-# Save rules
-iptables-save > /etc/iptables/rules.v4
-```
 
 ### 1.3 DNS Configuration
 
@@ -432,7 +369,7 @@ timedatectl status
 # NTP service: active
 ```
 
-**CRITICAL:** Time skew >5 minutes will cause certificate validation failures.
+**CRITICAL:** Time skew > will cause certificate validation failures.
 
 ### 3.2 Configure Firewall
 
@@ -685,56 +622,444 @@ k8s-master-01   NotReady   control-plane   1m    v1.28.5
 **NOTE:** Status is "NotReady" because network plugin not yet installed.
 
 ---
+## 7. Worker Nodes Join
 
-*[Document continues with sections 7-11: Worker Nodes Join, Network Plugin, Storage, Validation, and Troubleshooting...]*
+### 7.1 Join Worker Nodes to Cluster (REQUIRED)
 
-**Due to length, this would continue for another ~5000 lines covering all steps in similar detailed format.**
+**WHERE:** Each worker node (database, storage, application, call server nodes)
+**WHEN:** After control plane is initialized
+**HOW:** Use the kubeadm join command from section 6.1 output
+
+```bash
+# On each worker node, run the join command provided by kubeadm init
+# Example:
+kubeadm join k8s-master-01:6443 --token <token> \
+    --discovery-token-ca-cert-hash sha256:<hash>
+```
+
+**VERIFICATION:**
+
+```bash
+# On control plane node
+kubectl get nodes
+
+# Expected output:
+# NAME            STATUS     ROLES           AGE   VERSION
+# k8s-master-01   NotReady   control-plane   10m   v1.28.5
+# k8s-db-01       NotReady   <none>          1m    v1.28.5
+# k8s-db-02       NotReady   <none>          1m    v1.28.5
+# ...
+```
+
+**NOTE:** Nodes show "NotReady" status until network plugin is installed (Section 8).
+
+### 7.2 Join Additional Control Plane Nodes (REQUIRED for HA)
+
+**WHERE:** Second and third control plane nodes (k8s-master-02, k8s-master-03)
+**WHEN:** After first control plane is initialized
+**HOW:** Use the control-plane join command from section 6.1 output
+
+```bash
+# On k8s-master-02 and k8s-master-03, run:
+kubeadm join k8s-master-01:6443 --token <token> \
+    --discovery-token-ca-cert-hash sha256:<hash> \
+    --control-plane --certificate-key <key>
+```
+
+**VERIFICATION:**
+
+```bash
+# On any control plane node
+kubectl get nodes
+
+# Expected output:
+# NAME            STATUS     ROLES           AGE   VERSION
+# k8s-master-01   NotReady   control-plane   15m   v1.28.5
+# k8s-master-02   NotReady   control-plane   5m    v1.28.5
+# k8s-master-03   NotReady   control-plane   5m    v1.28.5
+```
+
+### 7.3 Regenerate Join Tokens (If Needed)
+
+**Tokens expire after 24 hours.** To generate new tokens:
+
+```bash
+# Generate new token for worker nodes
+kubeadm token create --print-join-command
+
+# Generate new token for control plane nodes
+kubeadm init phase upload-certs --upload-certs
+# This outputs a new --certificate-key
+
+# Then create the full join command
+kubeadm token create --print-join-command --certificate-key <new-key>
+```
 
 ---
 
-## Quick Reference: Complete Installation Timeline
+## 8. Network Plugin Installation
 
-1. **Day 0 - Planning (1-2 days)**
-   - Order OVH VMs
-   - Design network topology
-   - Plan IP addressing
+### 8.1 Install Calico Network Plugin (REQUIRED)
 
-2. **Day 1 - System Preparation (2-4 hours)**
-   - Update all nodes
-   - Configure hostnames, DNS, NTP
-   - Disable swap, configure kernel
+**WHERE:** First control plane node
+**WHEN:** After all nodes have joined
+**WHY:** Provides pod networking and NetworkPolicy support
+**HOW:** Deploy Calico manifests
 
-3. **Day 1-2 - Runtime & K8s Install (2-3 hours)**
-   - Install containerd on all nodes
-   - Install Kubernetes packages on all nodes
+```bash
+# Download Calico manifest
+curl -O https://raw.githubusercontent.com/projectcalico/calico/v3.26.0/manifests/calico.yaml
 
-4. **Day 2 - Cluster Bootstrap (1-2 hours)**
-   - Initialize first control plane
-   - Join additional control planes
-   - Join worker nodes
-   - Install network plugin
+# Review pod network CIDR (should match --pod-network-cidr from kubeadm init)
+grep CALICO_IPV4POOL_CIDR calico.yaml
+# Should show: value: "10.244.0.0/16"
 
-5. **Day 2-3 - Storage & Validation (2-4 hours)**
-   - Configure storage classes
-   - Label nodes
-   - Run validation tests
+# Apply Calico
+kubectl apply -f calico.yaml
 
-6. **Day 3+ - Matrix Deployment**
-   - Follow main deployment guide
+# Wait for Calico pods to be ready
+kubectl wait --for=condition=Ready pods --all -n kube-system --timeout=300s
+```
 
-**TOTAL TIME: 3-5 days** (including planning, testing, validation)
+**VERIFICATION:**
+
+```bash
+# Check Calico pods are running
+kubectl get pods -n kube-system | grep calico
+
+# Expected output:
+# calico-kube-controllers-xxx   1/1     Running   0          2m
+# calico-node-xxx               1/1     Running   0          2m
+# calico-node-yyy               1/1     Running   0          2m
+# ...
+
+# Check nodes are now Ready
+kubectl get nodes
+
+# Expected output:
+# NAME            STATUS   ROLES           AGE   VERSION
+# k8s-master-01   Ready    control-plane   20m   v1.28.5
+# k8s-master-02   Ready    control-plane   10m   v1.28.5
+# k8s-db-01       Ready    <none>          5m    v1.28.5
+# ...
+```
 
 ---
 
-## Support and Resources
+## 9. Storage Configuration
 
-- **Kubernetes Official Docs:** https://kubernetes.io/docs/
-- **Debian Documentation:** https://www.debian.org/doc/
-- **OVH Community:** https://community.ovh.com/
-- **Calico Documentation:** https://docs.tigera.io/calico/latest/
+### 9.1 Label Nodes by Role (REQUIRED)
+
+**WHERE:** First control plane node
+**WHEN:** After all nodes are Ready
+**WHY:** Pod scheduling requires node labels
+**HOW:** Apply labels to each node
+
+```bash
+# Label database nodes
+kubectl label nodes k8s-db-01 k8s-db-02 k8s-db-03 node-role=database
+
+# Label storage nodes
+kubectl label nodes k8s-storage-01 k8s-storage-02 k8s-storage-03 k8s-storage-04 node-role=storage
+
+# Label application nodes
+kubectl label nodes k8s-app-01 k8s-app-02 k8s-app-03 node-role=application
+
+# Label call server nodes (if separate)
+kubectl label nodes k8s-call-01 k8s-call-02 livekit=true coturn=true
+
+# Verify labels
+kubectl get nodes --show-labels
+```
+
+### 9.2 Install Local Path Provisioner (RECOMMENDED)
+
+**WHERE:** First control plane node
+**WHEN:** After node labeling
+**WHY:** Provides dynamic local storage provisioning
+**HOW:** Deploy local-path-provisioner
+
+```bash
+# Deploy local-path-provisioner
+kubectl apply -f https://raw.githubusercontent.com/rancher/local-path-provisioner/v0.0.24/deploy/local-path-storage.yaml
+
+# Verify deployment
+kubectl get pods -n local-path-storage
+
+# Expected output:
+# NAME                                     READY   STATUS    RESTARTS   AGE
+# local-path-provisioner-xxx               1/1     Running   0          30s
+
+# Verify StorageClass
+kubectl get storageclass
+
+# Expected output:
+# NAME         PROVISIONER             RECLAIMPOLICY   VOLUMEBINDINGMODE      ALLOWVOLUMEEXPANSION   AGE
+# local-path   rancher.io/local-path   Delete          WaitForFirstConsumer   false                  1m
+```
+
+**NOTE:** For production, you may also want to configure additional storage classes for specific workloads.
 
 ---
 
-**Document Version:** 1.0
-**Last Updated:** November 10, 2025
-**Maintained By:** Matrix/Synapse Production Deployment Team
+## 10. Validation and Testing
+
+### 10.1 Verify Cluster Health (REQUIRED)
+
+```bash
+# Check all nodes are Ready
+kubectl get nodes
+
+# Check all system pods are Running
+kubectl get pods -n kube-system
+
+# Check cluster info
+kubectl cluster-info
+
+# Expected output:
+# Kubernetes control plane is running at https://k8s-master-01:6443
+# CoreDNS is running at https://k8s-master-01:6443/api/v1/namespaces/kube-system/services/kube-dns:dns/proxy
+```
+
+### 10.2 Test Pod Deployment (REQUIRED)
+
+```bash
+# Create test deployment
+kubectl create deployment nginx --image=nginx:alpine
+
+# Expose deployment
+kubectl expose deployment nginx --port=80 --type=NodePort
+
+# Wait for pod to be ready
+kubectl wait --for=condition=Ready pod -l app=nginx --timeout=120s
+
+# Check deployment
+kubectl get pods -l app=nginx
+
+# Get service details
+kubectl get svc nginx
+
+# Test connectivity (from any node)
+NODE_PORT=$(kubectl get svc nginx -o jsonpath='{.spec.ports[0].nodePort}')
+curl http://localhost:$NODE_PORT
+
+# Expected: nginx welcome page HTML
+
+# Cleanup
+kubectl delete deployment nginx
+kubectl delete svc nginx
+```
+
+### 10.3 Test DNS Resolution (REQUIRED)
+
+```bash
+# Deploy test pod
+kubectl run test-dns --image=busybox:latest --restart=Never -- sleep 3600
+
+# Wait for pod
+kubectl wait --for=condition=Ready pod/test-dns --timeout=60s
+
+# Test DNS lookup
+kubectl exec test-dns -- nslookup kubernetes.default
+
+# Expected output showing successful DNS resolution
+
+# Cleanup
+kubectl delete pod test-dns
+```
+
+### 10.4 Test Inter-Node Communication (REQUIRED)
+
+```bash
+# Create deployment with 2 replicas on different nodes
+kubectl create deployment multi-node-test --image=nginx:alpine --replicas=2
+
+# Wait for pods
+kubectl wait --for=condition=Ready pods -l app=multi-node-test --timeout=120s
+
+# Check pods are on different nodes
+kubectl get pods -l app=multi-node-test -o wide
+
+# Cleanup
+kubectl delete deployment multi-node-test
+```
+
+---
+
+## 11. Troubleshooting
+
+### 11.1 Common Issues
+
+#### Issue: Node stuck in "NotReady" state
+
+**Symptoms:**
+```
+kubectl get nodes
+NAME            STATUS     ROLES           AGE   VERSION
+k8s-master-01   NotReady   control-plane   10m   v1.28.5
+```
+
+**Solutions:**
+1. Check kubelet status:
+   ```bash
+   systemctl status kubelet
+   journalctl -u kubelet -n 50
+   ```
+
+2. Check network plugin is installed:
+   ```bash
+   kubectl get pods -n kube-system | grep calico
+   ```
+
+3. Check for firewall blocking required ports:
+   ```bash
+   iptables -L -n | grep 10250
+   ```
+
+#### Issue: Pods stuck in "Pending" state
+
+**Symptoms:**
+```
+kubectl get pods
+NAME          READY   STATUS    RESTARTS   AGE
+test-pod      0/1     Pending   0          5m
+```
+
+**Solutions:**
+1. Check for resource constraints:
+   ```bash
+   kubectl describe pod <pod-name>
+   ```
+
+2. Check node labels match pod nodeSelector:
+   ```bash
+   kubectl get nodes --show-labels
+   ```
+
+3. Check for tainted nodes:
+   ```bash
+   kubectl describe nodes | grep -i taint
+   ```
+
+#### Issue: kubeadm join fails
+
+**Symptoms:**
+```
+error execution phase preflight: couldn't validate the identity of the API Server
+```
+
+**Solutions:**
+1. Token may have expired (tokens expire after 24 hours):
+   ```bash
+   # On control plane, generate new token
+   kubeadm token create --print-join-command
+   ```
+
+2. Check control plane is accessible:
+   ```bash
+   telnet <control-plane-ip> 6443
+   ```
+
+3. Check /etc/hosts has correct control plane hostname:
+   ```bash
+   cat /etc/hosts | grep k8s-master
+   ```
+
+#### Issue: CoreDNS pods CrashLoopBackOff
+
+**Symptoms:**
+```
+kubectl get pods -n kube-system | grep coredns
+coredns-xxx   0/1     CrashLoopBackOff   5          10m
+```
+
+**Solutions:**
+1. Check for loop in /etc/resolv.conf:
+   ```bash
+   kubectl exec -n kube-system <coredns-pod> -- cat /etc/resolv.conf
+   ```
+
+2. If nameserver is 127.0.0.1 or loop detected, edit CoreDNS ConfigMap:
+   ```bash
+   kubectl edit configmap coredns -n kube-system
+   # Remove or modify the forward plugin
+   ```
+
+3. Restart CoreDNS pods:
+   ```bash
+   kubectl rollout restart deployment coredns -n kube-system
+   ```
+
+#### Issue: Calico pods not starting
+
+**Symptoms:**
+```
+kubectl get pods -n kube-system | grep calico
+calico-node-xxx   0/1     Init:0/3   0          5m
+```
+
+**Solutions:**
+1. Check pod network CIDR matches:
+   ```bash
+   kubectl cluster-info dump | grep -i cidr
+   kubectl get configmap -n kube-system calico-config -o yaml
+   ```
+
+2. Check kernel modules are loaded:
+   ```bash
+   lsmod | grep -E 'br_netfilter|overlay'
+   ```
+
+3. Check Calico logs:
+   ```bash
+   kubectl logs -n kube-system <calico-pod> -c calico-node
+   ```
+
+### 11.2 Diagnostic Commands
+
+**Check cluster health:**
+```bash
+kubectl get --raw='/readyz?verbose'
+kubectl get cs  # component status (deprecated but useful)
+```
+
+**Check certificate expiration:**
+```bash
+kubeadm certs check-expiration
+```
+
+**Check etcd health:**
+```bash
+kubectl exec -n kube-system etcd-k8s-master-01 -- sh -c "ETCDCTL_API=3 etcdctl \
+  --endpoints=https://127.0.0.1:2379 \
+  --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+  --cert=/etc/kubernetes/pki/etcd/server.crt \
+  --key=/etc/kubernetes/pki/etcd/server.key \
+  endpoint health"
+```
+
+**Check API server logs:**
+```bash
+kubectl logs -n kube-system kube-apiserver-k8s-master-01
+```
+
+---
+
+## Summary
+
+You have now:
+- Configured all nodes with required system settings
+- Installed and configured containerd
+- Installed Kubernetes components
+- Initialized control plane (HA with 3 masters)
+- Joined all worker nodes
+- Installed Calico network plugin
+- Configured storage
+- Validated cluster health
+
+**Next Steps:**
+1. Proceed to Matrix/Synapse deployment
+2. Install Helm charts
+3. Deploy infrastructure components (PostgreSQL, Redis, MinIO)
+
+---

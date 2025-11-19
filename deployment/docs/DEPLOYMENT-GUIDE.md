@@ -50,8 +50,8 @@ Choose one:
 
 | Method | Best For | Time Required |
 |--------|----------|---------------|
-| [Automated](#automated-deployment) | Quick deployment, first-time users | 30-45 minutes |
-| [Manual](#manual-deployment) | Learning, custom setups, troubleshooting | 1-2 hours |
+| [Automated](#automated-deployment) | Quick deployment, first-time users |  |
+| [Manual](#manual-deployment) | Learning, custom setups, troubleshooting |  |
 
 ---
 
@@ -98,7 +98,7 @@ The script will:
 9. ✅ Validate deployment
 10. ✅ Display next steps
 
-**Expected time:** 30-45 minutes (mostly waiting for components to be ready)
+**Expected time:**  (mostly waiting for components to be ready)
 
 ### Step 3: Monitor Progress
 
@@ -114,7 +114,7 @@ watch kubectl get pods -A
 - Eventually all pods show `Running` with `READY` showing expected replicas
 
 **Common during deployment:**
-- PostgreSQL pods take 2-3 minutes to be ready
+- PostgreSQL pods take  to be ready
 - MinIO pods may show `0/1` briefly (initializing)
 - Some pods restart once (initialization, normal)
 
@@ -128,7 +128,7 @@ Script will display:
 Next steps:
 1. Get load balancer IP: kubectl get svc -n ingress-nginx
 2. Configure DNS: chat.example.com → <LOAD_BALANCER_IP>
-3. Wait for TLS certificate (2-5 minutes)
+3. Wait for TLS certificate ()
 4. Create admin user (command provided)
 5. Access web interface: https://chat.example.com
 ```
@@ -315,7 +315,7 @@ kubectl get pods -n cnpg-system
 ```bash
 kubectl apply -f manifests/01-postgresql-cluster.yaml
 
-# Wait for cluster to be ready (takes 2-3 minutes)
+# Wait for cluster to be ready (takes )
 kubectl wait --for=condition=ready cluster/synapse-postgres -n matrix --timeout=10m
 ```
 
@@ -350,7 +350,6 @@ kubectl get pods -n matrix -l cnpg.io/cluster=synapse-postgres
 - Configured for Synapse's requirements (session mode)
 - Better performance under load
 
-See [`HA-ROUTING-GUIDE.md`](HA-ROUTING-GUIDE.md) for connection flow details.
 
 #### Step 2.3: Install Redis (Synapse Instance)
 
@@ -421,7 +420,7 @@ kubectl wait --for=condition=ready pod -l name=minio-operator -n minio-operator 
 # Deploy MinIO Tenant (actual storage cluster)
 kubectl apply -f manifests/02-minio-tenant.yaml
 
-# Wait for tenant to be ready (takes 3-5 minutes)
+# Wait for tenant to be ready (takes )
 kubectl wait --for=condition=ready tenant/synapse-media -n minio --timeout=10m
 ```
 
@@ -570,7 +569,7 @@ kubectl exec -n matrix -l component=main -- curl -s http://localhost:8008/health
 ```bash
 kubectl apply -f manifests/06-synapse-workers.yaml
 
-# Wait for workers to be ready (takes 2-3 minutes)
+# Wait for workers to be ready (takes )
 kubectl wait --for=condition=ready pod -l app=synapse -n matrix --timeout=10m
 ```
 
@@ -605,7 +604,7 @@ kubectl logs -n matrix synapse-main-xxx | grep "Finished setting up"
 ```
 
 **Worker architecture:**
-See [`HA-ROUTING-GUIDE.md`](HA-ROUTING-GUIDE.md) for how workers distribute load.
+
 
 #### Step 4.3: Deploy Element Web
 
@@ -780,7 +779,7 @@ kubectl get certificate -n matrix
 # NAME         READY   SECRET            AGE
 # matrix-tls   False   matrix-tls-secret 30s
 
-# After 2-5 minutes:
+# After :
 # NAME         READY   SECRET            AGE
 # matrix-tls   True    matrix-tls-secret 3m
 ```
@@ -884,7 +883,6 @@ kubectl apply -f manifests/13-network-policies.yaml
 - You're in development environment (NetworkPolicies add complexity)
 - You need to troubleshoot connectivity issues first
 
-**See also:** [Network Policies documentation](13-network-policies.yaml) for detailed policy definitions.
 
 ---
 
@@ -1000,7 +998,7 @@ nslookup chat.example.com
 
 ```bash
 kubectl get certificate -n matrix -w
-# Watch until READY shows True (2-5 minutes)
+# Watch until READY shows True ()
 ```
 
 ### Step 3: Create Admin User

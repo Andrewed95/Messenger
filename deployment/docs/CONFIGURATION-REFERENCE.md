@@ -862,7 +862,7 @@ LETSENCRYPT_EMAIL="admin@example.com"
 - ❌ **Cons:** Additional CPU usage, slight upload delay
 
 **Complete Guide:**
-See [`ANTIVIRUS-GUIDE.md`](ANTIVIRUS-GUIDE.md) for decision framework and complete implementation instructions for both enabling and disabling antivirus.
+
 
 ### Federation
 
@@ -912,8 +912,8 @@ git status
 ```
 
 **Rotate secrets regularly:**
-- PostgreSQL password: Every 6 months
-- MinIO passwords: Every 6 months
+- PostgreSQL password: Every 
+- MinIO passwords: Every 
 - Synapse secrets: Annually (invalidates sessions)
 - Grafana password: After first login
 
@@ -1013,7 +1013,7 @@ Server failed
    chat.example.com. → <LOAD_BALANCER_IP>
    ```
 
-2. Wait for DNS propagation (up to 24 hours)
+2. Wait for DNS propagation (up to )
 
 3. Test with:
    ```bash

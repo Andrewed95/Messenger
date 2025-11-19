@@ -452,7 +452,7 @@ annotations:
 
 **File:** Multiple worker and database configurations
 
-See [`SCALING-GUIDE.md`](SCALING-GUIDE.md) for:
+
 - Worker replica counts for your scale
 - Database connection pool sizes
 - Resource requests/limits
@@ -590,6 +590,5 @@ Run the pre-deployment verification commands before deployment to ensure no plac
 
 ---
 
-**Document Version:** 1.0
-**Last Updated:** 2025-11-11
+
 **Next Step:** After replacing all values, follow `DEPLOYMENT-GUIDE.md`

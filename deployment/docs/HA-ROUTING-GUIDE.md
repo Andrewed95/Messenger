@@ -478,13 +478,13 @@ LiveKit Pod
 
 **Failover Process:**
 1. CloudNativePG detects primary failure (health checks)
-2. Waits `switchoverDelay: 300` seconds (5 minutes)
+2. Waits `switchoverDelay: 300` seconds ()
 3. If primary still down, promotes a standby replica
 4. New primary starts accepting writes
 5. PgBouncer automatically redirects to new primary
 6. Clients experience brief connection interruption (~30 seconds)
 
-**Why 5 Minute Delay?**
+**Why  Delay?**
 - Prevents false positives from network blips
 - Allows temporary issues to resolve
 - Reduces unnecessary failovers
@@ -646,7 +646,7 @@ NGINX Ingress Controller (3 replicas)
 ```
 T+0s:   Primary PostgreSQL crashes
 T+30s:  CloudNativePG detects failure (health checks fail)
-T+300s: switchoverDelay expires (5 minutes)
+T+300s: switchoverDelay expires ()
 T+301s: CloudNativePG promotes Standby Replica 1 to primary
 T+302s: PgBouncer connects to new primary
 T+310s: All Synapse processes reconnected
@@ -932,7 +932,7 @@ spec:
    - Workers: Multiple instances of each type
 
 2. **Automatic Failover Everywhere**
-   - PostgreSQL: CloudNativePG handles failover (~5 minutes)
+   - PostgreSQL: CloudNativePG handles failover (~)
    - Redis: Sentinel handles failover (~5 seconds)
    - Workers: Kubernetes recreates failed pods (~30 seconds)
    - Ingress: MetalLB redirects traffic (<1 second)

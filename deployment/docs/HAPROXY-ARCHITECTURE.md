@@ -1,7 +1,6 @@
 # HAProxy Routing Architecture for Matrix/Synapse
 
-**Document Version:** 1.1
-**Last Updated:** 2025-11-11
+
 **Applies to:** All Scales (100 CCU to 20K CCU)
 **Architecture:** Simplified worker architecture (extensible)
 
@@ -976,7 +975,6 @@ This architecture is proven in production by Element's enterprise deployments an
 
 ---
 
-**Document Version:** 1.0
-**Last Updated:** 2025-11-11
+
 **Based on:** Element ess-helm v1.x
 **HAProxy Version:** 2.8+

@@ -543,7 +543,7 @@ done
   labels:
     severity: warning
   annotations:
-    summary: "Certificate {{ $labels.name }} expiring in < 7 days"
+    summary: "Certificate {{ $labels.name }} expiring in < "
 ```
 
 ## Scaling Considerations

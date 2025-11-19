@@ -100,10 +100,23 @@ deployment/
 - Domain name for your homeserver
 - `kubectl` and `helm` installed
 
-**Recommended Reading:**
-- `docs/00-WORKSTATION-SETUP.md` - Set up local tools
-- `docs/00-KUBERNETES-INSTALLATION-DEBIAN-OVH.md` - Set up K8s cluster
-- `docs/SCALING-GUIDE.md` - Size your infrastructure
+### Before You Begin - Documentation Guide
+
+**📖 REQUIRED Reading (follow in order):**
+
+1. **`docs/00-WORKSTATION-SETUP.md`** ← Set up kubectl, helm, and required tools on your workstation
+2. **`docs/00-KUBERNETES-INSTALLATION-DEBIAN-OVH.md`** ← Set up Kubernetes cluster (assumes VMs are provided)
+3. **`docs/SCALING-GUIDE.md`** ← Determine resource requirements for your scale (100 CCU to 20K CCU)
+4. **THIS README** ← Complete all deployment phases below
+
+**📚 OPTIONAL Reference (read as needed):**
+- `docs/DEPLOYMENT-GUIDE.md` - Alternative detailed walkthrough (same as this README, more verbose)
+- `docs/CONFIGURATION-REFERENCE.md` - Deep dive into all configuration parameters
+- `docs/SECRETS-MANAGEMENT.md` - Advanced secret management strategies
+- Component-specific `README.md` files in each directory - additional technical details
+
+**After completing all phases below, see:**
+- `docs/OPERATIONS-UPDATE-GUIDE.md` - How to update and maintain your deployment
 
 ---
 
@@ -664,22 +677,19 @@ kubectl logs -n matrix -l app.kubernetes.io/name=content-scanner | grep "scan"
 
 ---
 
-## 📚 Documentation Reference
+## 📚 Optional Documentation Reference
 
-| Document | Purpose |
-|----------|---------|
-| `infrastructure/*/README.md` | Phase 1 component guides |
-| `main-instance/*/README.md` | Phase 2 component guides |
-| `li-instance/README.md` | Complete LI instance guide |
-| `monitoring/README.md` | Monitoring stack guide |
-| `antivirus/README.md` | Antivirus system guide |
-| `docs/DEPLOYMENT-GUIDE.md` | Detailed deployment walkthrough |
-| `docs/SCALING-GUIDE.md` | Infrastructure sizing guide |
-| `docs/OPERATIONS-UPDATE-GUIDE.md` | Updates and maintenance |
-| `docs/CONFIGURATION-REFERENCE.md` | All configuration options |
-| `docs/SECRETS-MANAGEMENT.md` | Security and secrets |
-| `docs/HAPROXY-ARCHITECTURE.md` | Routing architecture |
-| `docs/ANTIVIRUS-GUIDE.md` | Antivirus implementation |
+**These documents provide additional technical details. They are NOT required for deployment - use as reference when needed.**
+
+| Document | Purpose | When to Read |
+|----------|---------|--------------|
+| `docs/CONFIGURATION-REFERENCE.md` | All configuration parameters explained | When customizing advanced settings |
+| `docs/OPERATIONS-UPDATE-GUIDE.md` | Updates and maintenance procedures | After deployment, for ongoing operations |
+| `docs/SECRETS-MANAGEMENT.md` | Advanced secret management | If using external secret managers (Vault, etc.) |
+| `docs/HAPROXY-ARCHITECTURE.md` | HAProxy routing technical details | When debugging routing issues |
+| `docs/ANTIVIRUS-GUIDE.md` | ClamAV integration deep dive | When customizing antivirus configuration |
+| `li-instance/README.md` | Complete LI instance technical guide | For understanding LI architecture details |
+| Component `README.md` files | Per-component technical details | When troubleshooting specific components |
 
 ---
 
@@ -698,16 +708,16 @@ kubectl logs -n matrix -l app.kubernetes.io/name=content-scanner | grep "scan"
 - Check worker logs: `kubectl logs <worker-pod> -n matrix`
 
 **LI replication lag:**
-- Check replication status (see Phase 3 verification)
+- Check replication status (see Phase 3 verification above)
 - Check sync system logs: `kubectl logs <sync-system-pod> -n matrix`
-- See `li-instance/README.md` troubleshooting section
+- Check PostgreSQL replication delay: See LI verification commands in Phase 3
 
 **Antivirus not scanning:**
 - Check ClamAV is running: `kubectl get daemonset clamav -n matrix`
 - Check Content Scanner connectivity: `kubectl logs <content-scanner-pod> -n matrix`
-- See `antivirus/README.md` troubleshooting section
+- Test ClamAV directly: See Phase 5 verification above
 
-**For detailed troubleshooting, see component-specific README files.**
+**For advanced troubleshooting, see component-specific README files in Optional Documentation Reference above.**
 
 ---
 
@@ -731,7 +741,5 @@ If all verification steps pass, you have successfully deployed:
 
 ---
 
-**Deployment Version**: 1.0
-**Last Updated**: 2025-11-18
 **Kubernetes**: 1.28+
 **Synapse**: v1.119.0

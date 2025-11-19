@@ -66,7 +66,7 @@ loki:
 
   config:
     limits_config:
-      retention_period: 720h  # 30 days
+      retention_period: 720h  # 
       ingestion_rate_mb: 10
       ingestion_burst_size_mb: 20
 
@@ -424,7 +424,7 @@ kubectl exec -n monitoring loki-0 -- du -sh /data/loki
 loki:
   config:
     limits_config:
-      retention_period: 360h  # Reduce to 15 days
+      retention_period: 360h  # Reduce to 
 ```
 
 **Increase storage**:
@@ -494,18 +494,18 @@ promtail:
 
 ### Current Configuration
 
-- **Retention Period**: 30 days (720 hours)
+- **Retention Period**:  ()
 - **Storage Size**: 50Gi
 - **Estimated Log Volume**: 10-20GB/day at 20K CCU
 
 ### Adjusting Retention
 
-**Increase retention to 60 days**:
+**Increase retention to **:
 ```yaml
 loki:
   config:
     limits_config:
-      retention_period: 1440h  # 60 days
+      retention_period: 1440h  # 
     table_manager:
       retention_period: 1440h
 
@@ -513,12 +513,12 @@ loki:
     size: 100Gi  # Double storage
 ```
 
-**Decrease retention to 7 days**:
+**Decrease retention to **:
 ```yaml
 loki:
   config:
     limits_config:
-      retention_period: 168h  # 7 days
+      retention_period: 168h  # 
     table_manager:
       retention_period: 168h
 ```

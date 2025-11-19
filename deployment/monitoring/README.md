@@ -55,7 +55,7 @@ The monitoring stack provides comprehensive observability for:
 ### 1. Prometheus (`01-prometheus/`)
 - **Purpose**: Metrics collection and storage
 - **Port**: 9090
-- **Retention**: 30 days, 100GB
+- **Retention**: , 100GB
 - **Scrape Interval**: 30s
 - **Files**:
   - `servicemonitors.yaml`: 12 ServiceMonitors for all components
@@ -86,7 +86,7 @@ The monitoring stack provides comprehensive observability for:
 - **Purpose**: Log aggregation and querying
 - **Port**: 3100
 - **Storage**: 50Gi
-- **Retention**: 30 days
+- **Retention**: 
 - **Files**:
   - `README.md`: LogQL queries and troubleshooting
 
@@ -323,7 +323,7 @@ See `03-loki/README.md` for complete LogQL guide.
 - CPU: 500m
 - Memory: 4Gi
 - Storage: 50Gi
-- Retention: 30 days
+- Retention: 
 
 **Grafana**:
 - Replicas: 1
@@ -460,12 +460,12 @@ http://localhost:9090/alerts
 ### Storage Costs
 
 **Current Configuration**:
-- Prometheus: 100Gi × 30 days = 100Gi
-- Loki: 50Gi × 30 days = 50Gi
+- Prometheus: 100Gi ×  = 100Gi
+- Loki: 50Gi ×  = 50Gi
 - **Total**: ~150Gi
 
 **Optimization**:
-1. **Reduce retention**: 15 days instead of 30 days = 50% savings
+1. **Reduce retention**:  instead of  = 50% savings
 2. **Use cheaper storage class**: Cloud cold storage
 3. **Enable compression**: Prometheus TSDB compression
 4. **Archive to S3**: Long-term storage via Thanos

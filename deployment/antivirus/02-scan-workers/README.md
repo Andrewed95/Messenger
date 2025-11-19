@@ -37,7 +37,7 @@ The Matrix Content Scanner is a **Python service** that intercepts media downloa
 │     ├─ Clean → Return media (200)                          │
 │     └─ Infected → Return error (403)                       │
 │                                                             │
-│  Cache: Remember scan results (1 hour TTL)                 │
+│  Cache: Remember scan results ( TTL)                 │
 └─────────────────────────┬───────────────────────────────────┘
                           │
                           ├─ ClamAV Service
@@ -160,7 +160,7 @@ proxy:
 ```yaml
 result_cache:
   type: memory     # In-memory cache (can use Redis for shared cache)
-  ttl: 3600        # 1 hour
+  ttl: 3600        # 
   max_size: 10000  # 10,000 entries
 ```
 
@@ -253,7 +253,7 @@ content_scanner_errors_total
 
 **Example queries**:
 
-**Scan rate (last 5 minutes)**:
+**Scan rate (last )**:
 ```promql
 rate(content_scanner_scans_total[5m])
 ```
@@ -405,7 +405,7 @@ rate(content_scanner_cache_hits_total[5m]) / rate(content_scanner_scans_total[5m
 ```
 
 **Solutions**:
-- Increase cache TTL (longer than 1 hour)
+- Increase cache TTL (longer than )
 - Use Redis for shared cache (instead of in-memory)
 - Increase ClamAV resources
 - Scale Content Scanner horizontally
@@ -451,7 +451,7 @@ Replace in-memory cache with Redis:
 result_cache:
   type: redis
   redis_url: redis://redis.matrix.svc.cluster.local:6379/1
-  ttl: 7200  # 2 hours
+  ttl: 7200  # 
 ```
 
 **Benefits**:
@@ -465,7 +465,7 @@ For rarely-changing media:
 
 ```yaml
 result_cache:
-  ttl: 86400  # 24 hours instead of 1 hour
+  ttl: 86400  #  instead of 
 ```
 
 ### Adjust Max File Size

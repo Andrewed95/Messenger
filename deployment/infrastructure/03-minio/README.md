@@ -129,7 +129,7 @@ kubectl apply -f tenant.yaml
 # Watch pods come up
 kubectl get pods -n matrix -l v1.min.io/tenant=matrix-minio -w
 
-# Wait for tenant to be ready (may take 2-5 minutes)
+# Wait for tenant to be ready (may take )
 kubectl wait --for=condition=Available tenant/matrix-minio -n matrix --timeout=10m
 ```
 

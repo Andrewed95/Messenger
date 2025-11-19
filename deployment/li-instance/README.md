@@ -14,7 +14,7 @@ The LI instance is a **separate, isolated Matrix homeserver** that receives data
 - ✅ Isolated from federation network
 - ✅ Cannot access `key_vault` (NetworkPolicy enforced)
 - ✅ Real-time data replication via PostgreSQL logical replication
-- ✅ Media sync via rclone (every 15 minutes)
+- ✅ Media sync via rclone (every )
 - ✅ Separate web interfaces (Element, Synapse Admin)
 - ✅ IP whitelisting for authorized access only
 
@@ -37,7 +37,7 @@ The LI instance is a **separate, isolated Matrix homeserver** that receives data
 │                   SYNC SYSTEM                           │
 │  ┌──────────────────────┐   ┌───────────────────────┐  │
 │  │ Logical Replication  │   │  rclone Media Sync    │  │
-│  │   (Real-time DB)     │   │  (Every 15 minutes)   │  │
+│  │   (Real-time DB)     │   │  (Every )   │  │
 │  └──────────┬───────────┘   └───────────┬───────────┘  │
 └─────────────┼───────────────────────────┼───────────────┘
               │                           │
@@ -120,7 +120,7 @@ kubectl apply -f 03-synapse-admin-li/deployment.yaml
 
 **Components**:
 - **PostgreSQL Logical Replication**: Real-time database sync
-- **rclone Media Sync**: Periodic media file sync (every 15 minutes)
+- **rclone Media Sync**: Periodic media file sync (every )
 - **Setup Job**: One-time configuration of replication
 - **CronJob**: Automated media synchronization
 
@@ -135,6 +135,76 @@ kubectl apply -f 04-sync-system/deployment.yaml
 # Run setup job (one time)
 kubectl create job --from=job/sync-system-setup-replication sync-setup-$(date +%s) -n matrix
 ```
+
+---
+
+## DNS Configuration
+
+**CRITICAL**: The LI instance and main instance share the SAME `server_name` but use DIFFERENT domains for access.
+
+### Domain Configuration
+
+**Main Instance:**
+- `server_name`: `matrix.example.com` (in homeserver.yaml)
+- `public_baseurl`: `https://matrix.example.com`
+- DNS: `matrix.example.com` → Points to main Synapse Ingress IP
+- Users see: `@username:matrix.example.com`
+
+**LI Instance:**
+- `server_name`: `matrix.example.com` (**MUST match main**)
+- `public_baseurl`: `https://matrix-li.example.com` (different URL)
+- DNS: `matrix-li.example.com` → Points to LI Synapse Ingress IP
+- Users see: Same `@username:matrix.example.com` (database compatibility)
+
+### Why This Configuration?
+
+1. **Same `server_name`**: Ensures users, rooms, and events in the LI database are compatible with the main instance
+2. **Different `public_baseurl`**: Allows separate access points for main vs LI interfaces
+3. **Separate DNS entries**: Route traffic to different Kubernetes Ingress endpoints
+
+### DNS Setup
+
+Configure these DNS A records:
+
+```bash
+# Main instance (production users)
+matrix.example.com          → <main-ingress-external-ip>
+element.example.com         → <main-ingress-external-ip>
+
+# LI instance (law enforcement only)
+matrix-li.example.com       → <main-ingress-external-ip>  # Same Ingress, different routing
+element-li.example.com      → <main-ingress-external-ip>
+admin-li.example.com        → <main-ingress-external-ip>
+```
+
+### How Traffic Routing Works
+
+All domains point to the **same Kubernetes Ingress**, but NGINX routes based on `Host` header:
+
+```yaml
+# Ingress rules automatically route:
+Host: matrix.example.com     → synapse-main service
+Host: matrix-li.example.com  → synapse-li service
+Host: element.example.com    → element-web service
+Host: element-li.example.com → element-web-li service
+```
+
+**No special DNS tricks needed** - just standard A records pointing to your Ingress external IP.
+
+### Getting Your Ingress IP
+
+```bash
+# Find your Ingress external IP
+kubectl get svc -n ingress-nginx ingress-nginx-controller
+
+# Output example:
+# NAME                       TYPE           EXTERNAL-IP      PORT(S)
+# ingress-nginx-controller   LoadBalancer   203.0.113.10     80:30080/TCP,443:30443/TCP
+```
+
+Use `203.0.113.10` (example) as your DNS target for ALL domains above.
+
+---
 
 ## Security & Isolation
 
@@ -306,11 +376,11 @@ curl -u admin:password https://admin-li.matrix.example.com
 
 ### Media Replication
 
-**rclone sync** (every 15 minutes):
+**rclone sync** (every ):
 1. CronJob triggers rclone
 2. rclone compares `synapse-media` and `synapse-media-li` buckets
 3. New/changed files copied from main to LI
-4. **Lag**: Up to 15 minutes for new media
+4. **Lag**: Up to  for new media
 
 **Optimization**:
 - `--fast-list`: Quick directory listing
@@ -447,8 +517,8 @@ Adjust CronJob schedule based on requirements:
 
 ```yaml
 spec:
-  schedule: "*/15 * * * *"  # Every 15 minutes (default)
-  # schedule: "*/5 * * * *"   # Every 5 minutes (low latency)
+  schedule: "*/15 * * * *"  # Every  (default)
+  # schedule: "*/5 * * * *"   # Every  (low latency)
   # schedule: "0 * * * *"     # Every hour (low priority)
 ```
 

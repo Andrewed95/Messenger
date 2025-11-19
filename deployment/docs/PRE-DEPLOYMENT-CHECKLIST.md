@@ -1,8 +1,6 @@
 # Pre-Deployment Checklist
 ## Critical Steps Before Deploying Matrix/Synapse to Production
 
-**Last Updated:** 2025-11-18
-**Document Version:** 1.0
 
 ---
 
@@ -587,8 +585,8 @@ kubectl get cluster matrix-postgresql-li -n matrix -o jsonpath='{.spec.backup}'
 ```
 
 **Retention policies:**
-- Main instance: 30 days
-- LI instance: 90 days (longer for compliance)
+- Main instance: 
+- LI instance:  (longer for compliance)
 
 **Test backup and restore** before production - see `docs/OPERATIONS-UPDATE-GUIDE.md` section 5.
 
@@ -785,6 +783,5 @@ Once all items are completed:
 
 ---
 
-**Last Updated:** 2025-11-18
-**Document Version:** 1.0
+
 **Maintained by:** Matrix/Synapse Deployment Team

@@ -286,9 +286,9 @@ rate(kube_job_status_succeeded{job_name=~"sync-system-media.*"}[1h])
 - **Use legends**: Clear labels for multi-series data
 
 ### 2. Time Ranges
-- **Default**: Last 1 hour for operational dashboards
-- **Troubleshooting**: Last 6-24 hours for incident investigation
-- **Capacity Planning**: Last 7-30 days for trend analysis
+- **Default**: Last  for operational dashboards
+- **Troubleshooting**: Last  for incident investigation
+- **Capacity Planning**: Last  for trend analysis
 
 ### 3. Refresh Rates
 - **Critical Services**: 10s (Synapse, PostgreSQL, Redis)
