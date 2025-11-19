@@ -1597,7 +1597,7 @@ kubectl logs -n matrix deployment/synapse-main --tail=50
 - Check events: `kubectl get events -n matrix --sort-by='.lastTimestamp'`
 - Describe resources: `kubectl describe <resource> <name> -n matrix`
 - Review Grafana dashboards
-- Consult [DEPLOYMENT-GUIDE.md](DEPLOYMENT-GUIDE.md) and [HA-ROUTING-GUIDE.md](HA-ROUTING-GUIDE.md)
+- Consult main `README.md` and `HAPROXY-ARCHITECTURE.md` for architecture details
 
 ---
 

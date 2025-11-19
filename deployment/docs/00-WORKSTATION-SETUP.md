@@ -425,7 +425,7 @@ You should now have:
 
 **Your management node is now ready to deploy and manage Matrix/Synapse on the Kubernetes cluster.**
 
-**Next:** Proceed to deploying Matrix/Synapse using `docs/DEPLOYMENT-GUIDE.md`
+**Next:** Proceed to the main `README.md` for complete deployment instructions
 
 ---
 

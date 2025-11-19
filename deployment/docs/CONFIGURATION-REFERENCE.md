@@ -354,8 +354,6 @@ PostgreSQL configuration varies by scale. Here are examples for common scales:
 
 **For your scale:** See [SCALING-GUIDE.md](SCALING-GUIDE.md) Section 9.2 for connection pool calculations.
 
-**See Also:** [`HA-ROUTING-GUIDE.md`](HA-ROUTING-GUIDE.md) for failover details.
-
 ---
 
 ## Redis Configuration
@@ -621,8 +619,6 @@ _matrix._tcp.example.com. 300 IN SRV 10 0 8448 chat.example.com.
 - Visit: https://federationtester.matrix.org/
 - Enter your domain
 
-**See Also:** [Deployment Guide](DEPLOYMENT-GUIDE.md) → Optional Features → Federation
-
 ---
 
 ## coturn Configuration
@@ -876,8 +872,6 @@ federation_enabled: true
 2. Configure DNS SRV records
 3. Test with https://federationtester.matrix.org/
 
-**See:** [Deployment Guide](DEPLOYMENT-GUIDE.md) → Optional Features
-
 ---
 
 ## Security Best Practices
@@ -1065,4 +1059,4 @@ Before deploying, verify:
 
 ---
 
-**All set?** Proceed to [Deployment Guide](DEPLOYMENT-GUIDE.md).
+**All set?** Proceed to the main `README.md` for deployment instructions.

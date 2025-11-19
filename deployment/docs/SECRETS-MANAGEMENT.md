@@ -64,7 +64,7 @@ data:
 
 **Current Security:**
 - ✅ Not stored in Git (created during deployment)
-- ✅ Documented in CONFIGURATION-CHECKLIST.md
+- ✅ Documented in README Configuration section
 - ✅ Mounted as volumes (not environment variables)
 - ⚠️ Base64 encoded (NOT encrypted) by default
 - ⚠️ Stored in etcd unencrypted by default
@@ -684,7 +684,7 @@ For **SOC 2, ISO 27001, HIPAA, PCI-DSS**:
 - ✅ Access logs enabled (Kubernetes audit logging)
 - ✅ RBAC configured (least privilege)
 - ✅ Regular rotation schedule (documented)
-- ✅ Secrets not in Git (CONFIGURATION-CHECKLIST.md only)
+- ✅ Secrets not in Git (README Configuration section only)
 - ✅ Secrets not in environment variables (mounted as volumes)
 - ✅ Secrets not in logs (Synapse config reviewed)
 
@@ -707,7 +707,7 @@ For **SOC 2, ISO 27001, HIPAA, PCI-DSS**:
 7. **Rotate secrets regularly** (schedule + immediate on compromise)
 8. **Backup secrets securely** (encrypted backup of encryption keys)
 9. **Use External Secrets** for large enterprises
-10. **Document secrets** in CONFIGURATION-CHECKLIST.md (not values!)
+10. **Document secrets** in README Configuration section (not values!)
 
 ### DON'T ❌
 
@@ -764,7 +764,7 @@ Your deployment uses **standard Kubernetes Secrets**:
 
 **Next Steps:**
 
-1. Review [CONFIGURATION-CHECKLIST.md](CONFIGURATION-CHECKLIST.md) for all secrets to generate
+1. Review README Configuration section for all secrets to generate
 2. Enable encryption at rest (this guide)
 3. Set up audit logging (this guide)
 4. Schedule annual rotation (calendar reminder)
