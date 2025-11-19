@@ -38,6 +38,8 @@ This directory contains the PostgreSQL cluster configurations using [CloudNative
 
 ## Prerequisites
 
+**WHERE:** Run these commands from your **management node** (where kubectl is installed)
+
 1. **CloudNativePG Operator**:
 ```bash
 kubectl apply -f \
@@ -60,6 +62,10 @@ stringData:
 
 ## Deployment
 
+**WHERE:** Run all commands from your **management node**
+
+**WORKING DIRECTORY:** `deployment/infrastructure/01-postgresql/`
+
 Deploy in order:
 
 ```bash
@@ -79,6 +85,8 @@ kubectl apply -f scheduled-backup.yaml
 ```
 
 ## Verification
+
+**WHERE:** Run all verification commands from your **management node**
 
 ### Check Cluster Status
 
@@ -108,11 +116,15 @@ Expected:
 
 ### Check Replication Status
 
+**Note:** This command executes on the primary PostgreSQL pod (runs from management node via kubectl exec)
+
 ```bash
 kubectl exec -n matrix matrix-postgresql-1 -- psql -U postgres -c "SELECT * FROM pg_stat_replication;"
 ```
 
 ### Check Synchronous Replication
+
+**Note:** This command executes on the primary PostgreSQL pod (runs from management node via kubectl exec)
 
 ```bash
 kubectl exec -n matrix matrix-postgresql-1 -- psql -U postgres -c "SHOW synchronous_standby_names;"
@@ -163,6 +175,8 @@ database:
 
 ## Backup & Restore
 
+**WHERE:** Run all backup/restore commands from your **management node**
+
 ### Manual Backup
 
 ```bash
@@ -181,7 +195,9 @@ kubectl get backups -n matrix
 
 ### Restore from Backup
 
-Create a new cluster from backup:
+**WHAT:** Create a new cluster manifest to restore from a specific backup
+
+**HOW:** Create a new YAML file (e.g., `restore-cluster.yaml`) with the content below, then apply it from your management node
 
 ```yaml
 apiVersion: postgresql.cnpg.io/v1
@@ -197,6 +213,10 @@ spec:
 ```
 
 ### Point-in-Time Recovery (PITR)
+
+**WHAT:** Create a new cluster restored to a specific point in time
+
+**HOW:** Create a new YAML file (e.g., `pitr-cluster.yaml`) with the content below, then apply it from your management node
 
 ```yaml
 apiVersion: postgresql.cnpg.io/v1
@@ -231,6 +251,8 @@ Import CloudNativePG dashboard: https://grafana.com/grafana/dashboards/20417
 
 ## Maintenance
 
+**WHERE:** Run all maintenance commands from your **management node**
+
 ### Scaling Instances
 
 ```bash
@@ -241,7 +263,9 @@ kubectl patch cluster matrix-postgresql -n matrix \
 
 ### Updating PostgreSQL Version
 
-Update the `imageName` in cluster spec and apply:
+**WHAT:** Update PostgreSQL to a newer version
+
+**HOW:** Edit the cluster YAML file (e.g., `main-cluster.yaml`) on your management node, update the `imageName` field, then apply:
 
 ```yaml
 spec:
@@ -255,11 +279,15 @@ CloudNativePG will perform a rolling update:
 
 ### Switchover (Planned Failover)
 
+**Note:** Run from your management node to promote a specific replica to primary
+
 ```bash
 kubectl cnpg promote matrix-postgresql-2 -n matrix
 ```
 
 ## Troubleshooting
+
+**WHERE:** Run all troubleshooting commands from your **management node**
 
 ### Check Logs
 
@@ -267,7 +295,7 @@ kubectl cnpg promote matrix-postgresql-2 -n matrix
 # Pod logs
 kubectl logs -n matrix matrix-postgresql-1
 
-# PostgreSQL logs
+# PostgreSQL logs (executes on the pod)
 kubectl exec -n matrix matrix-postgresql-1 -- tail -f /var/lib/postgresql/data/log/postgresql-*.log
 ```
 
@@ -278,6 +306,8 @@ kubectl cnpg status matrix-postgresql -n matrix
 ```
 
 ### Replication Issues
+
+**Note:** These commands execute SQL queries on the primary PostgreSQL pod
 
 ```bash
 # Check replication slots
@@ -301,10 +331,23 @@ kubectl logs -n matrix matrix-postgresql-1 -c barman-cloud-wal-archive
 
 ## Logical Replication Setup (Main → LI)
 
-**Note**: The sync system handles this automatically, but manual setup:
+**Note**: The sync system handles this automatically, but manual setup is documented below for reference
+
+**WHERE:** Run SQL commands from your **management node** using kubectl exec
 
 ### On Main Cluster
 
+**HOW:** Connect to the main PostgreSQL cluster and execute SQL:
+
+```bash
+# Run from management node:
+kubectl exec -n matrix matrix-postgresql-1 -- psql -U postgres -d matrix -c "
+CREATE PUBLICATION matrix_li_pub FOR ALL TABLES;
+SELECT pg_create_logical_replication_slot('matrix_li_slot', 'pgoutput');
+"
+```
+
+**SQL commands executed on main cluster:**
 ```sql
 -- Create publication for all tables
 CREATE PUBLICATION matrix_li_pub FOR ALL TABLES;
@@ -315,6 +358,19 @@ SELECT pg_create_logical_replication_slot('matrix_li_slot', 'pgoutput');
 
 ### On LI Cluster
 
+**HOW:** Connect to the LI PostgreSQL cluster and execute SQL:
+
+```bash
+# Run from management node:
+kubectl exec -n matrix matrix-postgresql-li-1 -- psql -U postgres -d matrix_li -c "
+CREATE SUBSCRIPTION matrix_li_sub
+    CONNECTION 'host=matrix-postgresql-rw port=5432 dbname=matrix user=synapse password=xxx'
+    PUBLICATION matrix_li_pub
+    WITH (copy_data = true, create_slot = false, slot_name = 'matrix_li_slot');
+"
+```
+
+**SQL command executed on LI cluster:**
 ```sql
 -- Create subscription
 CREATE SUBSCRIPTION matrix_li_sub
@@ -339,11 +395,26 @@ Current settings optimized for:
 
 ### Monitoring Query Performance
 
+**WHERE:** Run these queries from your **management node** using kubectl exec
+
+**HOW:** Execute SQL queries on the target PostgreSQL cluster:
+
+```bash
+# For main cluster:
+kubectl exec -n matrix matrix-postgresql-1 -- psql -U postgres -d matrix -c "
+SELECT pid, now() - pg_stat_activity.query_start AS duration, query
+FROM pg_stat_activity
+WHERE (now() - pg_stat_activity.query_start) > interval '5 minutes';
+"
+```
+
+**SQL queries you can run (adjust cluster and database as needed):**
+
 ```sql
 -- Long running queries
 SELECT pid, now() - pg_stat_activity.query_start AS duration, query
 FROM pg_stat_activity
-WHERE (now() - pg_stat_activity.query_start) > interval '';
+WHERE (now() - pg_stat_activity.query_start) > interval '5 minutes';
 
 -- Index usage
 SELECT schemaname, tablename, indexname, idx_scan

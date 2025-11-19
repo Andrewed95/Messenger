@@ -71,6 +71,8 @@ This directory contains Redis with Sentinel configuration for automatic failover
 
 ## Prerequisites
 
+**WHERE:** Run these commands from your **management node**
+
 1. **StorageClass** named `standard` (or adjust in manifests)
 2. **Generate Redis password**:
 ```bash
@@ -78,6 +80,10 @@ openssl rand -base64 32
 ```
 
 ## Deployment
+
+**WHERE:** Run all deployment commands from your **management node**
+
+**WORKING DIRECTORY:** `deployment/infrastructure/02-redis/`
 
 ### Step 1: Create Password Secret
 
@@ -102,6 +108,8 @@ kubectl wait --for=condition=Ready pod/redis-2 -n matrix --timeout=5m
 
 ## Verification
 
+**WHERE:** Run all verification commands from your **management node**
+
 ### Check Pods
 
 ```bash
@@ -117,6 +125,8 @@ redis-2   2/2     Running   0          2m
 ```
 
 ### Check Replication Status
+
+**Note:** These commands execute on the Redis pod to check replication health
 
 ```bash
 # Get password
@@ -137,6 +147,8 @@ slave1:ip=10.x.x.x,port=6379,state=online,offset=xxxx
 
 ### Check Sentinel Status
 
+**Note:** These commands query Sentinel pods for master and failover information
+
 ```bash
 # Check sentinel info
 kubectl exec -n matrix redis-0 -c sentinel -- redis-cli -p 26379 SENTINEL masters
@@ -146,6 +158,8 @@ kubectl exec -n matrix redis-0 -c sentinel -- redis-cli -p 26379 SENTINEL sentin
 ```
 
 ### Test Failover (Optional)
+
+**Note:** This triggers a manual failover to test automatic failover functionality
 
 ```bash
 # Manually trigger failover
@@ -237,6 +251,8 @@ client := redis.NewFailoverClient(&redis.FailoverOptions{
 
 ## Monitoring
 
+**WHERE:** Run all monitoring commands from your **management node**
+
 ### Prometheus Metrics
 
 Redis doesn't expose Prometheus metrics natively. Options:
@@ -248,6 +264,9 @@ Redis doesn't expose Prometheus metrics natively. Options:
 ```
 
 2. **Manual queries**:
+
+**Note:** These commands execute Redis CLI commands on the pod to retrieve metrics
+
 ```bash
 # Memory usage
 kubectl exec -n matrix redis-0 -c redis -- redis-cli -a "$REDIS_PASSWORD" INFO memory
@@ -269,6 +288,8 @@ kubectl exec -n matrix redis-0 -c redis -- redis-cli -a "$REDIS_PASSWORD" INFO r
 
 ## Maintenance
 
+**WHERE:** Run all maintenance commands from your **management node**
+
 ### Scaling Replicas
 
 ```bash
@@ -280,6 +301,10 @@ kubectl scale statefulset redis -n matrix --replicas=5
 ```
 
 ### Updating Redis Version
+
+**WHAT:** Update Redis to a newer version
+
+**HOW:** Edit `redis-statefulset.yaml` on your management node, update the image version, then apply:
 
 ```bash
 # Update image in redis-statefulset.yaml
@@ -296,21 +321,29 @@ Rolling update order:
 
 ### Password Rotation
 
+**WHAT:** Rotate Redis password for security compliance
+
+**HOW:** Execute these steps from your management node:
+
 ```bash
 # 1. Update secret with new password
 kubectl create secret generic redis-password-new \
   --from-literal=password=NEW_PASSWORD -n matrix
 
-# 2. Update redis-statefulset.yaml to use new secret
+# 2. Update redis-statefulset.yaml to use new secret (edit on management node)
 # 3. Perform rolling restart
 kubectl rollout restart statefulset/redis -n matrix
 
-# 4. Update all application configs
+# 4. Update all application configs (Synapse, LiveKit, key_vault)
 ```
 
 ## Troubleshooting
 
+**WHERE:** Run all troubleshooting commands from your **management node**
+
 ### Sentinels Not Detecting Master
+
+**Note:** These commands diagnose Sentinel connectivity and configuration issues
 
 ```bash
 # Check sentinel logs
@@ -325,12 +358,16 @@ kubectl exec -n matrix redis-0 -c sentinel -- cat /data/sentinel.conf
 
 ### Replication Lag
 
+**Note:** Check replication offset to identify lag between master and replicas
+
 ```bash
 # Check replication offset difference
 kubectl exec -n matrix redis-0 -c redis -- redis-cli -a "$REDIS_PASSWORD" INFO replication | grep offset
 ```
 
 ### Split Brain (Multiple Masters)
+
+**WARNING:** This is a critical issue where multiple Redis instances think they are master
 
 ```bash
 # Check all instances
@@ -345,6 +382,8 @@ kubectl exec -n matrix redis-1 -c redis -- redis-cli -a "$REDIS_PASSWORD" REPLIC
 
 ### High Memory Usage
 
+**Note:** Diagnose and address memory pressure on Redis instances
+
 ```bash
 # Check memory stats
 kubectl exec -n matrix redis-0 -c redis -- redis-cli -a "$REDIS_PASSWORD" INFO memory
@@ -358,6 +397,8 @@ kubectl exec -n matrix redis-0 -c redis -- redis-cli -a "$REDIS_PASSWORD" FLUSHD
 
 ### Connection Issues
 
+**Note:** Test connectivity from within the cluster
+
 ```bash
 # Test connection from another pod
 kubectl run -n matrix redis-test --rm -it --image=redis:7.2-alpine -- redis-cli -h redis -a "$REDIS_PASSWORD" ping
@@ -367,6 +408,8 @@ kubectl get endpoints redis -n matrix
 ```
 
 ## Backup & Recovery
+
+**WHERE:** Run all backup/restore commands from your **management node**
 
 ### AOF Persistence
 
@@ -382,6 +425,10 @@ kubectl cp matrix/redis-0:/data/appendonly.aof ./backup/redis-0-appendonly.aof -
 ```
 
 ### Restore from Backup
+
+**WHAT:** Restore Redis from a previously backed-up AOF file
+
+**HOW:** Execute these steps from your management node:
 
 ```bash
 # 1. Stop Redis pods
