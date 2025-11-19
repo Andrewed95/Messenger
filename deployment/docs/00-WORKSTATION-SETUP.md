@@ -64,25 +64,24 @@ This document sets up the **management node** - the machine from which you will 
 
 ## Supported Operating Systems
 
-- **Linux** (Debian, Ubuntu, RHEL, etc.) - RECOMMENDED
-- **macOS** (if using Option 3: workstation)
-- **Windows with WSL2** (if using Option 3: workstation)
+**This guide covers Linux (Debian/Ubuntu) only.**
+
+Your management node should be running Debian 11/12 or Ubuntu 20.04/22.04 LTS.
 
 ---
 
 ## Table of Contents
 
-1. [Linux Management Node Setup](#1-linux-management-node-setup)
-2. [macOS Management Node Setup](#2-macos-management-node-setup)
-3. [Windows Management Node Setup (WSL2)](#3-windows-management-node-setup-wsl2)
-4. [Configure kubectl Access](#4-configure-kubectl-access)
-5. [Verify Installation](#5-verify-installation)
+1. [Install Required Tools](#1-install-required-tools)
+2. [Configure kubectl Access](#2-configure-kubectl-access)
+3. [Verify Installation](#3-verify-installation)
+4. [Next Steps](#4-next-steps)
 
 ---
 
-## 1. Linux Management Node Setup
+## 1. Install Required Tools
 
-### 1.1 Install kubectl (Linux) - REQUIRED
+### 1.1 Install kubectl - REQUIRED
 
 **Option A: Using Native Package Manager (RECOMMENDED)**
 
@@ -159,135 +158,11 @@ git --version
 
 ---
 
-## 2. macOS Management Node Setup
-
-### 2.1 Install Homebrew (if not already installed)
-
-```bash
-# Install Homebrew
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-
-# Add Homebrew to PATH (if needed)
-echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> ~/.zprofile
-eval "$(/opt/homebrew/bin/brew shellenv)"
-```
-
-### 2.2 Install kubectl (macOS) - REQUIRED
-
-```bash
-# Install kubectl using Homebrew
-brew install kubectl
-
-# Verify installation
-kubectl version --client
-```
-
-**Alternative: Manual Installation**
-
-```bash
-# Download kubectl binary
-curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/darwin/amd64/kubectl"
-
-# Make executable
-chmod +x kubectl
-
-# Move to PATH
-sudo mv kubectl /usr/local/bin/
-
-# Verify installation
-kubectl version --client
-```
-
-### 2.3 Install Helm (macOS) - REQUIRED
-
-```bash
-# Install Helm using Homebrew
-brew install helm
-
-# Verify installation
-helm version
-```
-
-### 2.4 Install Git (macOS) - REQUIRED
-
-```bash
-# Git is usually pre-installed on macOS, verify:
-git --version
-
-# If not installed, install via Homebrew:
-brew install git
-```
-
----
-
-## 3. Windows Management Node Setup (WSL2)
-
-**Note:** For Windows, we strongly recommend using WSL2 (Windows Subsystem for Linux) for the best experience.
-
-### 3.1 Install WSL2
-
-```powershell
-# Open PowerShell as Administrator and run:
-wsl --install
-
-# Reboot your computer
-# After reboot, WSL2 will complete installation
-
-# Install Ubuntu (recommended distribution)
-wsl --install -d Ubuntu
-
-# Launch Ubuntu
-wsl
-```
-
-### 3.2 Install kubectl in WSL2 - REQUIRED
-
-Once in WSL2 Ubuntu terminal, follow the Linux instructions above:
-
-```bash
-# Add Kubernetes repository
-sudo mkdir -p /etc/apt/keyrings
-curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.28/deb/Release.key | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
-echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.28/deb/ /' | sudo tee /etc/apt/sources.list.d/kubernetes.list
-
-# Install kubectl
-sudo apt-get update
-sudo apt-get install -y kubectl
-
-# Verify
-kubectl version --client
-```
-
-### 3.3 Install Helm in WSL2 - REQUIRED
-
-```bash
-# Install Helm using script
-curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
-
-# Verify
-helm version
-```
-
-### 3.4 Install Git in WSL2 - REQUIRED
-
-```bash
-# Update package list
-sudo apt-get update
-
-# Install git
-sudo apt-get install -y git
-
-# Verify
-git --version
-```
-
----
-
-## 4. Configure kubectl Access
+## 2. Configure kubectl Access
 
 After your Kubernetes cluster is initialized (following `00-KUBERNETES-INSTALLATION-DEBIAN-OVH.md`), you need to configure kubectl on your **management node** to access the cluster.
 
-### 4.1 Copy kubeconfig from Control Plane
+### 2.1 Copy kubeconfig from Control Plane
 
 **If your management node IS the control-plane node:**
 ```bash
@@ -323,7 +198,7 @@ nano ~/.kube/config
 chmod 600 ~/.kube/config
 ```
 
-### 4.2 Update Server Address (If Needed)
+### 2.2 Update Server Address (If Needed)
 
 If your control plane nodes are behind NAT or have different external IPs:
 
@@ -341,7 +216,7 @@ nano ~/.kube/config
 #   server: https://203.0.113.10:6443
 ```
 
-### 4.3 Verify kubectl Access
+### 2.3 Verify kubectl Access
 
 ```bash
 # Test connection to cluster
@@ -377,7 +252,7 @@ kubectl get namespaces
 
 ---
 
-## 5. Verify Installation
+## 3. Verify Installation
 
 Run these commands to verify everything is installed correctly:
 
@@ -457,7 +332,7 @@ chown $USER:$USER ~/.kube/config
 
 ---
 
-## Next Steps
+## 4. Next Steps
 
 After completing management node setup:
 
