@@ -74,10 +74,9 @@ deployment/
 │   ├── redis-livekit-values.yaml
 │   └── livekit-values.yaml
 │
-└── docs/                        ← Comprehensive Guides
+└── docs/                        ← Reference Guides
     ├── 00-WORKSTATION-SETUP.md
     ├── 00-KUBERNETES-INSTALLATION-DEBIAN-OVH.md
-    ├── DEPLOYMENT-GUIDE.md
     ├── SCALING-GUIDE.md
     ├── CONFIGURATION-REFERENCE.md
     ├── OPERATIONS-UPDATE-GUIDE.md
@@ -85,7 +84,7 @@ deployment/
     ├── HAPROXY-ARCHITECTURE.md
     ├── HA-ROUTING-GUIDE.md
     ├── ANTIVIRUS-GUIDE.md
-    └── ... (more guides)
+    └── ... (additional reference docs)
 ```
 
 ---
@@ -110,17 +109,213 @@ deployment/
 4. **THIS README** ← Complete all deployment phases below
 
 **📚 OPTIONAL Reference (read as needed):**
-- `docs/DEPLOYMENT-GUIDE.md` - Alternative detailed walkthrough (same as this README, more verbose)
-- `docs/CONFIGURATION-REFERENCE.md` - Deep dive into all configuration parameters
-- `docs/SECRETS-MANAGEMENT.md` - Advanced secret management strategies
-- Component-specific `README.md` files in each directory - additional technical details
+- `docs/CONFIGURATION-REFERENCE.md` - Deep dive into all configuration parameters (if you need more details than Step 6 above)
+- `docs/SECRETS-MANAGEMENT.md` - Advanced secret management strategies (Vault, external secret managers)
+- Component-specific `README.md` files in each directory - Additional technical details for troubleshooting
 
-**After completing all phases below, see:**
+**After deployment is complete:**
 - `docs/OPERATIONS-UPDATE-GUIDE.md` - How to update and maintain your deployment
 
 ---
 
-## 📋 Deployment Steps
+## ⚙️ CONFIGURATION (Complete BEFORE Deployment)
+
+**CRITICAL: You MUST configure all values before running any deployment commands.**
+
+This section guides you through ALL configuration that must be done FIRST.
+
+### Step 1: Generate All Secrets
+
+Every `CHANGEME` value must be replaced with secure random strings.
+
+**Generate secrets:**
+```bash
+# Helper function to generate secure random strings
+generate_secret() {
+    openssl rand -base64 32 | tr -d /=+ | cut -c1-${1:-32}
+}
+
+# Generate all required secrets (save these securely!)
+echo "POSTGRES_PASSWORD=$(generate_secret)"
+echo "REDIS_PASSWORD=$(generate_secret)"
+echo "MINIO_ROOT_PASSWORD=$(generate_secret)"
+echo "SYNAPSE_MACAROON_SECRET=$(generate_secret)"
+echo "SYNAPSE_REGISTRATION_SECRET=$(generate_secret)"
+echo "SYNAPSE_FORM_SECRET=$(generate_secret)"
+echo "REPLICATION_SECRET=$(generate_secret)"
+echo "TURN_SECRET=$(generate_secret)"
+echo "KEY_VAULT_API_KEY=$(generate_secret)"
+echo "KEY_VAULT_DJANGO_SECRET=$(generate_secret 50)"
+echo "KEY_VAULT_ENCRYPTION_KEY=$(generate_secret 32)"
+```
+
+**Save these values!** You'll need them in the next step.
+
+### Step 2: Update All Secret Files
+
+Replace ALL `CHANGEME` placeholders with the secrets you generated:
+
+**Files to update:**
+```bash
+# Find all files with CHANGEME values
+grep -r "CHANGEME" deployment/ --include="*.yaml" | cut -d: -f1 | sort -u
+
+# Key files that MUST be updated:
+deployment/main-instance/01-synapse/secrets.yaml              # 12 secrets
+deployment/li-instance/01-synapse-li/deployment.yaml          # 7 secrets
+deployment/main-instance/08-key-vault/deployment.yaml         # 4 secrets
+deployment/main-instance/06-coturn/deployment.yaml            # 2 secrets
+deployment/main-instance/07-sygnal/deployment.yaml            # 8 secrets (APNs/FCM)
+deployment/infrastructure/03-minio/secrets.yaml               # 2 secrets
+deployment/li-instance/04-sync-system/deployment.yaml         # 5 secrets
+```
+
+**For each file:**
+1. Open with text editor: `nano <file>`
+2. Find and replace each `CHANGEME_*` with corresponding secret
+3. Save and close
+
+### Step 3: Configure Domains
+
+Replace `matrix.example.com` with your actual domains:
+
+**Domain mapping:**
+```bash
+matrix.example.com        → your-domain.com          # Main homeserver
+matrix-li.example.com     → li.your-domain.com       # LI instance
+element.example.com       → chat.your-domain.com     # Element Web
+element-li.example.com    → li-chat.your-domain.com  # Element LI
+turn.matrix.example.com   → turn.your-domain.com     # TURN server
+```
+
+**Files to update (85 occurrences):**
+```bash
+# Main configuration
+deployment/config/synapse/homeserver.yaml
+deployment/main-instance/01-synapse/configmap.yaml
+
+# LI configuration
+deployment/li-instance/01-synapse-li/deployment.yaml
+deployment/li-instance/02-element-web-li/deployment.yaml
+
+# Element Web
+deployment/main-instance/02-element-web/deployment.yaml
+
+# Coturn, Ingress, Certificates
+deployment/main-instance/06-coturn/deployment.yaml
+deployment/infrastructure/04-networking/cert-manager-install.yaml
+```
+
+**Use find-and-replace:**
+```bash
+# Example: Replace all occurrences
+find deployment/ -name "*.yaml" -type f -exec sed -i 's/matrix\.example\.com/your-domain.com/g' {} +
+```
+
+### Step 4: Verify Storage Class
+
+Check your Kubernetes storage class exists:
+
+```bash
+# List available storage classes
+kubectl get storageclass
+
+# Common names: standard, local-path, gp2, fast-ssd
+```
+
+**If your cluster uses a different name**, update these files:
+- `deployment/infrastructure/01-postgresql/main-cluster.yaml` (line 33)
+- `deployment/infrastructure/01-postgresql/li-cluster.yaml` (line 32)
+- `deployment/infrastructure/02-redis/redis-statefulset.yaml` (line 312)
+- `deployment/main-instance/01-synapse/main-statefulset.yaml` (line 35)
+
+**Replace:**
+```yaml
+storageClassName: standard  # Change to your storage class name
+```
+
+### Step 5: Generate Synapse Signing Key
+
+Synapse requires a unique signing key:
+
+```bash
+# Generate signing key
+docker run --rm matrixdotorg/synapse:v1.119.0 generate_signing_key
+
+# Or if you have Synapse installed locally:
+python -m synapse.app.homeserver \
+    --config-path=/dev/null \
+    --generate-keys
+```
+
+**Copy the output** (starts with `ed25519`) and update:
+- `deployment/main-instance/01-synapse/secrets.yaml`
+- `deployment/li-instance/01-synapse-li/deployment.yaml`
+
+### Step 6: Review Configuration Parameters
+
+**Key parameters to verify** (all in `deployment/config/synapse/homeserver.yaml`):
+
+| Parameter | Default | Your Value | Notes |
+|-----------|---------|------------|-------|
+| `max_upload_size` | `100M` | _______ | Maximum file upload size |
+| `media_retention_period` | `7d` | _______ | How long to keep remote media (e.g., "7d" = 7 days, "null" = forever) |
+| `enable_registration` | `false` | _______ | Allow open registration? (recommend: false) |
+| `url_preview_enabled` | `true` | _______ | Generate link previews? |
+| `redaction_retention_period` | `null` | _______ | Keep deleted messages? (null = forever, "7d" = 7 days) |
+
+**For detailed parameter explanations**, see `docs/CONFIGURATION-REFERENCE.md` (optional reference).
+
+### Step 7: Configure Resource Sizes (Based on Scale)
+
+**From `docs/SCALING-GUIDE.md`, determine your scale:**
+
+| Scale | Users | Resource Profile |
+|-------|-------|------------------|
+| 100 CCU | ~500 total users | Small (default configs work) |
+| 1K CCU | ~5K total users | Medium (increase PostgreSQL, Redis) |
+| 5K CCU | ~25K total users | Large (increase workers, storage) |
+| 10K+ CCU | 50K+ total users | Enterprise (scale all components) |
+
+**If > 100 CCU**, update resource requests/limits in deployment files.
+**See:** `docs/SCALING-GUIDE.md` for exact values per component.
+
+### Step 8: DNS Configuration (Before Deployment)
+
+**IMPORTANT: Configure DNS A records BEFORE deploying** (so cert-manager can get TLS certificates):
+
+```bash
+# All point to your Kubernetes Ingress external IP
+# (You'll get this IP after deploying Ingress in Phase 1)
+
+your-domain.com            → <ingress-external-ip>
+chat.your-domain.com       → <ingress-external-ip>
+li.your-domain.com         → <ingress-external-ip>
+li-chat.your-domain.com    → <ingress-external-ip>
+turn.your-domain.com       → <ingress-external-ip>
+```
+
+**Note:** You can configure DNS after Phase 1 (Infrastructure) is complete.
+
+---
+
+### ✅ Configuration Checklist
+
+Before proceeding to deployment, verify:
+
+- [ ] All secrets generated and CHANGEME values replaced (113 occurrences)
+- [ ] All domains updated from example.com to your actual domains (85 occurrences)
+- [ ] Storage class verified and configured
+- [ ] Synapse signing key generated and configured
+- [ ] Resource sizes reviewed (if > 100 CCU)
+- [ ] DNS records ready (can configure after Phase 1)
+- [ ] Configuration files saved
+
+**If all checkboxes are complete, you're ready to deploy!**
+
+---
+
+## 📋 Deployment Steps (Execute After Configuration Above)
 
 ### **Phase 1: Core Infrastructure** (HA Database, Storage, Networking)
 
