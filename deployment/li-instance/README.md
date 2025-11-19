@@ -72,6 +72,9 @@ The LI instance is a **separate, isolated Matrix homeserver** that receives data
 - **Infinite retention**: `redaction_retention_period: null`
 
 **Deployment**:
+
+**WHERE:** Run from your **management node**
+
 ```bash
 kubectl apply -f 01-synapse-li/deployment.yaml
 ```
@@ -90,6 +93,9 @@ kubectl apply -f 01-synapse-li/deployment.yaml
 - Custom CSS injection via nginx
 
 **Deployment**:
+
+**WHERE:** Run from your **management node**
+
 ```bash
 kubectl apply -f 02-element-web-li/deployment.yaml
 ```
@@ -108,6 +114,9 @@ kubectl apply -f 02-element-web-li/deployment.yaml
 - Basic authentication (htpasswd)
 
 **Deployment**:
+
+**WHERE:** Run from your **management node**
+
 ```bash
 kubectl apply -f 03-synapse-admin-li/deployment.yaml
 ```
@@ -120,11 +129,14 @@ kubectl apply -f 03-synapse-admin-li/deployment.yaml
 
 **Components**:
 - **PostgreSQL Logical Replication**: Real-time database sync
-- **rclone Media Sync**: Periodic media file sync (every )
+- **rclone Media Sync**: Periodic media file sync (every hour)
 - **Setup Job**: One-time configuration of replication
 - **CronJob**: Automated media synchronization
 
 **Deployment**:
+
+**WHERE:** Run from your **management node**
+
 ```bash
 # Apply NetworkPolicy first
 kubectl apply -f ../infrastructure/04-networking/sync-system-networkpolicy.yaml
@@ -245,6 +257,8 @@ Locations:
 
 ### Authentication
 
+**WHERE:** Run from your **management node**
+
 **Synapse Admin LI** uses basic auth (htpasswd):
 
 ```bash
@@ -258,6 +272,10 @@ kubectl create secret generic synapse-admin-auth \
 ```
 
 ## Deployment Order
+
+**WHERE:** Run all commands from your **management node**
+
+**WORKING DIRECTORY:** `deployment/li-instance/`
 
 Deploy in this order to ensure dependencies:
 
@@ -305,7 +323,11 @@ kubectl get ingress -n matrix | grep li
 
 ## Verification
 
+**WHERE:** Run all verification commands from your **management node**
+
 ### Check PostgreSQL Replication
+
+**Note:** These commands execute SQL queries on PostgreSQL pods to verify replication status
 
 ```bash
 # Check replication on main
