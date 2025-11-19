@@ -75,16 +75,15 @@ deployment/
 │   └── livekit-values.yaml
 │
 └── docs/                        ← Reference Guides
-    ├── 00-WORKSTATION-SETUP.md
-    ├── 00-KUBERNETES-INSTALLATION-DEBIAN-OVH.md
-    ├── SCALING-GUIDE.md
-    ├── CONFIGURATION-REFERENCE.md
-    ├── OPERATIONS-UPDATE-GUIDE.md
-    ├── SECRETS-MANAGEMENT.md
-    ├── HAPROXY-ARCHITECTURE.md
-    ├── HA-ROUTING-GUIDE.md
-    ├── ANTIVIRUS-GUIDE.md
-    └── ... (additional reference docs)
+    ├── 00-WORKSTATION-SETUP.md           (REQUIRED: Setup management node)
+    ├── 00-KUBERNETES-INSTALLATION.md     (REQUIRED: Setup K8s cluster)
+    ├── SCALING-GUIDE.md                  (REQUIRED: Determine resources)
+    ├── CONFIGURATION-REFERENCE.md        (Optional: Parameter details)
+    ├── OPERATIONS-UPDATE-GUIDE.md        (Post-deployment operations)
+    ├── SECRETS-MANAGEMENT.md             (Optional: Advanced secrets)
+    ├── HAPROXY-ARCHITECTURE.md           (Optional: Routing details)
+    ├── ANTIVIRUS-GUIDE.md                (Optional: ClamAV deep dive)
+    └── MATRIX-AUTHENTICATION-SERVICE.md  (Optional: Enterprise SSO)
 ```
 
 ---
@@ -883,6 +882,7 @@ kubectl logs -n matrix -l app.kubernetes.io/name=content-scanner | grep "scan"
 | `docs/SECRETS-MANAGEMENT.md` | Advanced secret management | If using external secret managers (Vault, etc.) |
 | `docs/HAPROXY-ARCHITECTURE.md` | HAProxy routing technical details | When debugging routing issues |
 | `docs/ANTIVIRUS-GUIDE.md` | ClamAV integration deep dive | When customizing antivirus configuration |
+| `docs/MATRIX-AUTHENTICATION-SERVICE.md` | Enterprise SSO integration (MAS) | If you need corporate SSO/OIDC authentication |
 | `li-instance/README.md` | Complete LI instance technical guide | For understanding LI architecture details |
 | Component `README.md` files | Per-component technical details | When troubleshooting specific components |
 
