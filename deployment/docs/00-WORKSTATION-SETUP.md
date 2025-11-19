@@ -1,39 +1,86 @@
-# Workstation Setup for Matrix/Synapse Deployment
+# Management Node Setup for Matrix/Synapse Deployment
 
-**Purpose:** Install and configure client tools on your local workstation to manage the Kubernetes cluster
-**Applies to:** Your laptop/desktop computer (NOT the Kubernetes nodes)
-**Supported OS:** Linux, macOS, Windows (WSL2)
+## What Is This Document For?
 
+This document sets up the **management node** - the machine from which you will **control and manage** the Kubernetes cluster.
+
+### Understanding the Management Node
+
+**The management node is the machine where you run commands like:**
+- `kubectl get pods` - Check what's running
+- `kubectl apply -f deployment/` - Deploy applications
+- `helm install prometheus ...` - Install software packages
+
+**This machine needs network access to the Kubernetes API server but is NOT part of the cluster itself.**
 
 ---
 
-## Overview
+## Choosing Your Management Node
 
-Before deploying Matrix/Synapse, you need to install tools on your **local workstation** (your laptop/desktop) to manage the Kubernetes cluster remotely.
+**You have several options:**
 
-**REQUIRED Tools:**
-1. **kubectl** - Kubernetes command-line tool (REQUIRED)
-2. **helm** - Kubernetes package manager (REQUIRED)
+### Option 1: Dedicated Management Server (RECOMMENDED for Production)
+- A separate server/VM provided by the customer
+- Used only for cluster management
+- Keeps management traffic separate from cluster workload
+- **Example**: Bastion host, jump server, or dedicated ops server
+
+### Option 2: Kubernetes Control-Plane Node
+- Install tools directly on one of the Kubernetes master nodes
+- Simpler - no additional machine needed
+- **Tradeoff**: Management tools run on cluster infrastructure
+
+### Option 3: Operator's Workstation
+- Your local laptop/desktop
+- Manage cluster remotely over network
+- **Requires**: VPN or network access to customer infrastructure
+
+---
+
+## What This Guide Does
+
+**Installs on the MANAGEMENT NODE (not on Kubernetes worker/master nodes):**
+
+1. **kubectl** - Command-line tool to control Kubernetes (REQUIRED)
+2. **helm** - Package manager to install applications on Kubernetes (REQUIRED)
 3. **git** - Version control to clone this repository (REQUIRED)
-4. **SSH client** - To access Kubernetes nodes (usually pre-installed, REQUIRED)
+4. **SSH client** - To access Kubernetes nodes if needed (usually pre-installed, REQUIRED)
 
-**What This Guide Does NOT Cover:**
-- Installing Kubernetes on the VMs (see `00-KUBERNETES-INSTALLATION-DEBIAN-OVH.md`)
-- Installing anything on the Kubernetes nodes themselves
+**After setup, this machine becomes your "control center" where:**
+- You run all deployment commands
+- You monitor cluster status
+- You perform updates and maintenance
+- Customer's IT team operates the cluster from here
+
+---
+
+## What This Guide Does NOT Cover
+
+- Installing Kubernetes on the cluster nodes (see `00-KUBERNETES-INSTALLATION-DEBIAN-OVH.md`)
+- Installing anything on the actual Kubernetes master/worker nodes
+- Configuring the Kubernetes cluster itself
+
+---
+
+## Supported Operating Systems
+
+- **Linux** (Debian, Ubuntu, RHEL, etc.) - RECOMMENDED
+- **macOS** (if using Option 3: workstation)
+- **Windows with WSL2** (if using Option 3: workstation)
 
 ---
 
 ## Table of Contents
 
-1. [Linux Workstation Setup](#1-linux-workstation-setup)
-2. [macOS Workstation Setup](#2-macos-workstation-setup)
-3. [Windows Workstation Setup (WSL2)](#3-windows-workstation-setup-wsl2)
+1. [Linux Management Node Setup](#1-linux-management-node-setup)
+2. [macOS Management Node Setup](#2-macos-management-node-setup)
+3. [Windows Management Node Setup (WSL2)](#3-windows-management-node-setup-wsl2)
 4. [Configure kubectl Access](#4-configure-kubectl-access)
 5. [Verify Installation](#5-verify-installation)
 
 ---
 
-## 1. Linux Workstation Setup
+## 1. Linux Management Node Setup
 
 ### 1.1 Install kubectl (Linux) - REQUIRED
 
@@ -112,7 +159,7 @@ git --version
 
 ---
 
-## 2. macOS Workstation Setup
+## 2. macOS Management Node Setup
 
 ### 2.1 Install Homebrew (if not already installed)
 
@@ -173,7 +220,7 @@ brew install git
 
 ---
 
-## 3. Windows Workstation Setup (WSL2)
+## 3. Windows Management Node Setup (WSL2)
 
 **Note:** For Windows, we strongly recommend using WSL2 (Windows Subsystem for Linux) for the best experience.
 
@@ -238,25 +285,34 @@ git --version
 
 ## 4. Configure kubectl Access
 
-After your Kubernetes cluster is initialized (following `00-KUBERNETES-INSTALLATION-DEBIAN-OVH.md`), you need to configure kubectl on your workstation to access it.
+After your Kubernetes cluster is initialized (following `00-KUBERNETES-INSTALLATION-DEBIAN-OVH.md`), you need to configure kubectl on your **management node** to access the cluster.
 
 ### 4.1 Copy kubeconfig from Control Plane
 
-**On the Kubernetes control plane node (k8s-master-01):**
+**If your management node IS the control-plane node:**
+```bash
+# Kubeconfig is already available at:
+cat ~/.kube/config
+# No copying needed - kubectl will work immediately
+```
+
+**If your management node IS NOT the control-plane node:**
+
+**On the Kubernetes control plane node:**
 
 ```bash
 # Display the kubeconfig file content
-cat ~/.kube/config
+sudo cat /etc/kubernetes/admin.conf
 ```
 
-**On your workstation:**
+**On your management node:**
 
 ```bash
 # Create .kube directory
 mkdir -p ~/.kube
 
 # Option 1: Copy via SCP
-scp root@k8s-master-01-ip:~/.kube/config ~/.kube/config
+scp root@<control-plane-ip>:/etc/kubernetes/admin.conf ~/.kube/config
 
 # Option 2: Manually create and paste
 nano ~/.kube/config
@@ -403,7 +459,7 @@ chown $USER:$USER ~/.kube/config
 
 ## Next Steps
 
-After completing workstation setup:
+After completing management node setup:
 
 1. ✅ **Verify all tools installed:**
    ```bash
@@ -417,12 +473,12 @@ After completing workstation setup:
    ```
 
 3. ✅ **If Kubernetes cluster not yet installed:**
-   - Follow `docs/00-KUBERNETES-INSTALLATION-DEBIAN-OVH.md` to set up cluster on your VMs
+   - Follow `docs/00-KUBERNETES-INSTALLATION-DEBIAN-OVH.md` to set up cluster on customer servers
    - Return here to configure kubectl access (Section 4)
 
 4. ✅ **If Kubernetes cluster already installed:**
    - Configure kubectl access (Section 4 above)
-   - Proceed to `docs/DEPLOYMENT-GUIDE.md` to deploy Matrix/Synapse
+   - Proceed to main `README.md` to deploy Matrix/Synapse
 
 ---
 
@@ -486,11 +542,13 @@ source ~/.bashrc
 ## Summary
 
 You should now have:
-- ✅ kubectl installed on your workstation
-- ✅ helm installed on your workstation
-- ✅ git installed on your workstation
+- ✅ kubectl installed on your management node
+- ✅ helm installed on your management node
+- ✅ git installed on your management node
 - ✅ kubectl configured to access your Kubernetes cluster
 - ✅ Verified connectivity to the cluster
+
+**Your management node is now ready to deploy and manage Matrix/Synapse on the Kubernetes cluster.**
 
 **Next:** Proceed to deploying Matrix/Synapse using `docs/DEPLOYMENT-GUIDE.md`
 
