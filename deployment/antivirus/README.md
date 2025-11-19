@@ -92,6 +92,10 @@ The antivirus system provides real-time scanning of all uploaded and downloaded 
 
 ## Quick Start
 
+**WHERE:** Run all commands from your **management node**
+
+**WORKING DIRECTORY:** `deployment/antivirus/`
+
 ### 1. Deploy ClamAV
 
 ```bash
@@ -127,9 +131,11 @@ kubectl get pods -n matrix -l app.kubernetes.io/name=content-scanner
 
 ### 3. Configure Matrix Integration
 
+**WHAT:** Configure routing to send media downloads through content scanner
+
 **Option A: HAProxy Routing** (Recommended)
 
-Edit `deployment/main-instance/03-haproxy/haproxy.cfg`:
+**HOW:** Edit `main-instance/03-haproxy/haproxy.cfg` on your management node:
 
 ```haproxy
 # Route media downloads through content scanner

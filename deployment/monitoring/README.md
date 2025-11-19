@@ -97,6 +97,10 @@ The monitoring stack provides comprehensive observability for:
 
 ## Quick Start
 
+**WHERE:** Run all commands from your **management node**
+
+**WORKING DIRECTORY:** `deployment/monitoring/`
+
 ### 1. Deploy Monitoring Stack
 
 ```bash
@@ -148,6 +152,8 @@ kubectl patch cluster matrix-postgresql-li -n matrix --type=merge -p '
 ```
 
 ### 2. Access Monitoring UIs
+
+**Note:** Port-forward commands create tunnels to access UIs from your local browser
 
 **Prometheus**:
 ```bash
