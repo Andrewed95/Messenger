@@ -82,6 +82,8 @@ MinIO provides S3-compatible object storage for the Matrix deployment using dist
 
 ## Prerequisites
 
+**WHERE:** Run these commands from your **management node**
+
 1. **MinIO Operator** installed:
 ```bash
 kubectl apply -k "github.com/minio/operator?ref=v6.0.4"
@@ -101,9 +103,15 @@ openssl rand -base64 24  # Secret key
 
 ## Deployment
 
+**WHERE:** Run all deployment commands from your **management node**
+
+**WORKING DIRECTORY:** `deployment/infrastructure/03-minio/`
+
 ### Step 1: Update Secrets
 
-Edit `secrets.yaml` and replace:
+**WHAT:** Configure MinIO root credentials and S3 application credentials
+
+**HOW:** Edit `secrets.yaml` on your management node and replace:
 - `MINIO_ROOT_PASSWORD` with secure root password
 - `CONSOLE_SECRET_KEY` and `secret-key` with same secure S3 password
 
@@ -129,7 +137,7 @@ kubectl apply -f tenant.yaml
 # Watch pods come up
 kubectl get pods -n matrix -l v1.min.io/tenant=matrix-minio -w
 
-# Wait for tenant to be ready (may take )
+# Wait for tenant to be ready
 kubectl wait --for=condition=Available tenant/matrix-minio -n matrix --timeout=10m
 ```
 
@@ -153,7 +161,11 @@ Expected services:
 
 ## Verification
 
+**WHERE:** Run all verification commands from your **management node**
+
 ### Access MinIO Console
+
+**Note:** This creates a port-forward tunnel to access the MinIO web console from your local browser
 
 ```bash
 # Port-forward to console
@@ -164,6 +176,8 @@ kubectl port-forward -n matrix svc/matrix-minio-console 9090:9090
 ```
 
 ### Check Buckets
+
+**Note:** These commands execute MinIO Client (mc) commands inside the MinIO pod
 
 ```bash
 # Get a pod name
@@ -181,6 +195,10 @@ Expected output:
 ```
 
 ### Test S3 Upload
+
+**WHAT:** Verify S3 API functionality by uploading and downloading a test file
+
+**Note:** All commands execute inside the MinIO pod using MinIO Client (mc)
 
 ```bash
 # Create test file
@@ -201,6 +219,8 @@ kubectl exec -n matrix $POD -- cat /tmp/test-download.txt
 
 ### Check Erasure Coding
 
+**Note:** Verify distributed storage configuration and drive health
+
 ```bash
 # Get drive status
 kubectl exec -n matrix $POD -- mc admin info local/
@@ -212,6 +232,8 @@ kubectl exec -n matrix $POD -- mc admin info local/
 ```
 
 ### Verify Healing
+
+**Note:** Check if MinIO is performing any data healing operations
 
 ```bash
 # Check for any offline drives (should be none)
@@ -331,6 +353,8 @@ Import MinIO dashboard: https://grafana.com/grafana/dashboards/13502
 
 ## Maintenance
 
+**WHERE:** Run all maintenance commands from your **management node**
+
 ### Scaling Storage
 
 #### Vertical Scaling (Increase Volume Size)
@@ -372,6 +396,10 @@ pools:
 
 ### Updating MinIO Version
 
+**WHAT:** Update MinIO to a newer version
+
+**HOW:** Edit `tenant.yaml` on your management node, update the image version, then apply:
+
 ```bash
 # Update image in tenant.yaml
 image: quay.io/minio/minio:RELEASE.2024-12-01T00-00-00Z
@@ -386,6 +414,9 @@ kubectl rollout status statefulset -n matrix -l v1.min.io/tenant=matrix-minio
 ### Password Rotation
 
 **Root password**:
+
+**WHAT:** Rotate MinIO root administrator password
+
 ```bash
 # Update secret
 kubectl edit secret minio-config -n matrix
@@ -395,6 +426,11 @@ kubectl rollout restart statefulset -n matrix -l v1.min.io/tenant=matrix-minio
 ```
 
 **Application credentials**:
+
+**WHAT:** Rotate S3 application access credentials
+
+**Note:** User creation executes inside MinIO pod using mc admin command
+
 ```bash
 # Create new user in MinIO console or via mc
 kubectl exec -n matrix $POD -- mc admin user add local/ newuser newpassword
@@ -406,6 +442,8 @@ kubectl edit secret minio-credentials -n matrix
 ```
 
 ### Drive Replacement
+
+**WHAT:** Handle drive failures with automatic healing
 
 MinIO handles drive failures automatically with erasure coding:
 
@@ -425,7 +463,11 @@ kubectl delete pod $FAILED_POD -n matrix
 
 ## Troubleshooting
 
+**WHERE:** Run all troubleshooting commands from your **management node**
+
 ### Pods Not Starting
+
+**Note:** Diagnose MinIO Tenant deployment issues
 
 ```bash
 # Check events
@@ -442,6 +484,8 @@ kubectl logs -n matrix $POD
 
 ### Drives Showing Offline
 
+**Note:** Diagnose and repair drive failures
+
 ```bash
 # Check drive status
 kubectl exec -n matrix $POD -- mc admin info local/
@@ -453,6 +497,8 @@ kubectl exec -n matrix $POD -- mc admin heal local/ --recursive
 ```
 
 ### Bucket Not Accessible
+
+**Note:** Troubleshoot S3 bucket access issues
 
 ```bash
 # List buckets
@@ -467,6 +513,8 @@ kubectl exec -n matrix $POD -- mc anonymous set download local/synapse-media
 
 ### Performance Issues
 
+**Note:** Diagnose slow storage or resource constraints
+
 ```bash
 # Check resource usage
 kubectl top pods -n matrix -l v1.min.io/tenant=matrix-minio
@@ -478,6 +526,8 @@ kubectl exec -n matrix $POD -- mc admin speedtest local/
 ```
 
 ### Connection Refused
+
+**Note:** Test connectivity to MinIO service from within the cluster
 
 ```bash
 # Test from another pod
@@ -494,9 +544,13 @@ kubectl get endpoints minio -n matrix
 
 ## Backup & Recovery
 
+**WHERE:** Run all backup/recovery commands from your **management node**
+
 ### Disaster Recovery
 
 **Scenario**: Entire MinIO cluster lost
+
+**CRITICAL:** MinIO stores PostgreSQL backups and media. If lost, both are affected.
 
 1. **Restore from CloudNativePG backups** (PostgreSQL data):
 ```bash
@@ -506,6 +560,9 @@ kubectl get endpoints minio -n matrix
 ```
 
 2. **Restore media from external backup**:
+
+**Note:** This command assumes you have external rclone backup configured
+
 ```bash
 # Use rclone to restore from external backup
 rclone copy backup:synapse-media main:synapse-media
@@ -517,6 +574,10 @@ rclone copy backup:synapse-media main:synapse-media
 - Consider PostgreSQL backups to external storage too
 
 ### Data Export
+
+**WHAT:** Export all bucket data for external backup
+
+**Note:** Commands execute inside MinIO pod, then copy to management node
 
 ```bash
 # Export all data from bucket
