@@ -48,6 +48,9 @@ Three Secret objects containing:
 **CRITICAL**: Replace all `CHANGEME_*` values before deployment!
 
 Generate secure secrets:
+
+**WHERE:** Run these commands on your **management node**
+
 ```bash
 # Generate random secrets
 openssl rand -base64 32
@@ -92,6 +95,10 @@ Plus **ServiceMonitor** for Prometheus Operator auto-discovery.
 
 ## Deployment Order
 
+**WHERE:** Run all commands from your **management node**
+
+**WORKING DIRECTORY:** `deployment/main-instance/01-synapse/`
+
 Deploy in this order to ensure dependencies are met:
 
 ```bash
@@ -118,6 +125,8 @@ kubectl apply -f services.yaml
 
 ## Verification
 
+**WHERE:** Run all verification commands from your **management node**
+
 Check deployment status:
 
 ```bash
@@ -131,15 +140,15 @@ kubectl logs -n matrix synapse-main-0 -f
 # Check services
 kubectl get svc -n matrix | grep synapse
 
-# Verify database connection
+# Verify database connection (executes psql on pod)
 kubectl exec -n matrix synapse-main-0 -- \
   psql -h matrix-postgresql-rw.matrix.svc.cluster.local -U synapse -d matrix -c "SELECT version();"
 
-# Verify Redis connection
+# Verify Redis connection (executes redis-cli on pod)
 kubectl exec -n matrix synapse-main-0 -- \
   redis-cli -h redis.matrix.svc.cluster.local -a "$REDIS_PASSWORD" ping
 
-# Check metrics
+# Check metrics (port-forward to local machine)
 kubectl port-forward -n matrix svc/synapse-metrics 9090:9090
 curl http://localhost:9090/_synapse/metrics
 ```
@@ -282,7 +291,12 @@ ServiceMonitor automatically configures Prometheus scraping.
 
 ## Troubleshooting
 
+**WHERE:** Run all troubleshooting commands from your **management node**
+
 ### Pod won't start
+
+**Note:** Check logs and init containers to diagnose startup failures
+
 ```bash
 # Check logs
 kubectl logs -n matrix synapse-main-0
@@ -297,6 +311,9 @@ kubectl describe pod -n matrix synapse-main-0
 ```
 
 ### Database connection fails
+
+**Note:** Verify PostgreSQL infrastructure is running and test connectivity
+
 ```bash
 # Verify PostgreSQL is running
 kubectl get cluster -n matrix matrix-postgresql
@@ -304,22 +321,28 @@ kubectl get cluster -n matrix matrix-postgresql
 # Check database service
 kubectl get svc -n matrix matrix-postgresql-rw
 
-# Test connection
+# Test connection (launches temporary pod)
 kubectl run -n matrix tmp-postgres --rm -it --image=postgres:16-alpine -- \
   psql -h matrix-postgresql-rw -U synapse -d matrix
 ```
 
 ### Redis connection fails
+
+**Note:** Verify Redis infrastructure is running and test connectivity
+
 ```bash
 # Verify Redis is running
 kubectl get statefulset -n matrix redis
 
-# Test connection
+# Test connection (launches temporary pod)
 kubectl run -n matrix tmp-redis --rm -it --image=redis:7.2-alpine -- \
   redis-cli -h redis.matrix.svc.cluster.local -a "PASSWORD" ping
 ```
 
 ### S3/MinIO connection fails
+
+**Note:** Verify MinIO infrastructure is running and test S3 connectivity
+
 ```bash
 # Verify MinIO tenant is running
 kubectl get tenant -n matrix minio
@@ -327,7 +350,7 @@ kubectl get tenant -n matrix minio
 # Check MinIO service
 kubectl get svc -n matrix minio
 
-# Test S3 connection (using aws-cli)
+# Test S3 connection (launches temporary pod with aws-cli)
 kubectl run -n matrix tmp-s3 --rm -it --image=amazon/aws-cli -- \
   s3 ls --endpoint-url http://minio.matrix.svc.cluster.local:9000
 ```
