@@ -10,22 +10,19 @@ Complete reference for all configuration options in the Matrix Synapse deploymen
 
 ---
 
-## Configuration File Location
+## About This Document
 
-All configuration is centralized in:
-```
-deployment/config/deployment.env
-```
+This document explains all configuration parameters and their purposes.
 
-**Create from template:**
-```bash
-cp config/deployment.env.example config/deployment.env
-```
+**Configuration is done directly in YAML manifest files:**
+- Secrets → `main-instance/01-synapse/secrets.yaml`, `infrastructure/03-minio/secrets.yaml`, etc.
+- Domains → `main-instance/01-synapse/configmap.yaml`, all Ingress manifests
+- Resources → Each component's `deployment.yaml` or `statefulset.yaml`
+- Storage → `infrastructure/01-postgresql/*-cluster.yaml`, etc.
 
-**Edit your configuration:**
-```bash
-nano config/deployment.env
-```
+**For step-by-step configuration instructions, see the main README.md**
+
+This reference explains WHAT each parameter means, not HOW to configure it (that's in README.md)
 
 ---
 
@@ -906,9 +903,10 @@ openssl rand -hex 16
 
 **Do not commit secrets to git:**
 ```bash
-# deployment.env is in .gitignore
+# Secrets files contain base64-encoded values
 git status
-# Should NOT show deployment.env
+# Ensure secrets.yaml files are tracked but with placeholder values only
+# Never commit actual secrets
 ```
 
 **Rotate secrets regularly:**
@@ -918,14 +916,7 @@ git status
 - Grafana password: After first login
 
 **Back up secrets securely:**
-```bash
-# Encrypt with GPG
-gpg -c config/deployment.env
-# Creates: config/deployment.env.gpg
-
-# Store encrypted file safely
-# Delete plain text from insecure locations
-```
+See `docs/SECRETS-MANAGEMENT.md` for comprehensive secret backup strategies.
 
 ---
 
@@ -933,33 +924,32 @@ gpg -c config/deployment.env
 
 Before deploying, validate your configuration:
 
-### Syntax Check
+### Check for Placeholders
 
 ```bash
-bash -n config/deployment.env
-# No output = valid syntax
+# Ensure all CHANGEME values are replaced
+grep -r "CHANGEME" deployment/ --exclude-dir=docs --exclude="*.md" --exclude="*.sh"
+# Should return nothing
+
+# Ensure example.com domains are updated
+grep -r "example\.com" deployment/ --exclude-dir=docs --exclude="*.md" --exclude="*.sh" | grep -v "^Binary"
+# Review and update as needed
 ```
 
-### Variable Check
+### YAML Syntax Validation
 
 ```bash
-source config/deployment.env
-
-# Check critical variables set
-echo "Domain: $MATRIX_DOMAIN"
-echo "Storage: $STORAGE_CLASS_GENERAL"
-echo "IP Range: $METALLB_IP_RANGE"
-
-# Check no CHANGE_TO_* placeholders remain
-grep "CHANGE_TO_" config/deployment.env
-# Should return nothing
+# Validate YAML syntax (requires yq or python-yaml)
+find deployment/ -name "*.yaml" -type f -exec yamllint {} \; 2>/dev/null
+# Or use kubectl dry-run
+kubectl apply -f deployment/infrastructure/ --dry-run=client
 ```
 
 ### Automated Validation
 
 ```bash
-# Deployment script validates automatically
-./scripts/deploy-all.sh --validate-only
+# Use validation script
+./scripts/validate-deployment.sh
 ```
 
 ---
@@ -978,8 +968,11 @@ storageclass.storage.k8s.io "local-path" not found
 # List available storage classes
 kubectl get storageclass
 
-# Update deployment.env with actual name
-STORAGE_CLASS_GENERAL="<actual-storage-class-name>"
+# Update storageClassName in all YAML manifests:
+# - infrastructure/01-postgresql/main-cluster.yaml
+# - infrastructure/01-postgresql/li-cluster.yaml
+# - infrastructure/02-redis/redis-statefulset.yaml
+# - main-instance/01-synapse/main-statefulset.yaml
 ```
 
 ### Problem: MetalLB IP Pool Conflicts
@@ -996,7 +989,7 @@ for ip in {240..250}; do
   ping -c 1 -W 1 192.168.1.$ip
 done
 
-# Update deployment.env with available range
+# Update addresses in values/metallb-values.yaml
 ```
 
 ### Problem: DNS Not Resolving
@@ -1024,9 +1017,10 @@ Server failed
 
 ## Related Documentation
 
-- [Main README](../README.md) - Overview and quick start
-- [Deployment Guide](DEPLOYMENT-GUIDE.md) - Step-by-step deployment
-- [HA Routing Guide](HA-ROUTING-GUIDE.md) - How components connect
+- [Main README](../README.md) - Complete deployment guide with step-by-step instructions
+- [HA Proxy Architecture](HAPROXY-ARCHITECTURE.md) - Routing and load balancing details
+- [Scaling Guide](SCALING-GUIDE.md) - Resource requirements per scale
+- [Secrets Management](SECRETS-MANAGEMENT.md) - Advanced secret handling
 
 ---
 
@@ -1035,22 +1029,21 @@ Server failed
 ### Essential Commands
 
 ```bash
-# Create configuration
-cp config/deployment.env.example config/deployment.env
-
-# Edit configuration
-nano config/deployment.env
-
-# Validate configuration
-bash -n config/deployment.env
-source config/deployment.env
-
 # Generate secrets
-openssl rand -base64 32  # Passwords
+openssl rand -base64 32  # Passwords/secrets
 openssl rand -hex 16     # API keys
+
+# Validate YAML syntax
+kubectl apply -f deployment/ --dry-run=client
+
+# Check for placeholders
+grep -r "CHANGEME" deployment/ --exclude-dir=docs --exclude="*.md"
 
 # Deploy
 ./scripts/deploy-all.sh
+
+# Validate deployment
+./scripts/validate-deployment.sh
 ```
 
 ### Configuration Checklist

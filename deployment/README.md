@@ -82,7 +82,6 @@ deployment/
     ├── OPERATIONS-UPDATE-GUIDE.md        (Post-deployment operations)
     ├── SECRETS-MANAGEMENT.md             (Optional: Advanced secrets)
     ├── HAPROXY-ARCHITECTURE.md           (Optional: Routing details)
-    ├── ANTIVIRUS-GUIDE.md                (Optional: ClamAV deep dive)
     └── MATRIX-AUTHENTICATION-SERVICE.md  (Optional: Enterprise SSO)
 ```
 
@@ -190,7 +189,6 @@ turn.matrix.example.com   → turn.your-domain.com     # TURN server
 **Files to update (85 occurrences):**
 ```bash
 # Main configuration
-deployment/config/synapse/homeserver.yaml
 deployment/main-instance/01-synapse/configmap.yaml
 
 # LI configuration
@@ -253,7 +251,7 @@ python -m synapse.app.homeserver \
 
 ### Step 6: Review Configuration Parameters
 
-**Key parameters to verify** (all in `deployment/config/synapse/homeserver.yaml`):
+**Key parameters to verify** (in `deployment/main-instance/01-synapse/configmap.yaml`, under the `homeserver.yaml:` section):
 
 | Parameter | Default | Your Value | Notes |
 |-----------|---------|------------|-------|
@@ -390,15 +388,9 @@ kubectl get pods -n ingress-nginx                # Ingress controller
 
 ### **Phase 2: Main Instance** (Synapse, Workers, Clients)
 
-**1. Configure Synapse:**
+**1. Deploy Synapse Main Process:**
 ```bash
-# Edit configuration (REQUIRED before deploying)
-# Update domain names, secrets, etc.
-nano config/synapse/homeserver.yaml
-```
-
-**2. Deploy Synapse Main Process:**
-```bash
+# Deploy configuration and secrets
 kubectl apply -f main-instance/01-synapse/configmap.yaml
 kubectl apply -f main-instance/01-synapse/secrets.yaml
 kubectl apply -f main-instance/01-synapse/main-statefulset.yaml
@@ -408,7 +400,7 @@ kubectl apply -f main-instance/01-synapse/services.yaml
 kubectl wait --for=condition=Ready pod/synapse-main-0 -n matrix --timeout=600s
 ```
 
-**3. Deploy Workers:**
+**2. Deploy Workers:**
 ```bash
 kubectl apply -f main-instance/02-workers/synchrotron-deployment.yaml
 kubectl apply -f main-instance/02-workers/generic-worker-deployment.yaml
@@ -420,7 +412,7 @@ kubectl apply -f main-instance/02-workers/federation-sender-deployment.yaml
 kubectl wait --for=condition=Available deployment -l app.kubernetes.io/component=worker -n matrix --timeout=600s
 ```
 
-**4. Deploy HAProxy (Load Balancer):**
+**3. Deploy HAProxy (Load Balancer):**
 ```bash
 kubectl apply -f main-instance/03-haproxy/deployment.yaml
 
@@ -428,7 +420,7 @@ kubectl apply -f main-instance/03-haproxy/deployment.yaml
 kubectl wait --for=condition=Available deployment/haproxy -n matrix --timeout=300s
 ```
 
-**5. Deploy Clients:**
+**4. Deploy Clients:**
 ```bash
 # Element Web
 kubectl apply -f main-instance/04-element-web/deployment.yaml
@@ -443,7 +435,7 @@ kubectl apply -f main-instance/07-sygnal/deployment.yaml
 kubectl apply -f main-instance/08-key-vault/deployment.yaml
 ```
 
-**6. Deploy LiveKit (Optional - Video/Voice):**
+**5. Deploy LiveKit (Optional - Video/Voice):**
 ```bash
 helm repo add livekit https://helm.livekit.io
 helm install livekit livekit/livekit-stack \
@@ -723,7 +715,7 @@ kubectl create secret generic synapse-admin-auth \
 
 Replace `example.com` with your actual domain in:
 - All Ingress manifests
-- `config/synapse/homeserver.yaml`
+- `main-instance/01-synapse/configmap.yaml` (homeserver.yaml section)
 - `main-instance/04-element-web/deployment.yaml`
 - `li-instance/02-element-web-li/deployment.yaml`
 
@@ -881,8 +873,8 @@ kubectl logs -n matrix -l app.kubernetes.io/name=content-scanner | grep "scan"
 | `docs/OPERATIONS-UPDATE-GUIDE.md` | Updates and maintenance procedures | After deployment, for ongoing operations |
 | `docs/SECRETS-MANAGEMENT.md` | Advanced secret management | If using external secret managers (Vault, etc.) |
 | `docs/HAPROXY-ARCHITECTURE.md` | HAProxy routing technical details | When debugging routing issues |
-| `docs/ANTIVIRUS-GUIDE.md` | ClamAV integration deep dive | When customizing antivirus configuration |
 | `docs/MATRIX-AUTHENTICATION-SERVICE.md` | Enterprise SSO integration (MAS) | If you need corporate SSO/OIDC authentication |
+| `antivirus/README.md` | ClamAV antivirus system architecture | When deploying or customizing antivirus |
 | `li-instance/README.md` | Complete LI instance technical guide | For understanding LI architecture details |
 | Component `README.md` files | Per-component technical details | When troubleshooting specific components |
 

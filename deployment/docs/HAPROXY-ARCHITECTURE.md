@@ -32,9 +32,8 @@
 > - Current HAProxy configuration is optimized for sync + generic architecture
 >
 > **For Current Implementation Details:**
-> - See `deployment/config/haproxy.cfg` for actual configuration
-> - See `deployment/manifests/06-synapse-workers.yaml` for worker deployments
-> - See `ARCHITECTURE-REVIEW-FIXES.md` for architecture decisions
+> - See `deployment/main-instance/03-haproxy/deployment.yaml` for actual HAProxy configuration (embedded ConfigMap)
+> - See `deployment/main-instance/02-workers/` directory for worker deployments
 
 ---
 
@@ -208,7 +207,7 @@ This architecture is used in production by Element for their enterprise Matrix d
 > **Current Implementation:**
 > - `/sync` endpoints → Sync Workers
 > - All other endpoints → Generic Workers
-> - See `deployment/config/haproxy.cfg` for actual routing rules
+> - See `deployment/main-instance/03-haproxy/deployment.yaml` (embedded ConfigMap) for actual routing rules
 >
 > The table below shows potential routing patterns if specialized workers are added later.
 
@@ -577,16 +576,10 @@ spec:
 
 ### 8.2: Deploy HAProxy
 
-**Create HAProxy ConfigMap:**
+**Deploy HAProxy (configuration embedded in deployment):**
 ```bash
-kubectl create configmap haproxy-config \
-  --from-file=haproxy.cfg=config/haproxy.cfg \
-  -n matrix
-```
-
-**Apply HAProxy manifest:**
-```bash
-kubectl apply -f manifests/06-haproxy.yaml
+# HAProxy configuration is embedded in the deployment manifest
+kubectl apply -f main-instance/03-haproxy/deployment.yaml
 ```
 
 **Verify HAProxy pods:**
