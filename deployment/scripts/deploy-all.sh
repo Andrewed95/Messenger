@@ -14,7 +14,7 @@
 # Prerequisites:
 #   - kubectl configured and connected to cluster
 #   - helm 3.x installed
-#   - All CHANGEME values replaced (see docs/PRE-DEPLOYMENT-CHECKLIST.md)
+#   - All CHANGEME values replaced (see README Configuration section)
 #
 # Last Updated: 2025-11-18
 ##############################################################################
@@ -183,7 +183,7 @@ validate_prerequisites() {
 
     if [[ "$changeme_count" -gt 0 ]]; then
         log_error "Found $changeme_count CHANGEME placeholders in deployment files!"
-        log_error "Please replace all secrets before deploying. See docs/PRE-DEPLOYMENT-CHECKLIST.md"
+        log_error "Please replace all secrets before deploying. See README Configuration section"
         grep -r "CHANGEME" "$DEPLOYMENT_DIR" \
             --exclude-dir=docs \
             --exclude-dir=.git \
