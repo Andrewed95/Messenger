@@ -23,7 +23,7 @@ metadata:
 data:
   homeserver.yaml: |
     # Content from homeserver.yaml with environment variable substitution
-    # See: /home/ali/Messenger/deployment/li-instance/01-synapse-li/homeserver.yaml
+    # See: li-instance/01-synapse-li/homeserver.yaml
 
     server_name: "matrix.example.com"
     public_baseurl: "https://matrix-li.example.com"

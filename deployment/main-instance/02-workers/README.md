@@ -109,7 +109,7 @@ When event persisters are deployed, you need to update the homeserver.yaml to di
 
 **Option 1: Update ConfigMap** (requires main process restart)
 
-Edit `/home/ali/Messenger/deployment/main-instance/01-synapse/configmap.yaml`:
+Edit `main-instance/01-synapse/configmap.yaml`:
 
 ```yaml
 # Find the stream_writers section and update:

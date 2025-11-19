@@ -5,7 +5,7 @@
 # Option A (Recommended): Use Helm chart (see README.md)
 #   helm install livekit livekit/livekit-server \
 #     --namespace matrix \
-#     --values /home/ali/Messenger/deployment/values/livekit-values.yaml
+#     --values ../../values/livekit-values.yaml
 #
 # Option B: Use these native Kubernetes manifests (below)
 #   kubectl apply -f deployment/main-instance/04-livekit/deployment.yaml

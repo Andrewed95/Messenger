@@ -31,13 +31,13 @@ helm repo update
 # Install LiveKit using custom values
 helm install livekit livekit/livekit-server \
   --namespace matrix \
-  --values /home/ali/Messenger/deployment/values/livekit-values.yaml \
+  --values ../../values/livekit-values.yaml \
   --version 1.7.0
 ```
 
 ### Custom Values
 
-The LiveKit configuration is defined in `/home/ali/Messenger/deployment/values/livekit-values.yaml`:
+The LiveKit configuration is defined in `values/livekit-values.yaml` (relative to deployment directory):
 
 **Key Settings**:
 - **Redis**: Uses Phase 1 Redis Sentinel cluster
