@@ -34,15 +34,12 @@ deployment/
 │   ├── 03-minio/                # MinIO distributed object storage
 │   └── 04-networking/           # NetworkPolicies, Ingress, TLS
 │
-├── config/                      ← Centralized Configuration Files
-│   └── synapse/                 # Synapse homeserver.yaml + log.yaml
-│
 ├── main-instance/               ← Phase 2: Main Matrix Instance
 │   ├── 01-synapse/              # Synapse main process
+│   ├── 02-element-web/          # Web client interface
 │   ├── 02-workers/              # 5 worker types (synchrotron, generic, etc.)
 │   ├── 03-haproxy/              # Intelligent load balancer
-│   ├── 04-element-web/          # Web client interface
-│   ├── 05-livekit/              # Video/voice calling (Helm reference)
+│   ├── 04-livekit/              # Video/voice calling (Helm reference)
 │   ├── 06-coturn/               # TURN/STUN NAT traversal
 │   ├── 07-sygnal/               # Push notifications (APNs/FCM)
 │   └── 08-key-vault/            # E2EE recovery key storage
@@ -423,7 +420,7 @@ kubectl wait --for=condition=Available deployment/haproxy -n matrix --timeout=30
 **4. Deploy Clients:**
 ```bash
 # Element Web
-kubectl apply -f main-instance/04-element-web/deployment.yaml
+kubectl apply -f main-instance/02-element-web/deployment.yaml
 
 # coturn (TURN/STUN)
 kubectl apply -f main-instance/06-coturn/deployment.yaml
@@ -716,7 +713,7 @@ kubectl create secret generic synapse-admin-auth \
 Replace `example.com` with your actual domain in:
 - All Ingress manifests
 - `main-instance/01-synapse/configmap.yaml` (homeserver.yaml section)
-- `main-instance/04-element-web/deployment.yaml`
+- `main-instance/02-element-web/deployment.yaml`
 - `li-instance/02-element-web-li/deployment.yaml`
 
 ### **5. Verify NetworkPolicies**
