@@ -132,6 +132,9 @@ This directory contains networking configuration for security, ingress, and TLS 
 - ✅ Well documented
 
 **Installation:**
+
+**WHERE:** Run from your **management node**
+
 ```bash
 # For bare metal/OVH (NodePort)
 kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.11.1/deploy/static/provider/baremetal/deploy.yaml
@@ -156,6 +159,9 @@ kubectl wait --for=condition=Available deployment/ingress-nginx-controller -n in
 3. **selfsigned** - Air-gapped deployments
 
 **Installation:**
+
+**WHERE:** Run from your **management node**
+
 ```bash
 kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.14.0/cert-manager.yaml
 
@@ -167,6 +173,10 @@ kubectl apply -f cert-manager-install.yaml
 ```
 
 ## Deployment
+
+**WHERE:** Run all deployment commands from your **management node**
+
+**WORKING DIRECTORY:** `deployment/infrastructure/04-networking/`
 
 ### Prerequisites
 
@@ -222,6 +232,10 @@ Expected: Service type NodePort with ports 80:30080, 443:30443
 
 ### Step 3: Install Cert-Manager
 
+**WHAT:** Install automated TLS certificate management
+
+**HOW:** Edit `cert-manager-install.yaml` to change email address, then apply:
+
 ```bash
 # Install cert-manager
 kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.14.0/cert-manager.yaml
@@ -248,6 +262,8 @@ kubectl describe certificate test-certificate -n matrix
 ```
 
 ## Validation
+
+**WHERE:** Run all validation commands from your **management node**
 
 ### Test NetworkPolicies
 
@@ -336,6 +352,8 @@ kubectl get secret test-tls -n matrix -o jsonpath='{.data.tls\.crt}' | base64 -d
 
 ## Troubleshooting
 
+**WHERE:** Run all troubleshooting commands from your **management node**
+
 ### NetworkPolicies Not Working
 
 **Problem:** Traffic still allowed when it should be blocked
@@ -415,6 +433,8 @@ kubectl get order,challenge -n matrix
 
 For air-gapped environments (after initial setup):
 
+**WHERE:** Pre-pull images on a machine with internet access, then transfer to cluster nodes
+
 **1. Pre-pull Images:**
 ```bash
 # NGINX Ingress
@@ -477,6 +497,9 @@ spec:
 - Regular audit of access logs
 
 🚨 **Monitor:**
+
+**Note:** Regularly verify key_vault security from your management node
+
 ```bash
 # Check key_vault access logs
 kubectl logs -n matrix deployment/key-vault | grep "LI:"
@@ -508,6 +531,8 @@ kubectl get networkpolicy key-vault-isolation -n matrix
 
 ## Monitoring
 
+**WHERE:** Run all monitoring commands from your **management node**
+
 ### NetworkPolicy Compliance
 
 **Tools:**
@@ -515,6 +540,9 @@ kubectl get networkpolicy key-vault-isolation -n matrix
 - **Calico Enterprise** - Policy visualization
 
 **Manual Verification:**
+
+**Note:** These commands test network connectivity to verify policies are working
+
 ```bash
 # Test connectivity matrix
 for POD in synapse key-vault postgresql; do
