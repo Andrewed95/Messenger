@@ -23,6 +23,7 @@ data:
   # PostgreSQL replication setup script
   setup-replication.sql: |
     -- Run this on MAIN PostgreSQL cluster to set up logical replication
+    -- NOTE: This must be run as PostgreSQL superuser (postgres)
 
     -- 1. Create publication on main database (if not exists)
     DO $$
@@ -34,33 +35,40 @@ data:
       END IF;
     END $$;
 
-    -- 2. Create replication user (if not exists)
-    DO $$
-    BEGIN
-      IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'replication_user') THEN
-        CREATE USER replication_user WITH REPLICATION PASSWORD 'CHANGEME_REPLICATION_PASSWORD';
-        GRANT SELECT ON ALL TABLES IN SCHEMA public TO replication_user;
-        ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO replication_user;
-      END IF;
-    END $$;
+    -- 2. Grant permissions for replication
+    -- The postgres user already has replication privileges in CloudNativePG
+    -- We just need to ensure tables are accessible
+    GRANT SELECT ON ALL TABLES IN SCHEMA public TO postgres;
+    ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO postgres;
 
-    -- 3. Update pg_hba.conf to allow replication connections
-    -- This needs to be added to CloudNativePG cluster configuration:
-    -- host    matrix    replication_user    10.0.0.0/8    scram-sha-256
+    -- 3. CloudNativePG automatically configures pg_hba.conf for replication
+    -- No manual configuration needed
 
   # PostgreSQL subscription setup script (run on LI)
   setup-subscription.sql: |
     -- Run this on LI PostgreSQL cluster to subscribe to main
+    -- NOTE: Connection string uses postgres user for replication privileges
 
     -- 1. Create subscription (if not exists)
     DO $$
+    DECLARE
+      conn_string TEXT;
     BEGIN
+      -- Build connection string for replication
+      -- Using postgres superuser which has replication privileges
+      conn_string := format(
+        'host=%s port=%s dbname=%s user=%s password=%s',
+        '${MAIN_DB_HOST}',
+        '${MAIN_DB_PORT}',
+        '${MAIN_DB_NAME}',
+        'postgres',  -- Must use postgres for replication
+        '${POSTGRES_PASSWORD}'
+      );
+
       IF NOT EXISTS (
         SELECT 1 FROM pg_subscription WHERE subname = 'matrix_li_subscription'
       ) THEN
-        CREATE SUBSCRIPTION matrix_li_subscription
-        CONNECTION 'host=matrix-postgresql-rw.matrix.svc.cluster.local port=5432 dbname=matrix user=replication_user password=CHANGEME_REPLICATION_PASSWORD'
-        PUBLICATION matrix_li_publication;
+        EXECUTE format('CREATE SUBSCRIPTION matrix_li_subscription CONNECTION %L PUBLICATION matrix_li_publication', conn_string);
       END IF;
     END $$;
 
@@ -114,20 +122,8 @@ data:
 
     echo "Media sync completed at $(date)"
 
-    # Check replication lag
-    echo "Checking PostgreSQL replication lag..."
-    PGPASSWORD="$LI_DB_PASSWORD" psql \
-      -h matrix-postgresql-li-rw.matrix.svc.cluster.local \
-      -U synapse_li \
-      -d matrix_li \
-      -c "SELECT
-            subname,
-            received_lsn,
-            latest_end_lsn,
-            pg_wal_lsn_diff(latest_end_lsn, received_lsn) AS lag_bytes,
-            pg_size_pretty(pg_wal_lsn_diff(latest_end_lsn, received_lsn)) AS lag_pretty
-          FROM pg_subscription_rel
-          JOIN pg_subscription ON subrelid = srrelid;" || echo "Replication not yet set up"
+    # Note: PostgreSQL replication lag monitoring is handled separately
+    # The database replication is managed by CloudNativePG logical replication
 
     echo "Sync completed successfully at $(date)"
 
@@ -143,19 +139,21 @@ metadata:
     app.kubernetes.io/component: replication
 type: Opaque
 stringData:
-  # Main PostgreSQL (for reading)
+  # Main PostgreSQL (for replication - using postgres superuser)
+  # NOTE: For logical replication setup only, not for regular queries
   MAIN_DB_HOST: "matrix-postgresql-rw.matrix.svc.cluster.local"
   MAIN_DB_PORT: "5432"
   MAIN_DB_NAME: "matrix"
-  MAIN_DB_USER: "replication_user"
-  MAIN_DB_PASSWORD: "CHANGEME_REPLICATION_PASSWORD"
+  MAIN_DB_USER: "postgres"  # Must use postgres for replication privileges
+  MAIN_DB_PASSWORD: "CHANGEME_POSTGRES_SUPERUSER_PASSWORD"  # From matrix-postgresql-superuser secret
 
-  # LI PostgreSQL (for writing)
+  # LI PostgreSQL (for subscription setup - using postgres superuser)
+  # NOTE: For logical replication setup only, not for regular queries
   LI_DB_HOST: "matrix-postgresql-li-rw.matrix.svc.cluster.local"
   LI_DB_PORT: "5432"
   LI_DB_NAME: "matrix_li"
-  LI_DB_USER: "synapse_li"
-  LI_DB_PASSWORD: "CHANGEME_SECURE_LI_DB_PASSWORD"
+  LI_DB_USER: "postgres"  # Must use postgres for creating subscription
+  LI_DB_PASSWORD: "CHANGEME_LI_POSTGRES_SUPERUSER_PASSWORD"  # From matrix-postgresql-li-superuser secret
 
   # S3/MinIO credentials
   S3_ACCESS_KEY: "synapse-s3-user"
@@ -189,11 +187,12 @@ spec:
             - |
               echo "Setting up logical replication..."
 
-              # Set up publication on main
+              # Set up publication on main (needs superuser access)
               echo "Creating publication on main database..."
-              PGPASSWORD="$MAIN_DB_PASSWORD" psql \
+              # Using postgres superuser for setup
+              PGPASSWORD="${POSTGRES_PASSWORD}" psql \
                 -h "$MAIN_DB_HOST" \
-                -U "$MAIN_DB_USER" \
+                -U postgres \
                 -d "$MAIN_DB_NAME" \
                 -f /config/setup-replication.sql
 
@@ -202,20 +201,38 @@ spec:
 
               # Set up subscription on LI
               echo "Creating subscription on LI database..."
-              PGPASSWORD="$LI_DB_PASSWORD" psql \
+              # Using postgres superuser for subscription creation
+              # First substitute environment variables in the SQL script
+              sed -e "s|\${MAIN_DB_HOST}|$MAIN_DB_HOST|g" \
+                  -e "s|\${MAIN_DB_PORT}|$MAIN_DB_PORT|g" \
+                  -e "s|\${MAIN_DB_NAME}|$MAIN_DB_NAME|g" \
+                  -e "s|\${POSTGRES_PASSWORD}|$POSTGRES_PASSWORD|g" \
+                  /config/setup-subscription.sql > /tmp/setup-subscription.sql
+
+              PGPASSWORD="$LI_POSTGRES_PASSWORD" psql \
                 -h "$LI_DB_HOST" \
-                -U "$LI_DB_USER" \
+                -U postgres \
                 -d "$LI_DB_NAME" \
-                -f /config/setup-subscription.sql
+                -f /tmp/setup-subscription.sql
 
               echo "Logical replication setup complete!"
               echo "Checking replication status..."
-              PGPASSWORD="$LI_DB_PASSWORD" psql \
+              PGPASSWORD="$LI_POSTGRES_PASSWORD" psql \
                 -h "$LI_DB_HOST" \
-                -U "$LI_DB_USER" \
+                -U postgres \
                 -d "$LI_DB_NAME" \
                 -c "SELECT subname, subenabled, subslotname FROM pg_subscription;"
           env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: matrix-postgresql-superuser
+                  key: password  # CloudNativePG creates this secret automatically
+            - name: LI_POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: matrix-postgresql-li-superuser
+                  key: password  # CloudNativePG creates this secret automatically
             - name: MAIN_DB_HOST
               valueFrom:
                 secretKeyRef:
@@ -297,19 +314,13 @@ spec:
 
           containers:
             - name: rclone-sync
-              # NOTE: This image needs BOTH rclone and postgresql-client
-              # Option 1: Use custom image with both tools pre-installed
-              # Option 2: Use this alpine-based rclone with postgresql-client installed at runtime
-              # Current: rclone/rclone:1.65 (lacks postgresql-client)
-              # Replace with your custom image URL that includes both tools
-              image: rclone/rclone:1.65
+              # rclone for media synchronization
+              image: rclone/rclone:1.65-alpine
               command:
                 - sh
                 - -c
                 - |
-                  # Install postgresql-client for replication lag checking
-                  apk add --no-cache postgresql-client || echo "Warning: Could not install postgresql-client"
-                  # Run sync script
+                  # Run sync script (media sync only, replication lag check removed)
                   sh /config/sync.sh
               env:
                 - name: S3_ACCESS_KEY

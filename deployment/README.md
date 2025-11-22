@@ -2,6 +2,15 @@
 
 Complete production-grade Matrix Synapse homeserver deployment on Kubernetes, supporting 100-20,000+ concurrent users with high availability, lawful intercept, and antivirus protection.
 
+## ⚠️ IMPORTANT: Image Management Assumption
+
+**This solution assumes all container images are pre-built and available.**
+
+- ✅ **What this solution DOES**: Configures all services (Synapse settings, database parameters, Redis config, etc.)
+- ❌ **What this solution DOES NOT**: Build, create, or update container images
+- 📦 **Your responsibility**: Provide pre-built images for all services
+- 🔧 **Configuration**: All image URLs are configurable in `values/images.yaml`
+
 ## 🎯 What This Deployment Provides
 
 ### Core Features

@@ -34,6 +34,7 @@ spec:
       labels:
         app.kubernetes.io/name: synapse
         app.kubernetes.io/component: synchrotron
+        app.kubernetes.io/type: worker
         app.kubernetes.io/instance: main
         matrix.instance: main
       annotations:
@@ -109,8 +110,8 @@ spec:
             - name: DB_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: synapse-secrets
-                  key: DB_PASSWORD
+                  name: matrix-postgresql-app
+                  key: password
             - name: REDIS_PASSWORD
               valueFrom:
                 secretKeyRef:

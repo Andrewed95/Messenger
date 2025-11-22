@@ -15,6 +15,9 @@ spec:
   # High Availability Configuration
   instances: 3  # 1 primary + 2 replicas
 
+  # Enable superuser access (creates matrix-postgresql-superuser secret)
+  enableSuperuserAccess: true
+
   # Primary update strategy
   # unsupervised: automated switchover when replicas are ready
   primaryUpdateStrategy: unsupervised
@@ -39,9 +42,9 @@ spec:
       max_connections: "500"
       superuser_reserved_connections: "3"
 
-      # Memory settings (adjust based on node size)
-      shared_buffers: "4GB"
-      effective_cache_size: "12GB"
+      # Memory settings (25% of RAM for shared_buffers, 75% for cache)
+      shared_buffers: "4GB"     # 25% of 16GB
+      effective_cache_size: "12GB"  # 75% of 16GB
       maintenance_work_mem: "1GB"
       work_mem: "10MB"
 
@@ -96,21 +99,21 @@ spec:
       localeCType: C
       postInitSQL:
         - CREATE DATABASE matrix_authentication_service OWNER synapse;
-        - CREATE DATABASE keyvault OWNER synapse;
+        - CREATE DATABASE key_vault OWNER synapse;
 
   # Monitoring configuration
   monitoring:
     enabled: true
     podMonitorEnabled: true
 
-  # Resources
+  # Resources (aligned with scaling guide for 100+ CCU)
   resources:
     requests:
-      memory: "8Gi"
-      cpu: "2"
+      memory: "16Gi"  # Scaling guide: 16GB for 100 CCU
+      cpu: "4"        # Scaling guide: 4 vCPU for 100 CCU
     limits:
-      memory: "16Gi"
-      cpu: "4"
+      memory: "32Gi"  # Allow bursting for peak loads
+      cpu: "8"        # Allow CPU bursting
 
   # Backup configuration to MinIO
   backup:

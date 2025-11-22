@@ -4,6 +4,13 @@
 # Stores encrypted E2EE recovery keys for Matrix end-to-end encryption
 # Enables lawful intercept to recover encrypted message history
 #
+# IMPORTANT: You MUST provide a pre-built Django application image that includes:
+# - Django project structure with key_vault app
+# - Models for RecoveryKey storage
+# - API endpoints for store_key and retrieve_key
+# - All Python dependencies installed
+# Replace CHANGEME_KEY_VAULT_IMAGE with your actual image URL
+#
 # SECURITY:
 # - ONLY accessible from Synapse main process (NetworkPolicy enforced)
 # - NOT accessible from LI instance (prevents unauthorized key access)
@@ -195,16 +202,16 @@ spec:
 
       # Init container for database migrations
       initContainers:
-        - name: migrate
-          image: python:3.11-slim
+        - name: run-migrations
+          # Use the same key-vault image for migrations
+          # IMPORTANT: Replace with your actual key-vault image URL
+          image: CHANGEME_KEY_VAULT_IMAGE:latest
+          imagePullPolicy: IfNotPresent
           command:
-            - sh
-            - -c
-            - |
-              pip install --quiet psycopg2-binary djangorestframework cryptography
-              cd /app
-              python manage.py migrate --noinput
-              echo "Database migrations complete"
+            - python
+            - manage.py
+            - migrate
+            - --noinput
           env:
             - name: DJANGO_SECRET_KEY
               valueFrom:
@@ -237,8 +244,6 @@ spec:
                   name: key-vault-secrets
                   key: DB_PORT
           volumeMounts:
-            - name: app
-              mountPath: /app
             - name: config
               mountPath: /app/key_vault/settings.py
               subPath: settings.py
@@ -260,24 +265,10 @@ spec:
 
       containers:
         - name: key-vault
-          image: python:3.11-slim
+          # Configurable image URL - replace with actual key-vault image
+          # IMPORTANT: You must provide a pre-built key-vault Django application image
+          image: CHANGEME_KEY_VAULT_IMAGE:latest
           imagePullPolicy: IfNotPresent
-
-          # Run Django with gunicorn
-          command:
-            - sh
-            - -c
-            - |
-              pip install --quiet gunicorn psycopg2-binary djangorestframework cryptography
-              cd /app
-              gunicorn key_vault.wsgi:application \
-                --bind 0.0.0.0:8000 \
-                --workers 4 \
-                --threads 2 \
-                --timeout 60 \
-                --access-logfile - \
-                --error-logfile - \
-                --log-level info
 
           ports:
             - name: http
@@ -322,8 +313,6 @@ spec:
                   key: API_KEY
 
           volumeMounts:
-            - name: app
-              mountPath: /app
             - name: config
               mountPath: /app/key_vault/settings.py
               subPath: settings.py
@@ -384,8 +373,6 @@ spec:
                 - ALL
 
       volumes:
-        - name: app
-          emptyDir: {}
         - name: config
           configMap:
             name: key-vault-config

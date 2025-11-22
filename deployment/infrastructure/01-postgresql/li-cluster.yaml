@@ -16,6 +16,9 @@ spec:
   # HA for LI instance
   instances: 2  # 1 primary + 1 replica (smaller than main)
 
+  # Enable superuser access (creates matrix-postgresql-li-superuser secret)
+  enableSuperuserAccess: true
+
   # Primary update strategy
   primaryUpdateStrategy: unsupervised
 

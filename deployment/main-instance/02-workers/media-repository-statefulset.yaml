@@ -1,12 +1,13 @@
-# Media Repository Worker Deployment
+# Media Repository Worker StatefulSet
 # Handles media upload and download endpoints
 # Endpoints: /_matrix/media/*, /_matrix/client/*/upload, /_matrix/client/*/download
 #
 # Scale: 2-8 replicas based on media traffic
 # Media is stored in MinIO S3, not locally
+# MUST be StatefulSet for predictable naming (referenced in media_instance_running_background_jobs)
 
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: synapse-media-repository
   namespace: matrix
@@ -16,6 +17,7 @@ metadata:
     app.kubernetes.io/instance: main
     matrix.instance: main
 spec:
+  serviceName: synapse-media-repository
   replicas: 2  # Scale based on media load: 2-8 replicas
 
   selector:
@@ -23,17 +25,15 @@ spec:
       app.kubernetes.io/name: synapse
       app.kubernetes.io/component: media-repository
 
-  strategy:
+  updateStrategy:
     type: RollingUpdate
-    rollingUpdate:
-      maxSurge: 1
-      maxUnavailable: 0
 
   template:
     metadata:
       labels:
         app.kubernetes.io/name: synapse
         app.kubernetes.io/component: media-repository
+        app.kubernetes.io/type: worker
         app.kubernetes.io/instance: main
         matrix.instance: main
       annotations:
@@ -61,6 +61,30 @@ spec:
                 topologyKey: kubernetes.io/hostname
 
       initContainers:
+        - name: install-s3-provider
+          image: matrixdotorg/synapse:v1.119.0
+          command:
+            - sh
+            - -c
+            - |
+              # Install S3 storage provider module
+              pip install --user synapse-s3-storage-provider==1.4.0
+
+              # Copy installed module to shared volume
+              cp -r /home/synapse/.local/lib/python*/site-packages/* /mnt/python-packages/ || true
+
+              echo "S3 storage provider installed successfully"
+          volumeMounts:
+            - name: python-packages
+              mountPath: /mnt/python-packages
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "200m"
+
         - name: generate-worker-config
           image: matrixdotorg/synapse:v1.119.0
           command:
@@ -84,6 +108,11 @@ spec:
                   resources:
                     - names: [media]
                   x_forwarded: true
+
+                - type: http
+                  port: 9093
+                  resources:
+                    - names: [replication]
 
                 - type: metrics
                   port: 9090
@@ -113,8 +142,8 @@ spec:
             - name: DB_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: synapse-secrets
-                  key: DB_PASSWORD
+                  name: matrix-postgresql-app
+                  key: password
             - name: REDIS_PASSWORD
               valueFrom:
                 secretKeyRef:
@@ -185,6 +214,9 @@ spec:
             - name: http
               containerPort: 8008
               protocol: TCP
+            - name: replication
+              containerPort: 9093
+              protocol: TCP
             - name: metrics
               containerPort: 9090
               protocol: TCP
@@ -205,6 +237,9 @@ spec:
             # Media cache (optional local cache before S3)
             - name: media-cache
               mountPath: /data/media_store
+            - name: python-packages
+              mountPath: /usr/local/lib/python3.11/site-packages
+              readOnly: true
 
           # Media workers need more memory for thumbnailing
           resources:
@@ -261,6 +296,8 @@ spec:
           emptyDir: {}
         - name: tmp
           emptyDir: {}
+        - name: python-packages
+          emptyDir: {}
         - name: media-cache
           emptyDir:
             sizeLimit: 10Gi  # Local cache before S3
@@ -273,7 +310,7 @@ spec:
                 mode: 0600
 
 ---
-# Service for media workers (used by HAProxy)
+# Headless service for media StatefulSet (required for pod DNS)
 apiVersion: v1
 kind: Service
 metadata:
@@ -284,6 +321,7 @@ metadata:
     app.kubernetes.io/component: media-repository
 spec:
   type: ClusterIP
+  clusterIP: None  # Headless service for StatefulSet
   selector:
     app.kubernetes.io/name: synapse
     app.kubernetes.io/component: media-repository
@@ -291,6 +329,10 @@ spec:
     - name: http
       port: 8008
       targetPort: 8008
+      protocol: TCP
+    - name: replication
+      port: 9093
+      targetPort: 9093
       protocol: TCP
     - name: metrics
       port: 9090
@@ -310,7 +352,7 @@ metadata:
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
-    kind: Deployment
+    kind: StatefulSet
     name: synapse-media-repository
   minReplicas: 2
   maxReplicas: 8

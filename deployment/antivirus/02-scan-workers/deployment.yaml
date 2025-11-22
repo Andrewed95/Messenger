@@ -88,14 +88,12 @@ data:
 
   # Scan script that calls ClamAV
   scan.sh: |
-    #!/bin/bash
+    #!/bin/sh
     # ClamAV scanning script for Matrix Content Scanner
     # Returns:
     #   0 = Clean
     #   1 = Infected
     #   2 = Error
-
-    set -e
 
     FILE="$1"
 
@@ -109,14 +107,53 @@ data:
       exit 2
     fi
 
-    # Scan file using clamdscan (connects to clamd daemon)
-    if clamdscan --fdpass --no-summary "$FILE" 2>&1 | grep -q "Infected files: 0"; then
-      echo "File is clean"
-      exit 0
-    else
-      echo "File is infected!"
-      exit 1
-    fi
+    # Use Python to connect to ClamAV daemon since Python is available in the container
+    python3 - <<EOF
+import socket
+import os
+import sys
+
+file_path = "$FILE"
+clamav_host = "clamav.matrix.svc.cluster.local"
+clamav_port = 3310
+
+try:
+    # Connect to ClamAV daemon
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.settimeout(30)
+    sock.connect((clamav_host, clamav_port))
+
+    # Send INSTREAM command
+    sock.send(b"zINSTREAM\0")
+
+    # Send file content in chunks
+    with open(file_path, 'rb') as f:
+        while True:
+            chunk = f.read(2048)
+            if not chunk:
+                break
+            size = len(chunk)
+            sock.send(size.to_bytes(4, 'big'))
+            sock.send(chunk)
+
+    # Send terminator
+    sock.send(b'\0\0\0\0')
+
+    # Read response
+    response = sock.recv(1024).decode()
+    sock.close()
+
+    if "OK" in response:
+        print("File is clean")
+        sys.exit(0)
+    else:
+        print(f"File is infected: {response}")
+        sys.exit(1)
+
+except Exception as e:
+    print(f"Error scanning file: {e}", file=sys.stderr)
+    sys.exit(2)
+EOF
 
 ---
 # Deployment for Matrix Content Scanner
@@ -269,39 +306,6 @@ spec:
             periodSeconds: 5
             timeoutSeconds: 3
             failureThreshold: 12
-
-          securityContext:
-            allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: true
-            runAsNonRoot: true
-            runAsUser: 1000
-            runAsGroup: 1000
-            capabilities:
-              drop:
-                - ALL
-
-        # ClamAV client sidecar (provides clamdscan command)
-        # Uses image with netcat pre-installed to avoid runtime installation
-        - name: clamav-client
-          image: alpine:3.19
-          command:
-            - sh
-            - -c
-            - |
-              # Keep container running for clamdscan access
-              tail -f /dev/null
-
-          volumeMounts:
-            - name: tmp
-              mountPath: /tmp
-
-          resources:
-            requests:
-              cpu: 100m
-              memory: 128Mi
-            limits:
-              cpu: 500m
-              memory: 512Mi
 
           securityContext:
             allowPrivilegeEscalation: false

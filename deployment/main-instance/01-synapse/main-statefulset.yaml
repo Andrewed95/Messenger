@@ -87,8 +87,8 @@ spec:
             - name: PGPASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: synapse-secrets
-                  key: DB_PASSWORD
+                  name: matrix-postgresql-app
+                  key: password
           resources:
             requests:
               memory: "32Mi"
@@ -122,6 +122,30 @@ spec:
               memory: "64Mi"
               cpu: "50m"
 
+        - name: install-s3-provider
+          image: matrixdotorg/synapse:v1.119.0
+          command:
+            - sh
+            - -c
+            - |
+              # Install S3 storage provider module
+              pip install --user synapse-s3-storage-provider==1.4.0
+
+              # Copy installed module to shared volume
+              cp -r /home/synapse/.local/lib/python*/site-packages/* /mnt/python-packages/ || true
+
+              echo "S3 storage provider installed successfully"
+          volumeMounts:
+            - name: python-packages
+              mountPath: /mnt/python-packages
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "200m"
+
         - name: generate-config
           image: matrixdotorg/synapse:v1.119.0
           command:
@@ -142,8 +166,8 @@ spec:
             - name: DB_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: synapse-secrets
-                  key: DB_PASSWORD
+                  name: matrix-postgresql-app
+                  key: password
             - name: REDIS_PASSWORD
               valueFrom:
                 secretKeyRef:
@@ -245,6 +269,9 @@ spec:
               mountPath: /data
             - name: tmp
               mountPath: /tmp
+            - name: python-packages
+              mountPath: /usr/local/lib/python3.11/site-packages
+              readOnly: true
 
           # Resource limits (adjust based on load)
           resources:
@@ -302,6 +329,8 @@ spec:
         - name: config
           emptyDir: {}
         - name: tmp
+          emptyDir: {}
+        - name: python-packages
           emptyDir: {}
         - name: signing-key
           secret:

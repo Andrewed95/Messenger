@@ -75,25 +75,75 @@ data:
     worker_replication_secret: "${REPLICATION_SECRET}"
 
     # Instance mapping for workers
+    # Workers will auto-register via replication protocol
+
+    # Federation sender workers configuration
+    # These workers handle outbound federation traffic
+    send_federation: false  # Main process should NOT send federation
+    federation_sender_instances:
+      - synapse-federation-sender-0
+      - synapse-federation-sender-1
+
+    # Event persister workers configuration
+    # These workers handle writing events to the database
+    stream_writers:
+      events:
+        - synapse-event-persister-0
+        - synapse-event-persister-1
+      typing:
+        - synapse-main-0  # Typing handled by main process
+      to_device:
+        - synapse-main-0  # To-device messages handled by main
+      account_data:
+        - synapse-main-0  # Account data handled by main
+      receipts:
+        - synapse-main-0  # Read receipts handled by main
+      presence:
+        - synapse-main-0  # Presence handled by main
+
+    # Media repository workers configuration
+    # These workers handle media upload/download
+    media_instance_running_background_jobs: synapse-media-repository-0
+    # Using headless service for worker discovery
+    # All workers need to be in the instance_map for proper routing
     instance_map:
-      main:
-        host: 127.0.0.1
+      synapse-main-0:
+        host: synapse-main-0.synapse-main.matrix.svc.cluster.local
         port: 9093
 
-    # Stream writers for distributed event persistence
-    # Will be populated when workers are configured
-    stream_writers:
-      events: main
-      typing: main
-      to_device: main
-      account_data: main
-      receipts: main
-      presence: main
+      # Federation sender workers (StatefulSet)
+      synapse-federation-sender-0:
+        host: synapse-federation-sender-0.synapse-federation-sender.matrix.svc.cluster.local
+        port: 9093
+      synapse-federation-sender-1:
+        host: synapse-federation-sender-1.synapse-federation-sender.matrix.svc.cluster.local
+        port: 9093
+
+      # Event persister workers (StatefulSet)
+      synapse-event-persister-0:
+        host: synapse-event-persister-0.synapse-event-persister.matrix.svc.cluster.local
+        port: 9093
+      synapse-event-persister-1:
+        host: synapse-event-persister-1.synapse-event-persister.matrix.svc.cluster.local
+        port: 9093
+
+      # Media repository workers (StatefulSet) - required for media_instance_running_background_jobs
+      synapse-media-repository-0:
+        host: synapse-media-repository-0.synapse-media-repository.matrix.svc.cluster.local
+        port: 9093
+      synapse-media-repository-1:
+        host: synapse-media-repository-1.synapse-media-repository.matrix.svc.cluster.local
+        port: 9093
+
+    # Worker configuration for auto-discovery
+    # Workers will connect to main process for registration
+    worker_replication_host: synapse-main-0.synapse-main.matrix.svc.cluster.local
+    worker_replication_http_port: 9093
 
     # ==================== MEDIA STORAGE ====================
 
-    # Enable media repository on main process
-    enable_media_repo: true
+    # Media repository disabled on main process (handled by media workers)
+    enable_media_repo: false
     media_store_path: "/data/media_store"
 
     # S3 storage provider for MinIO
@@ -118,6 +168,7 @@ data:
     redaction_retention_period: null
 
     # Recovery key module for E2EE key storage (integrates with key_vault)
+    # and LiveKit integration for WebRTC video/voice calling
     modules:
       - module: synapse_recovery_key_storage.RecoveryKeyStorageModule
         config:
@@ -139,6 +190,24 @@ data:
       sleep_delay: 500
       reject_limit: 50
       concurrent: 3
+
+    # ==================== LIVEKIT (WebRTC SFU) ====================
+    # Configuration for video/voice calling via LiveKit
+
+    # Enable experimental MSC3401 (MatrixRTC) features
+    experimental_features:
+      msc3401_enabled: true  # Enable native group VoIP signaling
+
+    # TURN server configuration for WebRTC (uses coturn)
+    turn_uris:
+      - "turn:coturn.matrix.svc.cluster.local:3478?transport=udp"
+      - "turn:coturn.matrix.svc.cluster.local:3478?transport=tcp"
+    turn_shared_secret: "${TURN_SECRET}"
+    turn_user_lifetime: 86400000  # 24 hours in milliseconds
+
+    # LiveKit integration is configured in Element Web client
+    # The actual LiveKit WebSocket URL is: wss://livekit.matrix.example.com
+    # LiveKit API credentials are in livekit-secrets
 
     # ==================== SECURITY & SECRETS ====================
 
@@ -223,15 +292,6 @@ data:
       default_batch_size: 100
       sleep_enabled: true
 
-    # ==================== TURN/STUN (coturn integration) ====================
-
-    turn_uris:
-      - "turn:turn.matrix.example.com:3478?transport=udp"
-      - "turn:turn.matrix.example.com:3478?transport=tcp"
-      - "turns:turn.matrix.example.com:5349?transport=tcp"
-    turn_shared_secret: "${TURN_SECRET}"
-    turn_user_lifetime: 86400000
-    turn_allow_guests: false
 
     # ==================== PUSH NOTIFICATIONS (Sygnal) ====================
 

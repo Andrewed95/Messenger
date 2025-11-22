@@ -233,6 +233,15 @@ deploy_phase1() {
         kubectl create namespace matrix --dry-run=client -o yaml | kubectl apply -f -
     fi
 
+    # Install CloudNativePG Operator
+    log_info "Installing CloudNativePG Operator (if not already installed)..."
+    if [[ "$DRY_RUN" == "false" ]]; then
+        kubectl apply -f https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-1.22/releases/cnpg-1.22.0.yaml || true
+        log_info "Waiting for CloudNativePG operator to be ready..."
+        kubectl wait --for=condition=Available --timeout=300s \
+            -n cnpg-system deployment/cnpg-controller-manager || true
+    fi
+
     # Deploy PostgreSQL clusters
     log_info "Deploying PostgreSQL main cluster..."
     apply_manifest "$DEPLOYMENT_DIR/infrastructure/01-postgresql/main-cluster.yaml"

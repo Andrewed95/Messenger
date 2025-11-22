@@ -1,4 +1,19 @@
 ---
+# Redis Password Secret
+# Used by Redis StatefulSet and Synapse
+apiVersion: v1
+kind: Secret
+metadata:
+  name: redis-password
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/component: database
+type: Opaque
+stringData:
+  password: "CHANGEME_SECURE_REDIS_PASSWORD"  # Generate with: openssl rand -base64 32
+
+---
 # Redis with Sentinel for High Availability
 # Provides automatic failover for Synapse and LiveKit
 apiVersion: v1
@@ -41,8 +56,8 @@ data:
     maxmemory-policy allkeys-lru
 
     # Security
-    requirepass REDIS_PASSWORD_PLACEHOLDER
-    masterauth REDIS_PASSWORD_PLACEHOLDER
+    # Password will be set via command line argument from Secret
+    # requirepass and masterauth configured at runtime
 
     # Performance
     tcp-backlog 511
@@ -64,7 +79,7 @@ data:
 
     # Monitor the master
     sentinel monitor mymaster redis-0.redis-headless.matrix.svc.cluster.local 6379 2
-    sentinel auth-pass mymaster REDIS_PASSWORD_PLACEHOLDER
+    # Password will be set at runtime from Secret
 
     # Timing configuration
     sentinel down-after-milliseconds mymaster 5000
@@ -156,7 +171,10 @@ spec:
             - |
               set -e
               cp /mnt/config/redis.conf /data/redis.conf
-              sed -i "s/REDIS_PASSWORD_PLACEHOLDER/${REDIS_PASSWORD}/g" /data/redis.conf
+              echo "" >> /data/redis.conf
+              echo "# Password from Secret" >> /data/redis.conf
+              echo "requirepass ${REDIS_PASSWORD}" >> /data/redis.conf
+              echo "masterauth ${REDIS_PASSWORD}" >> /data/redis.conf
               chmod 644 /data/redis.conf
           env:
             - name: REDIS_PASSWORD
@@ -186,7 +204,9 @@ spec:
             - |
               set -e
               cp /mnt/config/sentinel.conf /data/sentinel.conf
-              sed -i "s/REDIS_PASSWORD_PLACEHOLDER/${REDIS_PASSWORD}/g" /data/sentinel.conf
+              echo "" >> /data/sentinel.conf
+              echo "# Password from Secret" >> /data/sentinel.conf
+              echo "sentinel auth-pass mymaster ${REDIS_PASSWORD}" >> /data/sentinel.conf
               chmod 644 /data/sentinel.conf
           env:
             - name: REDIS_PASSWORD
@@ -206,6 +226,45 @@ spec:
             limits:
               memory: "128Mi"
               cpu: "100m"
+
+        # Initialize Redis master-replica replication
+        - name: init-replication
+          image: redis:7.2-alpine
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              # Get hostname to determine if this is a replica
+              HOSTNAME=$(hostname)
+              echo "Initializing Redis replication for: ${HOSTNAME}"
+
+              # Append replication config if this is not redis-0
+              if [ "${HOSTNAME}" != "redis-0" ]; then
+                echo "" >> /data/redis.conf
+                echo "# Replica configuration" >> /data/redis.conf
+                echo "replicaof redis-0.redis-headless.matrix.svc.cluster.local 6379" >> /data/redis.conf
+                echo "masterauth ${REDIS_PASSWORD}" >> /data/redis.conf
+                echo "Configured ${HOSTNAME} as replica of redis-0"
+              else
+                echo "Configured ${HOSTNAME} as master"
+              fi
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: redis-password
+                  key: password
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          resources:
+            requests:
+              memory: "32Mi"
+              cpu: "25m"
+            limits:
+              memory: "64Mi"
+              cpu: "50m"
 
       containers:
         # Redis container

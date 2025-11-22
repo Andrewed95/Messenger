@@ -39,9 +39,25 @@ spec:
     - Egress
   egress:
     - to:
-        - namespaceSelector:
+        # Allow DNS to kube-system namespace (CoreDNS/kube-dns)
+        - namespaceSelector: {}
+          podSelector:
             matchLabels:
-              name: kube-system
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        # Alternative: Allow to any pod in kube-system namespace
+        # Some clusters use different labels for DNS
+        - podSelector: {}
+          namespaceSelector:
+            matchExpressions:
+              - key: kubernetes.io/metadata.name
+                operator: In
+                values: ["kube-system"]
       ports:
         - protocol: UDP
           port: 53
@@ -317,8 +333,10 @@ spec:
     # Allow DNS
     - to:
         - namespaceSelector:
-            matchLabels:
-              name: kube-system
+            matchExpressions:
+              - key: kubernetes.io/metadata.name
+                operator: In
+                values: ["kube-system"]
       ports:
         - protocol: UDP
           port: 53
@@ -369,8 +387,10 @@ spec:
     # Allow DNS
     - to:
         - namespaceSelector:
-            matchLabels:
-              name: kube-system
+            matchExpressions:
+              - key: kubernetes.io/metadata.name
+                operator: In
+                values: ["kube-system"]
       ports:
         - protocol: UDP
           port: 53
@@ -419,8 +439,10 @@ spec:
     # Allow DNS
     - to:
         - namespaceSelector:
-            matchLabels:
-              name: kube-system
+            matchExpressions:
+              - key: kubernetes.io/metadata.name
+                operator: In
+                values: ["kube-system"]
       ports:
         - protocol: UDP
           port: 53
@@ -527,9 +549,17 @@ spec:
     - Ingress
   ingress:
     - from:
+        # Allow from ingress-nginx namespace
         - namespaceSelector:
+            matchExpressions:
+              - key: kubernetes.io/metadata.name
+                operator: In
+                values: ["ingress-nginx"]
+        # Also allow from any pod with the ingress controller label
+        - podSelector:
             matchLabels:
-              name: ingress-nginx  # Adjust based on your ingress namespace
+              app.kubernetes.io/name: ingress-nginx
+          namespaceSelector: {}
       ports:
         - protocol: TCP
           port: 8008  # Synapse main
@@ -561,12 +591,17 @@ spec:
     - Ingress
   ingress:
     - from:
+        # Allow from monitoring namespace
         - namespaceSelector:
-            matchLabels:
-              name: monitoring  # Prometheus namespace
+            matchExpressions:
+              - key: kubernetes.io/metadata.name
+                operator: In
+                values: ["monitoring"]
+        # Allow from Prometheus pods anywhere
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: prometheus
+          namespaceSelector: {}
       ports:
         - protocol: TCP
           port: 9090  # Synapse metrics
@@ -614,3 +649,263 @@ spec:
       ports:
         - protocol: TCP
           port: 8080  # Scan worker HTTP API
+
+---
+###############################################################################
+# 14. HAProxy Load Balancer Egress
+#     HAProxy needs to access Synapse main and all workers
+###############################################################################
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: haproxy-egress
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: networkpolicy
+    app.kubernetes.io/component: load-balancer
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: haproxy
+  policyTypes:
+    - Egress
+  egress:
+    # Allow DNS
+    - to:
+        - namespaceSelector:
+            matchExpressions:
+              - key: kubernetes.io/metadata.name
+                operator: In
+                values: ["kube-system"]
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+    # Allow access to all Synapse pods (main and workers)
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: synapse
+      ports:
+        - protocol: TCP
+          port: 8008  # Synapse HTTP
+        - protocol: TCP
+          port: 8009  # Synapse replication
+        - protocol: TCP
+          port: 9000  # Synapse metrics
+
+---
+###############################################################################
+# 15. Synapse Workers Egress
+#     Workers need access to databases, Redis, MinIO, and external federation
+###############################################################################
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: synapse-workers-egress
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: networkpolicy
+    app.kubernetes.io/component: workers
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: synapse
+      app.kubernetes.io/type: worker
+  policyTypes:
+    - Egress
+  egress:
+    # Allow DNS
+    - to:
+        - namespaceSelector:
+            matchExpressions:
+              - key: kubernetes.io/metadata.name
+                operator: In
+                values: ["kube-system"]
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+    # Allow PostgreSQL access
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: matrix-postgresql
+      ports:
+        - protocol: TCP
+          port: 5432
+
+    # Allow Redis access
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: redis
+      ports:
+        - protocol: TCP
+          port: 6379
+        - protocol: TCP
+          port: 26379  # Sentinel
+
+    # Allow MinIO access
+    - to:
+        - podSelector:
+            matchLabels:
+              v1.min.io/tenant: matrix-minio
+      ports:
+        - protocol: TCP
+          port: 9000
+
+    # Allow access to Synapse main for replication
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: synapse
+              app.kubernetes.io/component: main
+      ports:
+        - protocol: TCP
+          port: 9093  # Replication
+
+    # Allow external federation (if federation sender)
+    - to: []  # Allow all external for federation
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 8448  # Matrix federation port
+
+---
+###############################################################################
+# 16. Content Scanner Access
+#     Content scanner needs to be accessible by Synapse media workers
+###############################################################################
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: content-scanner-access
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: networkpolicy
+    app.kubernetes.io/component: antivirus
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: content-scanner
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow from Synapse media repository workers
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: synapse
+              app.kubernetes.io/component: media-repository
+      ports:
+        - protocol: TCP
+          port: 8080
+
+    # Allow from Synapse main (if it's handling media)
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: synapse
+              app.kubernetes.io/component: main
+      ports:
+        - protocol: TCP
+          port: 8080
+  egress:
+    # Allow DNS
+    - to:
+        - namespaceSelector:
+            matchExpressions:
+              - key: kubernetes.io/metadata.name
+                operator: In
+                values: ["kube-system"]
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+    # Allow ClamAV access
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: clamav
+      ports:
+        - protocol: TCP
+          port: 3310  # ClamAV daemon port
+
+    # Allow Synapse media repository workers (to proxy media)
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: synapse
+              app.kubernetes.io/component: media-repository
+      ports:
+        - protocol: TCP
+          port: 8008
+
+---
+###############################################################################
+# 17. Sync System Access
+#     Sync system needs access to both main and LI PostgreSQL and MinIO
+###############################################################################
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sync-system-access
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: networkpolicy
+    app.kubernetes.io/component: sync
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: sync-system
+  policyTypes:
+    - Egress
+  egress:
+    # Allow DNS
+    - to:
+        - namespaceSelector:
+            matchExpressions:
+              - key: kubernetes.io/metadata.name
+                operator: In
+                values: ["kube-system"]
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+    # Allow main PostgreSQL access
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: matrix-postgresql
+      ports:
+        - protocol: TCP
+          port: 5432
+
+    # Allow LI PostgreSQL access
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: matrix-postgresql-li
+      ports:
+        - protocol: TCP
+          port: 5432
+
+    # Allow MinIO access for rclone sync
+    - to:
+        - podSelector:
+            matchLabels:
+              v1.min.io/tenant: matrix-minio
+      ports:
+        - protocol: TCP
+          port: 9000

@@ -63,6 +63,7 @@ spec:
         app.kubernetes.io/component: admin-interface
         app.kubernetes.io/version: "0.10.3"
         matrix.instance: li
+        ingress-accessible: "true"  # Allow ingress controller access
 
     spec:
       securityContext:

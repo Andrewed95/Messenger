@@ -250,6 +250,7 @@ spec:
         app.kubernetes.io/component: homeserver
         app.kubernetes.io/instance: li
         matrix.instance: li  # CRITICAL label for NetworkPolicy
+        ingress-accessible: "true"  # Allow ingress controller access
       annotations:
         prometheus.io/scrape: "true"
         prometheus.io/port: "9090"
@@ -342,8 +343,8 @@ spec:
             - name: DB_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: synapse-li-secrets
-                  key: DB_PASSWORD
+                  name: matrix-postgresql-li-app
+                  key: password
             - name: REDIS_PASSWORD
               valueFrom:
                 secretKeyRef:

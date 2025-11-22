@@ -205,8 +205,9 @@ spec:
       app.kubernetes.io/name: haproxy
       app.kubernetes.io/component: load-balancer
   endpoints:
+    # HAProxy exposes stats at /stats;csv for Prometheus scraping
     - port: stats
-      path: /metrics
+      path: /stats;csv
       interval: 30s
       scrapeTimeout: 10s
   namespaceSelector:

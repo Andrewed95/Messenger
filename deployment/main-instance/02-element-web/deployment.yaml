@@ -112,6 +112,7 @@ spec:
         app.kubernetes.io/component: webclient
         app.kubernetes.io/version: "v1.11.96"
         matrix.instance: main
+        ingress-accessible: "true"  # Allow ingress controller access
 
     spec:
       # Security context

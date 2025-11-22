@@ -1,0 +1,135 @@
+# Image Configuration for Matrix/Synapse Deployment
+# =============================================
+# This file contains all configurable image URLs for the deployment.
+# Replace these with your actual image URLs from your container registry.
+#
+# IMPORTANT: This solution assumes all images are pre-built and available.
+# No image building is performed as part of this deployment.
+
+# Core Matrix/Synapse Images
+synapse:
+  main:
+    image: matrixdotorg/synapse:v1.119.0
+    imagePullPolicy: IfNotPresent
+
+  workers:
+    # All workers use the same Synapse image
+    image: matrixdotorg/synapse:v1.119.0
+    imagePullPolicy: IfNotPresent
+
+  li:
+    # Lawful Intercept instance uses same Synapse version
+    image: matrixdotorg/synapse:v1.119.0
+    imagePullPolicy: IfNotPresent
+
+# Infrastructure Services
+postgresql:
+  # CloudNativePG operator manages PostgreSQL images
+  image: ghcr.io/cloudnative-pg/postgresql:16.1
+  imagePullPolicy: IfNotPresent
+
+redis:
+  image: redis:7.2-alpine
+  imagePullPolicy: IfNotPresent
+
+minio:
+  # MinIO Operator manages MinIO images
+  image: minio/minio:RELEASE.2024-01-01T16-36-33Z
+  imagePullPolicy: IfNotPresent
+
+haproxy:
+  image: haproxy:2.9-alpine
+  imagePullPolicy: IfNotPresent
+
+# Auxiliary Services
+element_web:
+  # Element Web client
+  image: vectorim/element-web:v1.11.77
+  imagePullPolicy: IfNotPresent
+
+coturn:
+  # TURN/STUN server
+  image: coturn/coturn:4.6.2-alpine
+  imagePullPolicy: IfNotPresent
+
+livekit:
+  # WebRTC SFU for voice/video calls
+  image: livekit/livekit-server:v1.8.1
+  imagePullPolicy: IfNotPresent
+
+sygnal:
+  # Push notification gateway
+  image: matrixdotorg/sygnal:v1.2.0
+  imagePullPolicy: IfNotPresent
+
+# Antivirus Services
+clamav:
+  image: clamav/clamav:stable-alpine
+  imagePullPolicy: IfNotPresent
+
+content_scanner:
+  # Matrix content scanner that integrates with ClamAV
+  image: vectorim/matrix-content-scanner:v2.1.0
+  imagePullPolicy: IfNotPresent
+
+# Custom Services (You must provide these images)
+key_vault:
+  # Django application for E2EE recovery key storage
+  # IMPORTANT: You must build and provide this image
+  # This should be a Django application with the key_vault functionality
+  image: CHANGEME_KEY_VAULT_IMAGE:latest  # Replace with your key-vault image
+  imagePullPolicy: IfNotPresent
+
+sync_system:
+  # Sync system for LI replication (uses rclone)
+  image: rclone/rclone:1.65
+  imagePullPolicy: IfNotPresent
+
+# Monitoring Stack
+prometheus:
+  # Prometheus Operator manages these images
+  image: prom/prometheus:v2.48.1
+  imagePullPolicy: IfNotPresent
+
+grafana:
+  image: grafana/grafana:10.2.3
+  imagePullPolicy: IfNotPresent
+
+alertmanager:
+  image: prom/alertmanager:v0.26.0
+  imagePullPolicy: IfNotPresent
+
+# Ingress Controller
+nginx_ingress:
+  controller:
+    image: registry.k8s.io/ingress-nginx/controller:v1.9.5
+    imagePullPolicy: IfNotPresent
+
+  webhook:
+    image: registry.k8s.io/ingress-nginx/kube-webhook-certgen:v20231011-8b53cabe0
+    imagePullPolicy: IfNotPresent
+
+# Cert Manager
+cert_manager:
+  controller:
+    image: quay.io/jetstack/cert-manager-controller:v1.13.3
+    imagePullPolicy: IfNotPresent
+
+  webhook:
+    image: quay.io/jetstack/cert-manager-webhook:v1.13.3
+    imagePullPolicy: IfNotPresent
+
+  cainjector:
+    image: quay.io/jetstack/cert-manager-cainjector:v1.13.3
+    imagePullPolicy: IfNotPresent
+
+# Image Pull Secrets (if using private registries)
+imagePullSecrets: []
+# Example:
+# imagePullSecrets:
+#   - name: registry-credentials
+
+# Global Registry Override (optional)
+# If set, prepends this to all image names
+# Example: registry.example.com/matrix/
+globalRegistry: ""
