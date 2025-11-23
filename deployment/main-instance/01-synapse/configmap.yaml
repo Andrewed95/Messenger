@@ -61,7 +61,7 @@ data:
         port: 5432
         sslmode: require
         cp_min: 5
-        cp_max: 50
+        cp_max: 10  # Conservative: 45 workers * 10 = 450 connections (under 500 limit)
 
     # ==================== REDIS & WORKERS ====================
 
@@ -84,22 +84,30 @@ data:
       - synapse-federation-sender-0
       - synapse-federation-sender-1
 
-    # Event persister workers configuration
-    # These workers handle writing events to the database
+    # Stream writers configuration
+    # CRITICAL: These workers handle high-frequency writes offloading main process
+    # Changed from main process handling to dedicated stream writers for performance
+    # At 20K CCU: typing ~100s/sec, to_device ~10K/sec, receipts ~500/sec, presence ~666/sec
     stream_writers:
       events:
         - synapse-event-persister-0
         - synapse-event-persister-1
+        - synapse-event-persister-2  # Increased from 2 to 4 replicas
+        - synapse-event-persister-3
       typing:
-        - synapse-main-0  # Typing handled by main process
+        - synapse-typing-writer-0  # Dedicated typing indicator workers
+        - synapse-typing-writer-1
       to_device:
-        - synapse-main-0  # To-device messages handled by main
+        - synapse-todevice-writer-0  # Dedicated E2EE key exchange workers
+        - synapse-todevice-writer-1
       account_data:
-        - synapse-main-0  # Account data handled by main
+        - synapse-main-0  # Account data remains on main (low volume)
       receipts:
-        - synapse-main-0  # Read receipts handled by main
+        - synapse-receipts-writer-0  # Dedicated read receipt workers
+        - synapse-receipts-writer-1
       presence:
-        - synapse-main-0  # Presence handled by main
+        - synapse-presence-writer-0  # Dedicated presence workers
+        - synapse-presence-writer-1
 
     # Media repository workers configuration
     # These workers handle media upload/download
@@ -119,12 +127,51 @@ data:
         host: synapse-federation-sender-1.synapse-federation-sender.matrix.svc.cluster.local
         port: 9093
 
-      # Event persister workers (StatefulSet)
+      # Event persister workers (StatefulSet) - increased from 2 to 4
       synapse-event-persister-0:
         host: synapse-event-persister-0.synapse-event-persister.matrix.svc.cluster.local
         port: 9093
       synapse-event-persister-1:
         host: synapse-event-persister-1.synapse-event-persister.matrix.svc.cluster.local
+        port: 9093
+      synapse-event-persister-2:
+        host: synapse-event-persister-2.synapse-event-persister.matrix.svc.cluster.local
+        port: 9093
+      synapse-event-persister-3:
+        host: synapse-event-persister-3.synapse-event-persister.matrix.svc.cluster.local
+        port: 9093
+
+      # Stream writer workers (NEW - offload high-frequency writes from main process)
+      # Typing indicator writers
+      synapse-typing-writer-0:
+        host: synapse-typing-writer-0.synapse-typing-writer.matrix.svc.cluster.local
+        port: 9093
+      synapse-typing-writer-1:
+        host: synapse-typing-writer-1.synapse-typing-writer.matrix.svc.cluster.local
+        port: 9093
+
+      # To-device message writers (E2EE key exchanges)
+      synapse-todevice-writer-0:
+        host: synapse-todevice-writer-0.synapse-todevice-writer.matrix.svc.cluster.local
+        port: 9093
+      synapse-todevice-writer-1:
+        host: synapse-todevice-writer-1.synapse-todevice-writer.matrix.svc.cluster.local
+        port: 9093
+
+      # Read receipt writers
+      synapse-receipts-writer-0:
+        host: synapse-receipts-writer-0.synapse-receipts-writer.matrix.svc.cluster.local
+        port: 9093
+      synapse-receipts-writer-1:
+        host: synapse-receipts-writer-1.synapse-receipts-writer.matrix.svc.cluster.local
+        port: 9093
+
+      # Presence writers
+      synapse-presence-writer-0:
+        host: synapse-presence-writer-0.synapse-presence-writer.matrix.svc.cluster.local
+        port: 9093
+      synapse-presence-writer-1:
+        host: synapse-presence-writer-1.synapse-presence-writer.matrix.svc.cluster.local
         port: 9093
 
       # Media repository workers (StatefulSet) - required for media_instance_running_background_jobs
@@ -177,10 +224,15 @@ data:
 
     # ==================== FEDERATION ====================
 
-    # Allow federation for production use
-    federation_domain_whitelist: null  # null means allow all domains
+    # Federation disabled by default (per CLAUDE.md Rule 4.3, Rule 12)
+    # To enable federation later:
+    # 1. Change to null (allow all) or list specific domains: ["trusted.example.com"]
+    # 2. Ensure TLS certificates cover federation endpoints
+    # 3. Review NetworkPolicies for federation egress traffic
+    # 4. Update DNS SRV records for .well-known delegation
+    federation_domain_whitelist: []
 
-    # Verify TLS certificates
+    # Verify TLS certificates when federation is enabled
     federation_verify_certificates: true
 
     # Federation rate limiting

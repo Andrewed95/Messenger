@@ -39,14 +39,18 @@ spec:
   postgresql:
     parameters:
       # Connection settings
-      max_connections: "500"
-      superuser_reserved_connections: "3"
+      # Increased from 500 to 1000 to support HPA scaling to 50+ workers
+      # Each worker uses cp_max=10 connections: 50 workers × 10 = 500
+      # Plus main process, monitoring, admin connections
+      max_connections: "1000"
+      superuser_reserved_connections: "5"  # Increased for admin access during scale
 
       # Memory settings (25% of RAM for shared_buffers, 75% for cache)
-      shared_buffers: "4GB"     # 25% of 16GB
-      effective_cache_size: "12GB"  # 75% of 16GB
+      # Connection overhead: 1000 × 400KB = ~400MB additional
+      shared_buffers: "4GB"     # 25% of 16GB (unchanged)
+      effective_cache_size: "12GB"  # 75% of 16GB (unchanged)
       maintenance_work_mem: "1GB"
-      work_mem: "10MB"
+      work_mem: "64MB"  # Increased from 10MB for complex queries (state resolution, room joins)
 
       # WAL settings
       wal_buffers: "16MB"

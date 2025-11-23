@@ -1019,8 +1019,3 @@ If all verification steps pass, you have successfully deployed:
 5. Test LI instance access
 
 **For ongoing operations, see `docs/OPERATIONS-UPDATE-GUIDE.md`**
-
----
-
-**Kubernetes**: 1.28+
-**Synapse**: v1.119.0

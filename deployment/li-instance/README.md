@@ -14,7 +14,7 @@ The LI instance is a **separate, isolated Matrix homeserver** that receives data
 - ✅ Isolated from federation network
 - ✅ Cannot access `key_vault` (NetworkPolicy enforced)
 - ✅ Real-time data replication via PostgreSQL logical replication
-- ✅ Media sync via rclone (every )
+- ✅ Media sync via rclone (every 15 minutes)
 - ✅ Separate web interfaces (Element, Synapse Admin)
 - ✅ IP whitelisting for authorized access only
 
@@ -37,7 +37,7 @@ The LI instance is a **separate, isolated Matrix homeserver** that receives data
 │                   SYNC SYSTEM                           │
 │  ┌──────────────────────┐   ┌───────────────────────┐  │
 │  │ Logical Replication  │   │  rclone Media Sync    │  │
-│  │   (Real-time DB)     │   │  (Every )   │  │
+│  │   (Real-time DB)     │   │  (Every 15 minutes)   │  │
 │  └──────────┬───────────┘   └───────────┬───────────┘  │
 └─────────────┼───────────────────────────┼───────────────┘
               │                           │
@@ -129,7 +129,7 @@ kubectl apply -f 03-synapse-admin-li/deployment.yaml
 
 **Components**:
 - **PostgreSQL Logical Replication**: Real-time database sync
-- **rclone Media Sync**: Periodic media file sync (every hour)
+- **rclone Media Sync**: Periodic media file sync (every 15 minutes)
 - **Setup Job**: One-time configuration of replication
 - **CronJob**: Automated media synchronization
 
@@ -402,11 +402,11 @@ curl -u admin:password https://admin-li.matrix.example.com
 
 ### Media Replication
 
-**rclone sync** (every ):
+**rclone sync** (every 15 minutes):
 1. CronJob triggers rclone
 2. rclone compares `synapse-media` and `synapse-media-li` buckets
 3. New/changed files copied from main to LI
-4. **Lag**: Up to  for new media
+4. **Lag**: Up to 15 minutes for new media
 
 **Optimization**:
 - `--fast-list`: Quick directory listing
@@ -546,6 +546,357 @@ spec:
   schedule: "*/15 * * * *"  # Every  (default)
   # schedule: "*/5 * * * *"   # Every  (low latency)
   # schedule: "0 * * * *"     # Every hour (low priority)
+```
+
+## Storage Capacity Planning
+
+### ⚠️ CRITICAL: Infinite Retention Storage Requirements
+
+The LI instance has **infinite retention** (`redaction_retention_period: null`), meaning data **NEVER** expires. Storage requirements grow continuously and must be carefully planned.
+
+### Storage Components
+
+**1. PostgreSQL Database Storage**
+- Main database: `matrix_li`
+- Contains: All messages, events, users, rooms, media metadata
+- Growth rate: Depends on active users and message frequency
+- **Never shrinks** - only grows
+
+**2. MinIO Media Storage**
+- Bucket: `synapse-media-li`
+- Contains: Images, videos, files, voice messages
+- Synced from main instance via rclone
+- **Retention: Permanent** (no cleanup)
+
+### PostgreSQL Storage Growth Model
+
+#### Formula
+
+```
+Annual DB Growth = (CCU × Active% × Avg Messages/Day × Avg Message Size × 365 days)
+                 + (CCU × Active% × Avg Rooms × Room Metadata)
+                 + (Media Metadata × Avg Metadata Size)
+```
+
+#### Realistic Growth Estimates
+
+**Assumptions:**
+- Active users: 70% of CCU send messages daily
+- Average messages: 50 messages per active user per day
+- Average message size: 512 bytes (text + metadata)
+- Room state events: ~2KB per room per day
+- Media metadata: ~500 bytes per file
+
+| CCU Scale | Active Users | Daily Messages | Daily Data | Monthly Growth | Annual Growth | 3-Year Total |
+|-----------|-------------|----------------|------------|----------------|---------------|--------------|
+| **100** | 70 | 3,500 | 1.75 MB | 52.5 MB | 630 MB | 1.9 GB |
+| **1,000** | 700 | 35,000 | 17.5 MB | 525 MB | 6.3 GB | 19 GB |
+| **5,000** | 3,500 | 175,000 | 87.5 MB | 2.6 GB | 31.5 GB | 95 GB |
+| **10,000** | 7,000 | 350,000 | 175 MB | 5.25 GB | 63 GB | 190 GB |
+| **20,000** | 14,000 | 700,000 | 350 MB | 10.5 GB | 126 GB | 380 GB |
+
+**Additional Factors Increasing Growth:**
+- **Deleted messages** retained forever (add 10-20% for redactions)
+- **Room state events** (joins, leaves, name changes): Add 15-25%
+- **Federation overhead** (if enabled): Add 30-50%
+- **Presence updates** (if tracked): Add 5-10%
+
+#### Recommended PostgreSQL Storage Allocation
+
+| Scale | Year 1 | Year 2 | Year 3 | Initial Provision | Expansion Plan |
+|-------|--------|--------|--------|-------------------|----------------|
+| **100 CCU** | 2 GB | 4 GB | 6 GB | 50 GB SSD | Every 2 years |
+| **1K CCU** | 20 GB | 40 GB | 60 GB | 100 GB SSD | Yearly |
+| **5K CCU** | 100 GB | 200 GB | 300 GB | 500 GB NVMe | Every 6 months |
+| **10K CCU** | 200 GB | 400 GB | 600 GB | 1 TB NVMe | Quarterly |
+| **20K CCU** | 400 GB | 800 GB | 1.2 TB | 2 TB NVMe | Quarterly |
+
+**Update in:** `deployment/infrastructure/01-postgresql/cluster-li.yaml`
+
+```yaml
+spec:
+  instances: 3
+  storage:
+    size: 100Gi  # Adjust based on table above
+    storageClass: local-nvme  # Use fast NVMe for performance
+```
+
+### MinIO Media Storage Growth Model
+
+#### Formula
+
+```
+Annual Media Growth = (CCU × Upload% × Files/Day × Avg File Size × 365 days)
+```
+
+#### Realistic Growth Estimates
+
+**Assumptions:**
+- Upload percentage: 10% of CCU upload files daily
+- Files per uploader: 5 files per day
+- Average file size breakdown:
+  - 70% images: 500 KB average
+  - 20% documents: 2 MB average
+  - 10% videos: 20 MB average
+  - Weighted average: ~3 MB per file
+
+| CCU Scale | Daily Uploaders | Daily Files | Daily Data | Monthly Growth | Annual Growth | 3-Year Total |
+|-----------|----------------|-------------|------------|----------------|---------------|--------------|
+| **100** | 10 | 50 | 150 MB | 4.5 GB | 54 GB | 162 GB |
+| **1,000** | 100 | 500 | 1.5 GB | 45 GB | 540 GB | 1.6 TB |
+| **5,000** | 500 | 2,500 | 7.5 GB | 225 GB | 2.7 TB | 8.1 TB |
+| **10,000** | 1,000 | 5,000 | 15 GB | 450 GB | 5.4 TB | 16.2 TB |
+| **20,000** | 2,000 | 10,000 | 30 GB | 900 GB | 10.8 TB | 32.4 TB |
+
+**Notes:**
+- **Duplicates**: MinIO stores unique files only (deduplication not enabled)
+- **Thumbnails**: Synapse generates thumbnails (add 20% overhead)
+- **rclone overhead**: Metadata storage (add 1-2%)
+
+#### Recommended MinIO Storage Allocation
+
+Remember: MinIO EC:4 has **50% storage efficiency** (usable = raw × 50%)
+
+| Scale | Year 1 Usage | Year 3 Usage | Raw Required | Initial Provision (EC:4) | Pools Needed | Expansion Timeline |
+|-------|-------------|--------------|--------------|-------------------------|--------------|-------------------|
+| **100 CCU** | 54 GB | 162 GB | 324 GB | 1 pool (1 TB usable) | 1 pool | Year 3 |
+| **1K CCU** | 540 GB | 1.6 TB | 3.2 TB | 2 pools (2 TB usable) | 2-3 pools | Yearly |
+| **5K CCU** | 2.7 TB | 8.1 TB | 16.2 TB | 4 pools (4 TB usable) | 4-8 pools | Every 6 months |
+| **10K CCU** | 5.4 TB | 16.2 TB | 32.4 TB | 8 pools (8 TB usable) | 8-16 pools | Quarterly |
+| **20K CCU** | 10.8 TB | 32.4 TB | 64.8 TB | 12 pools (12 TB usable) | 12-32 pools | Quarterly |
+
+**Pool Configuration (from infrastructure/03-minio/tenant.yaml):**
+```
+1 pool = 4 nodes × 2 volumes × 1 TB = 8 TB raw = 4 TB usable (EC:4)
+```
+
+**Update in:** `deployment/infrastructure/03-minio/tenant.yaml`
+
+```yaml
+pools:
+  - servers: 4
+    name: pool-1
+    volumesPerServer: 2
+    volumeClaimTemplate:
+      spec:
+        storageClassName: local-storage
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 1Ti  # Per volume, 8 volumes total
+  # Add pools as needed:
+  - servers: 4
+    name: pool-2  # Add when pool-1 reaches 70% capacity
+    volumesPerServer: 2
+    volumeClaimTemplate:
+      spec:
+        storageClassName: local-storage
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 1Ti
+```
+
+### Storage Monitoring Thresholds
+
+#### PostgreSQL Database
+
+**Monitor using:**
+```bash
+# Check database size
+kubectl exec -it matrix-postgresql-li-1 -n matrix -- \
+  psql -U postgres -d synapse_li -c \
+  "SELECT pg_database.datname,
+          pg_size_pretty(pg_database_size(pg_database.datname)) AS size
+   FROM pg_database
+   WHERE datname = 'synapse_li';"
+
+# Check table sizes (top 10)
+kubectl exec -it matrix-postgresql-li-1 -n matrix -- \
+  psql -U postgres -d synapse_li -c \
+  "SELECT schemaname, tablename,
+          pg_size_pretty(pg_total_relation_size(schemaname||'.'||tablename)) AS size
+   FROM pg_tables
+   WHERE schemaname = 'public'
+   ORDER BY pg_total_relation_size(schemaname||'.'||tablename) DESC
+   LIMIT 10;"
+```
+
+**Alert Thresholds:**
+- **Warning**: Storage > 70% full
+- **Critical**: Storage > 85% full
+- **Emergency**: Storage > 95% full
+
+**Actions:**
+```bash
+# When reaching 70% full:
+# 1. Review growth rate
+# 2. Plan storage expansion within 30 days
+# 3. Order new storage hardware if needed
+
+# When reaching 85% full:
+# 1. URGENT: Expand storage within 7 days
+# 2. Consider temporary cleanup (if compliance allows)
+# 3. Review retention policies (if compliance changes)
+
+# When reaching 95% full:
+# 1. EMERGENCY: Expand storage immediately
+# 2. Contact infrastructure team
+# 3. Prepare for potential read-only mode
+```
+
+#### MinIO Media Storage
+
+**Monitor using:**
+```bash
+# Check bucket size
+kubectl exec -it deployment/matrix-minio-pool-1-0 -n matrix -- \
+  mc du minio/synapse-media-li
+
+# Check pool capacity
+kubectl exec -it deployment/matrix-minio-pool-1-0 -n matrix -- \
+  mc admin info minio
+
+# Check via Prometheus (if monitoring enabled)
+# Metric: minio_bucket_usage_total_bytes{bucket="synapse-media-li"}
+```
+
+**Alert Thresholds:**
+- **Warning**: Usable capacity > 70% full
+- **Critical**: Usable capacity > 85% full
+- **Add Pool**: When any pool > 70% full
+
+**Expansion Procedure:**
+```bash
+# Add new pool to MinIO tenant
+kubectl edit tenant matrix-minio -n matrix
+
+# Add pool configuration:
+# - name: pool-N
+#   servers: 4
+#   volumesPerServer: 2
+#   volumeClaimTemplate: <same as pool-1>
+
+# MinIO automatically redistributes data across pools
+# No downtime required
+```
+
+### Storage Growth Rate Monitoring
+
+**Calculate actual growth rate:**
+
+```bash
+# PostgreSQL - Compare sizes over time
+# Run weekly, store results
+DATE=$(date +%Y%m%d)
+kubectl exec -it matrix-postgresql-li-1 -n matrix -- \
+  psql -U postgres -d synapse_li -t -c \
+  "SELECT pg_database_size('synapse_li');" > db_size_$DATE.txt
+
+# Calculate weekly growth
+LAST_WEEK=$(cat db_size_$(date -d '7 days ago' +%Y%m%d).txt)
+THIS_WEEK=$(cat db_size_$DATE.txt)
+GROWTH=$((THIS_WEEK - LAST_WEEK))
+echo "Weekly growth: $(numfmt --to=iec $GROWTH)"
+
+# MinIO - Check bucket size
+kubectl exec -it deployment/matrix-minio-pool-1-0 -n matrix -- \
+  mc du --json minio/synapse-media-li | \
+  jq -r '.size' > media_size_$DATE.txt
+```
+
+**Automated Monitoring (Prometheus):**
+
+```promql
+# PostgreSQL growth rate (bytes per day)
+rate(pg_database_size_bytes{datname="synapse_li"}[7d]) * 86400
+
+# MinIO bucket growth rate (bytes per day)
+rate(minio_bucket_usage_total_bytes{bucket="synapse-media-li"}[7d]) * 86400
+
+# Projected days until 85% full
+(
+  (pg_stat_database_size_bytes * 0.85) - pg_database_size_bytes
+) / (rate(pg_database_size_bytes[30d]) * 86400)
+```
+
+### Capacity Planning Checklist
+
+Before deployment:
+- [ ] Calculate expected CCU and active user percentage
+- [ ] Estimate daily message volume and file uploads
+- [ ] Provision PostgreSQL storage for 3 years minimum
+- [ ] Provision MinIO storage for 2 years minimum (easier to expand)
+- [ ] Set up automated monitoring and alerts
+- [ ] Document expected growth rates
+- [ ] Plan quarterly capacity reviews
+
+During operations:
+- [ ] Monitor storage usage weekly
+- [ ] Compare actual vs projected growth monthly
+- [ ] Review capacity quarterly
+- [ ] Order new hardware when reaching 70% capacity
+- [ ] Test expansion procedures in staging
+- [ ] Document all capacity changes
+
+### Cost Optimization Strategies
+
+**1. Storage Tiering (Future Enhancement)**
+
+For extremely large deployments, consider:
+- Hot storage (SSD/NVMe): Last 90 days
+- Warm storage (HDD): 90 days - 1 year
+- Cold storage (Object storage): > 1 year
+
+**Not implemented in current deployment** - requires custom Synapse modifications
+
+**2. Compression**
+
+PostgreSQL:
+- Already using TOAST compression for large values
+- No additional tuning needed
+
+MinIO:
+- EC:4 erasure coding provides redundancy, not compression
+- Consider enabling S3 object compression if client-side supported
+
+**3. Deduplication**
+
+- **PostgreSQL**: Event deduplication already handled by Synapse
+- **MinIO**: No built-in deduplication (files stored as-is)
+- Manual deduplication: Not recommended (breaks media references)
+
+### Disaster Recovery Implications
+
+**Infinite retention increases backup requirements:**
+
+**Backup Storage Requirements:**
+- PostgreSQL backups: Same growth rate as database
+- MinIO backups: Same growth rate as media bucket
+- Point-in-time recovery (PITR): WAL archiving storage (see infrastructure/01-postgresql/README.md)
+
+**Backup Retention:**
+```yaml
+# Recommended for LI instance
+Full backups: Monthly (keep all)
+Incremental backups: Daily (keep 90 days)
+WAL archives: Keep all (compliance requirement)
+```
+
+**Storage calculation:**
+```
+Total Backup Storage = Database Size + (Daily Growth × 90) + WAL Archives
+```
+
+Example for 5K CCU after 1 year:
+```
+Database: 100 GB
+Daily growth: 2.6 GB
+90-day incremental: 234 GB
+WAL archives: ~50 GB
+Total: ~384 GB backup storage required
 ```
 
 ## Compliance & Auditing

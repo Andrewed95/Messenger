@@ -1568,6 +1568,181 @@ kubectl logs -n matrix deployment/synapse-main --tail=50
 
 ---
 
+## 9. Scaling StatefulSet Workers (Event-Persisters/Federation-Senders)
+
+**⚠️ CRITICAL:** These workers require special handling - scaling requires full Synapse restart.
+
+### 9.1 Why Restart is Required
+
+Event-persister and federation-sender workers use StatefulSets with predictable pod names referenced in `homeserver.yaml`:
+- `instance_map` lists each worker by name (synapse-event-persister-0, synapse-event-persister-1)
+- `stream_writers.events` delegates writes to specific event-persister instances
+- `federation_sender_instances` lists specific federation-sender instances
+
+When you scale these workers, the instance names change, requiring all Synapse processes to reload configuration.
+
+### 9.2 Scaling Event-Persisters
+
+**Risk Level:** High
+**Downtime:** 2-5 minutes
+**Backup Required:** Yes
+
+**Pre-Scaling:**
+
+```bash
+# WHERE: kubectl-configured workstation
+# WHEN: Maintenance window required
+# WHY: Verify system can handle change
+
+# 1. Check current database connections (must be under limit)
+kubectl exec -n matrix matrix-postgresql-1 -- \
+  psql -U postgres -c "SELECT count(*) FROM pg_stat_activity WHERE datname='matrix';"
+# Should show < 400 (out of 500 max_connections)
+
+# 2. Backup configuration
+kubectl get configmap synapse-config -n matrix -o yaml > \
+  synapse-config-backup-$(date +%Y%m%d-%H%M%S).yaml
+
+# 3. Note current replica count
+kubectl get statefulset synapse-event-persister -n matrix
+# REPLICAS column shows current count (e.g., 2)
+```
+
+**Scaling Procedure:**
+
+```bash
+# WHERE: kubectl-configured workstation
+# WHEN: During planned maintenance (2-5 min downtime)
+# WHY: Add capacity for write load
+# HOW:
+
+# Step 1: Update StatefulSet replicas
+kubectl scale statefulset synapse-event-persister --replicas=3 -n matrix
+
+# Wait for new pod to be Running
+kubectl get pods -n matrix -l app.kubernetes.io/component=event-persister -w
+# Wait until all 3 pods show Running
+
+# Step 2: Update homeserver.yaml instance_map
+kubectl edit configmap synapse-config -n matrix
+
+# Add new worker to instance_map:
+# instance_map:
+#   synapse-event-persister-2:  # Add this block
+#     host: synapse-event-persister-2.synapse-event-persister.matrix.svc.cluster.local
+#     port: 9093
+
+# Add to stream_writers.events:
+# stream_writers:
+#   events:
+#     - synapse-event-persister-0
+#     - synapse-event-persister-1
+#     - synapse-event-persister-2  # Add this line
+
+# Save and exit
+
+# Step 3: Restart ALL Synapse processes (required for instance_map reload)
+kubectl rollout restart statefulset/synapse-main -n matrix
+kubectl rollout restart statefulset/synapse-event-persister -n matrix
+kubectl rollout restart statefulset/synapse-federation-sender -n matrix
+kubectl rollout restart deployment/synapse-synchrotron -n matrix
+kubectl rollout restart deployment/synapse-generic-worker -n matrix
+kubectl rollout restart statefulset/synapse-media-repository -n matrix
+
+# Step 4: Monitor restart progress
+kubectl get pods -n matrix -w
+# All pods should show Running within 2-3 minutes
+
+# Step 5: Verify event-persisters registered
+kubectl logs -n matrix synapse-main-0 --tail=100 | grep event-persister
+# Should show connections from all 3 event-persisters
+
+# Step 6: Test write operations
+# Send test messages via Element Web
+# Should work normally with writes distributed across 3 persisters
+```
+
+**Post-Scaling Validation:**
+
+```bash
+# Check all workers processing events
+for i in {0..2}; do
+  echo "Event-persister-$i:"
+  kubectl logs -n matrix synapse-event-persister-$i --tail=20 | grep "Processed" | wc -l
+done
+# All 3 should show activity
+
+# Monitor database connections (should be higher but under limit)
+kubectl exec -n matrix matrix-postgresql-1 -- \
+  psql -U postgres -c "SELECT count(*) FROM pg_stat_activity WHERE datname='matrix';"
+# Should still be < 500
+```
+
+### 9.3 Scaling Federation-Senders
+
+**Same procedure as event-persisters:**
+
+```bash
+# Scale StatefulSet
+kubectl scale statefulset synapse-federation-sender --replicas=3 -n matrix
+
+# Edit configmap - add to instance_map and federation_sender_instances
+kubectl edit configmap synapse-config -n matrix
+
+# instance_map:
+#   synapse-federation-sender-2:
+#     host: synapse-federation-sender-2.synapse-federation-sender.matrix.svc.cluster.local
+#     port: 9093
+
+# federation_sender_instances:
+#   - synapse-federation-sender-0
+#   - synapse-federation-sender-1
+#   - synapse-federation-sender-2  # Add this
+
+# Restart ALL Synapse processes
+kubectl rollout restart statefulset/synapse-main -n matrix
+kubectl rollout restart statefulset/synapse-event-persister -n matrix
+kubectl rollout restart statefulset/synapse-federation-sender -n matrix
+kubectl rollout restart deployment/synapse-synchrotron -n matrix
+kubectl rollout restart deployment/synapse-generic-worker -n matrix
+kubectl rollout restart statefulset/synapse-media-repository -n matrix
+```
+
+### 9.4 Scaling Down
+
+```bash
+# Reverse procedure - remove from config first, then scale down
+
+# Step 1: Edit config, remove worker from instance_map and stream_writers
+kubectl edit configmap synapse-config -n matrix
+
+# Step 2: Restart all Synapse processes
+kubectl rollout restart statefulset/synapse-main -n matrix
+# ... restart other workers
+
+# Step 3: Wait for restarts to complete
+kubectl get pods -n matrix -w
+
+# Step 4: Scale down StatefulSet
+kubectl scale statefulset synapse-event-persister --replicas=2 -n matrix
+```
+
+### 9.5 Important Notes
+
+**Connection Pool Formula:**
+- Each worker opens cp_max connections (currently 10)
+- With 3 event-persisters: 3 × 10 = 30 additional connections
+- Total workers × cp_max must be < PostgreSQL max_connections (500)
+- Current setting: 45 workers × 10 = 450 connections (safe margin)
+- If scaling beyond 45 total workers, reduce cp_max in homeserver.yaml
+
+**Why No HPA:**
+- Event-persisters and federation-senders cannot use HorizontalPodAutoscaler
+- Manual scaling only due to instance_map requirement
+- Other workers (synchrotron, generic, media) do use HPA and scale automatically
+
+---
+
 ## Summary
 
 ### Quick Reference: Common Operations

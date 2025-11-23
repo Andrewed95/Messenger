@@ -15,8 +15,6 @@
 #   - kubectl configured and connected to cluster
 #   - helm 3.x installed
 #   - All CHANGEME values replaced (see README Configuration section)
-#
-# Last Updated: 2025-11-18
 ##############################################################################
 
 set -euo pipefail

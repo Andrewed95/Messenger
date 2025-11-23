@@ -274,13 +274,16 @@ spec:
               readOnly: true
 
           # Resource limits (adjust based on load)
+          # Increased CPU from 2 cores to 4 cores for high-scale deployment (5K-20K CCU)
+          # Main process handles replication broadcasting to 50+ workers, stream writers, and background tasks
+          # At 20K CCU with 50 workers, replication traffic alone can saturate 2 cores
           resources:
             requests:
-              memory: "2Gi"
-              cpu: "1000m"
+              memory: "4Gi"  # Increased for larger event cache and worker coordination
+              cpu: "2000m"  # 2 cores baseline
             limits:
-              memory: "4Gi"
-              cpu: "2000m"
+              memory: "8Gi"  # Doubled for headroom
+              cpu: "4000m"  # 4 cores to handle replication bottleneck
 
           # Liveness probe - check if Synapse is responding
           livenessProbe:

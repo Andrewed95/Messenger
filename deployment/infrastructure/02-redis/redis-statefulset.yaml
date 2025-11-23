@@ -52,8 +52,13 @@ data:
     repl-diskless-sync-delay 5
 
     # Memory management
-    maxmemory 2gb
-    maxmemory-policy allkeys-lru
+    # Increased from 2gb to 8gb for high-scale deployments (5K-20K CCU)
+    # At 20K CCU: ~500MB LiveKit sessions + ~100MB presence + ~200MB ratelimits + ~100MB worker locks = ~1GB baseline
+    # 8GB provides ample headroom for cache and prevents eviction of critical data
+    maxmemory 8gb
+    # Changed from allkeys-lru to volatile-lru to prevent eviction of worker coordination locks
+    # Only keys with TTL (cache data) will be evicted, persistent keys (locks, sessions) retained
+    maxmemory-policy volatile-lru
 
     # Security
     # Password will be set via command line argument from Secret
@@ -278,11 +283,11 @@ spec:
               containerPort: 6379
           resources:
             requests:
-              memory: "256Mi"
+              memory: "1Gi"  # Increased for 8GB maxmemory config
               cpu: "100m"
             limits:
-              memory: "2Gi"
-              cpu: "1"
+              memory: "10Gi"  # Increased from 2Gi to support 8GB maxmemory + overhead
+              cpu: "2"  # Increased CPU for high-throughput operations
           livenessProbe:
             exec:
               command:

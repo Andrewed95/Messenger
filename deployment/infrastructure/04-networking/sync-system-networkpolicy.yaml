@@ -30,8 +30,10 @@ spec:
     # Allow DNS
     - to:
         - namespaceSelector:
-            matchLabels:
-              name: kube-system
+            matchExpressions:
+              - key: kubernetes.io/metadata.name
+                operator: In
+                values: ["kube-system"]
       ports:
         - protocol: UDP
           port: 53

@@ -1,0 +1,221 @@
+# Typing Writer Worker Deployment
+# Handles typing indicator stream - high frequency, low CPU writes
+# Offloads typing indicator processing from main process
+#
+# Scale: 2 replicas (HA) - typing is lightweight, doesn't need many workers
+
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: synapse-typing-writer
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: synapse
+    app.kubernetes.io/component: typing-writer
+    app.kubernetes.io/instance: main
+    matrix.instance: main
+spec:
+  serviceName: synapse-typing-writer
+  replicas: 2  # HA pair - typing is lightweight
+  podManagementPolicy: Parallel
+
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: synapse
+      app.kubernetes.io/component: typing-writer
+
+  updateStrategy:
+    type: RollingUpdate
+
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: synapse
+        app.kubernetes.io/component: typing-writer
+        app.kubernetes.io/type: worker
+        app.kubernetes.io/instance: main
+        matrix.instance: main
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/_synapse/metrics"
+
+    spec:
+      securityContext:
+        runAsUser: 991
+        runAsGroup: 991
+        fsGroup: 991
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+
+      initContainers:
+        - name: generate-worker-config
+          image: matrixdotorg/synapse:v1.119.0
+          command:
+            - sh
+            - -c
+            - |
+              # Create worker-specific config
+              cat > /config/worker.yaml <<EOF
+              worker_app: synapse.app.generic_worker
+              worker_name: typing_writer_${HOSTNAME}
+
+              # Replication
+              worker_replication_host: synapse-main-0.synapse-main.matrix.svc.cluster.local
+              worker_replication_http_port: 9093
+              worker_replication_http_tls: false
+
+              # Worker listeners
+              worker_listeners:
+                - type: http
+                  port: 9093
+                  resources:
+                    - names: [replication]
+
+                - type: metrics
+                  port: 9090
+                  resources:
+                    - names: [metrics]
+
+              # Worker log config
+              worker_log_config: /config/log.yaml
+              EOF
+
+              cat /config/worker.yaml
+          env:
+            - name: HOSTNAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          volumeMounts:
+            - name: config
+              mountPath: /config
+          resources:
+            requests:
+              memory: "32Mi"
+              cpu: "25m"
+            limits:
+              memory: "64Mi"
+              cpu: "50m"
+
+      containers:
+        - name: synapse
+          image: matrixdotorg/synapse:v1.119.0
+          imagePullPolicy: IfNotPresent
+
+          command:
+            - python
+            - -m
+            - synapse.app.generic_worker
+            - --config-path=/config/homeserver.yaml
+            - --config-path=/config/worker.yaml
+
+          ports:
+            - name: replication
+              containerPort: 9093
+              protocol: TCP
+            - name: metrics
+              containerPort: 9090
+              protocol: TCP
+
+          env:
+            - name: SYNAPSE_WORKER_TYPE
+              value: "typing_writer"
+
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            - name: homeserver-config
+              mountPath: /config/homeserver.yaml
+              subPath: homeserver.yaml
+            - name: log-config
+              mountPath: /config/log.yaml
+              subPath: log.yaml
+            - name: signing-key
+              mountPath: /config/signing.key
+              subPath: signing.key
+
+          resources:
+            requests:
+              memory: "256Mi"  # Lightweight - just typing indicators
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "250m"
+
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 9093
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 9093
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+
+      volumes:
+        - name: config
+          emptyDir: {}
+        - name: homeserver-config
+          configMap:
+            name: synapse-config
+        - name: log-config
+          configMap:
+            name: synapse-log-config
+        - name: signing-key
+          secret:
+            secretName: synapse-signing-key
+            items:
+              - key: signing.key
+                path: signing.key
+
+---
+# Headless Service for StatefulSet DNS
+apiVersion: v1
+kind: Service
+metadata:
+  name: synapse-typing-writer
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: synapse
+    app.kubernetes.io/component: typing-writer
+spec:
+  type: ClusterIP
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: synapse
+    app.kubernetes.io/component: typing-writer
+  ports:
+    - name: replication
+      port: 9093
+      targetPort: 9093
+      protocol: TCP
+    - name: metrics
+      port: 9090
+      targetPort: 9090
+      protocol: TCP
+
+---
+# PodDisruptionBudget
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: synapse-typing-writer-pdb
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: synapse
+    app.kubernetes.io/component: typing-writer
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: synapse
+      app.kubernetes.io/component: typing-writer

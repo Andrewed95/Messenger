@@ -93,6 +93,11 @@ spec:
                     - names: [client]
                   x_forwarded: true
 
+                - type: http
+                  port: 9093
+                  resources:
+                    - names: [replication]
+
                 - type: metrics
                   port: 9090
                   resources:
@@ -191,6 +196,9 @@ spec:
           ports:
             - name: http
               containerPort: 8008
+              protocol: TCP
+            - name: replication
+              containerPort: 9093
               protocol: TCP
             - name: metrics
               containerPort: 9090
@@ -292,6 +300,10 @@ spec:
     - name: http
       port: 8008
       targetPort: 8008
+      protocol: TCP
+    - name: replication
+      port: 9093
+      targetPort: 9093
       protocol: TCP
     - name: metrics
       port: 9090

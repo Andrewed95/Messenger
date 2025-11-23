@@ -53,12 +53,17 @@ spec:
 
       affinity:
         podAntiAffinity:
-          # Strong anti-affinity for synchrotron - spread across nodes
-          requiredDuringSchedulingIgnoredDuringExecution:
-            - labelSelector:
-                matchLabels:
-                  app.kubernetes.io/component: synchrotron
-              topologyKey: kubernetes.io/hostname
+          # Preferred anti-affinity for synchrotron - spread across nodes when possible
+          # Changed from required to preferred to allow HPA scaling beyond node count
+          # CRITICAL: At 20K CCU, need 12-16 synchrotron pods but may have only 5-8 nodes
+          # Required affinity would prevent scaling beyond node count, causing sync delays
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100  # High weight to strongly prefer different nodes
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/component: synchrotron
+                topologyKey: kubernetes.io/hostname
 
       initContainers:
         - name: generate-worker-config
@@ -84,6 +89,11 @@ spec:
                   resources:
                     - names: [client]
                   x_forwarded: true
+
+                - type: http
+                  port: 9093
+                  resources:
+                    - names: [replication]
 
                 - type: metrics
                   port: 9090
@@ -181,6 +191,9 @@ spec:
           ports:
             - name: http
               containerPort: 8008
+              protocol: TCP
+            - name: replication
+              containerPort: 9093
               protocol: TCP
             - name: metrics
               containerPort: 9090
@@ -282,6 +295,10 @@ spec:
     - name: http
       port: 8008
       targetPort: 8008
+      protocol: TCP
+    - name: replication
+      port: 9093
+      targetPort: 9093
       protocol: TCP
     - name: metrics
       port: 9090

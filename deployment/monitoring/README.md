@@ -507,7 +507,3 @@ For issues or questions:
 4. Search GitHub issues for kube-prometheus-stack, Loki, CloudNativePG
 
 ---
-
-**Monitoring Stack Version**: 1.0
-**Last Updated**: 2025-11-18
-**Compatibility**: Kubernetes 1.28+, Prometheus Operator 0.70+, Grafana 9.0+, Loki 2.10+

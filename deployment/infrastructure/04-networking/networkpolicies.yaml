@@ -210,6 +210,25 @@ spec:
         - protocol: TCP
           port: 6379
 
+    # Allow from LI instance (shared cache for read operations)
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: synapse
+              matrix.instance: li
+      ports:
+        - protocol: TCP
+          port: 6379
+
+    # Allow from sync-system
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: sync-system
+      ports:
+        - protocol: TCP
+          port: 6379
+
     # Allow internal Redis cluster communication
     - from:
         - podSelector:
@@ -414,6 +433,15 @@ spec:
       ports:
         - protocol: TCP
           port: 9000
+
+    # Allow Redis access (shared cache, not user data)
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: redis
+      ports:
+        - protocol: TCP
+          port: 6379
 
 ---
 ###############################################################################

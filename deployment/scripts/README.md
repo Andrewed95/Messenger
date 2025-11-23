@@ -214,6 +214,3 @@ kubectl exec -n matrix synapse-main-0 -- \
 - **Operations Guide:** `../docs/OPERATIONS-UPDATE-GUIDE.md`
 
 ---
-
-
-**Script Version:** 1.0

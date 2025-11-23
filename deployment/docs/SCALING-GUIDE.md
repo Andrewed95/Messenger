@@ -1285,4 +1285,315 @@ Before deploying at any scale:
 
 ---
 
+## 12. PostgreSQL Connection Pool Sizing
+
+### 12.1 Understanding Connection Pools
+
+**What is a Connection Pool?**
+
+Each Synapse process (main + all workers) maintains a pool of persistent database connections. Connection pools prevent the overhead of constantly opening/closing connections and provide better performance.
+
+**Key Parameters:**
+- `cp_min`: Minimum connections kept open (typically 5)
+- `cp_max`: Maximum connections per process (varies by scale)
+- `max_connections`: PostgreSQL server's hard limit (configured in PostgreSQL)
+
+### 12.2 The Connection Pool Formula
+
+**Critical Formula:**
+```
+Total Connections = main_cp_max + (worker_cp_max × number_of_workers)
+
+Safety Rule: Total Connections < (PostgreSQL max_connections × 0.85)
+```
+
+**Why 0.85 (85%)?**
+- Reserve 15% for:
+  - PostgreSQL maintenance operations (autovacuum, analyze)
+  - Monitoring connections (Prometheus, pgBouncer)
+  - Administrative sessions (kubectl exec, psql)
+  - Emergency debugging
+
+**Exceeding this limit causes:**
+- `FATAL: sorry, too many clients already` errors
+- Connection pool exhaustion messages in Synapse logs
+- Service degradation or complete outage
+
+### 12.3 Current Deployment Configuration
+
+**Our Production Setup (deployment/main-instance/01-synapse/configmap.yaml):**
+
+```yaml
+database:
+  args:
+    cp_min: 5
+    cp_max: 10  # Main process and all workers
+```
+
+**Maximum Worker Capacity:**
+- Main process: 1 × 10 connections = 10
+- Workers (maximum configuration):
+  - Synchrotron: 8 workers × 10 = 80
+  - Generic workers: 10 workers × 10 = 100
+  - Event persisters: 10 workers × 10 = 100
+  - Federation senders: 10 workers × 10 = 100
+  - Media repository: 7 workers × 10 = 70
+- **Total maximum: 45 workers × 10 + 10 = 460 connections**
+
+**PostgreSQL Configuration:**
+- `max_connections: 500` (infrastructure/01-postgresql/)
+- Safety threshold: 500 × 0.85 = 425
+- **Current design: 460 connections > 425 threshold ⚠️**
+
+**Why This Still Works:**
+- HorizontalPodAutoscaler (HPA) unlikely to scale all workers to maximum simultaneously
+- Typical production load: 60-70% of maximum workers = ~300-350 connections ✓
+- Provides scaling headroom while maintaining safety
+
+### 12.4 Adjusting Connection Pools When Scaling
+
+#### Scenario 1: Adding More Workers
+
+**Problem:** You need to scale from 20 to 30 workers.
+
+**Current Calculation:**
+```
+Before: 1 + 20 workers = 21 processes × 10 cp_max = 210 connections
+After:  1 + 30 workers = 31 processes × 10 cp_max = 310 connections
+Safety threshold (500 × 0.85 = 425): 310 < 425 ✓ OK
+```
+
+**Action:** No cp_max change needed.
+
+#### Scenario 2: Approaching Connection Limit
+
+**Problem:** You have 40 workers and want to add 10 more.
+
+**Current Calculation:**
+```
+Before: 41 processes × 10 = 410 connections (approaching 425 limit)
+After:  51 processes × 10 = 510 connections (EXCEEDS 425 limit) ✗
+```
+
+**Solutions (choose one):**
+
+**Option A: Reduce cp_max (Recommended)**
+```yaml
+# Update configmap.yaml
+database:
+  args:
+    cp_min: 5
+    cp_max: 8  # Reduced from 10
+```
+```
+Calculation: 51 processes × 8 = 408 connections < 425 ✓
+```
+
+**Option B: Increase PostgreSQL max_connections**
+```sql
+-- Update PostgreSQL configuration
+ALTER SYSTEM SET max_connections = 700;
+-- Restart PostgreSQL (CloudNativePG will handle this)
+```
+```
+New threshold: 700 × 0.85 = 595
+Calculation: 51 processes × 10 = 510 < 595 ✓
+```
+
+**Trade-offs:**
+- **Reducing cp_max:** Simpler, no PostgreSQL restart, but slightly reduced per-worker performance
+- **Increasing max_connections:** Better per-worker performance, but increases PostgreSQL memory usage (~400KB per connection)
+
+#### Scenario 3: High-Scale Deployment (20K CCU)
+
+**Problem:** 39 workers at 20K CCU scale (see Section 7).
+
+**Current Calculation:**
+```
+Total: 39 processes × 15 cp_max = 585 connections
+PostgreSQL max_connections: 600
+Safety threshold: 600 × 0.85 = 510
+585 > 510 ✗ UNSAFE
+```
+
+**Solution (from Section 7.2):**
+```yaml
+database:
+  args:
+    cp_min: 5
+    cp_max: 12  # Reduced to fit within safety limit
+
+Main process uses: 25 (higher for better performance)
+Workers use: 12
+Total: 25 + (12 × 38) = 481 connections < 510 ✓
+```
+
+### 12.5 Symptoms of Connection Pool Problems
+
+#### Symptom 1: "Connection Pool Exhausted"
+
+**Log Message:**
+```
+synapse.storage.engines - Connection pool exhausted, waiting for available connection
+```
+
+**Cause:** Worker needs more connections than cp_max allows.
+
+**Fix:**
+```yaml
+# Increase cp_max for that worker type
+database:
+  args:
+    cp_max: 15  # Increase from 10
+```
+
+**Verify total connections stay under limit:**
+```
+New total = main_cp_max + (worker_count × new_cp_max)
+Check: New total < (max_connections × 0.85)
+```
+
+#### Symptom 2: "Too Many Clients Already"
+
+**Log Message:**
+```
+FATAL: sorry, too many clients already
+```
+
+**Cause:** Total connections exceeded PostgreSQL max_connections.
+
+**Immediate Fix (Emergency):**
+```bash
+# Reduce worker replicas temporarily
+kubectl scale deployment synapse-synchrotron --replicas=4 -n matrix
+kubectl scale deployment synapse-generic-worker --replicas=6 -n matrix
+```
+
+**Permanent Fix:**
+1. Calculate current total connections:
+   ```bash
+   # Check actual connection count in PostgreSQL
+   kubectl exec -it matrix-postgresql-1 -n matrix -- psql -U postgres -c \
+     "SELECT count(*) FROM pg_stat_activity;"
+   ```
+
+2. Reduce cp_max or increase max_connections (see Scenario 2)
+
+#### Symptom 3: Slow Database Performance
+
+**Symptom:** Queries taking longer than usual, high database CPU.
+
+**Cause:** Too many connections can overwhelm PostgreSQL.
+
+**Check Current Connections:**
+```sql
+SELECT count(*), state FROM pg_stat_activity GROUP BY state;
+```
+
+**If you see >500 connections with max_connections=500:**
+```yaml
+# Reduce cp_max to allow PostgreSQL breathing room
+database:
+  args:
+    cp_max: 8  # Reduced from 10
+```
+
+### 12.6 Validation and Testing
+
+**Before Deploying Connection Pool Changes:**
+
+1. **Calculate total connections:**
+   ```
+   Total = main_cp_max + Σ(worker_type_count × worker_cp_max)
+   ```
+
+2. **Verify safety margin:**
+   ```
+   Total < (PostgreSQL max_connections × 0.85)
+   ```
+
+3. **Check PostgreSQL memory:**
+   ```
+   Connection overhead = max_connections × 400KB
+   Example: 500 × 400KB = ~200MB additional RAM needed
+   ```
+
+**After Deployment:**
+
+1. **Monitor actual connections:**
+   ```bash
+   # Real-time connection monitoring
+   kubectl exec -it matrix-postgresql-1 -n matrix -- \
+     psql -U postgres -c "SELECT count(*) as total_connections FROM pg_stat_activity;"
+   ```
+
+2. **Check for connection errors:**
+   ```bash
+   # Search Synapse logs for connection issues
+   kubectl logs -l app=synapse-main -n matrix --tail=1000 | \
+     grep -i "connection\|pool\|database"
+   ```
+
+3. **Validate connection pool health:**
+   ```bash
+   # Check Synapse metrics (if Prometheus enabled)
+   # Look for: synapse_storage_db_connection_pool_size
+   # Should be <= cp_max per worker
+   ```
+
+### 12.7 Quick Reference: Connection Pool Sizing
+
+| Workers | cp_max=8 | cp_max=10 | cp_max=12 | cp_max=15 | Recommended max_connections |
+|---------|----------|-----------|-----------|-----------|----------------------------|
+| **10** | 88 | 110 | 132 | 165 | 200 |
+| **20** | 168 | 210 | 252 | 315 | 300 |
+| **30** | 248 | 310 | 372 | 465 | 400 |
+| **40** | 328 | 410 | 492 | 615 | 500 |
+| **50** | 408 | 510 | 612 | 765 | 600 |
+
+**Formula used:** `Total = 8 + (workers × cp_max)` (assumes main process uses cp_max + round(cp_max/2))
+
+**How to use this table:**
+1. Count your total workers (across all types)
+2. Find the row matching your worker count
+3. Choose a cp_max column
+4. Ensure the value is < (your max_connections × 0.85)
+5. If not, either reduce cp_max or increase max_connections
+
+### 12.8 Best Practices
+
+**DO:**
+- ✅ Always maintain 15% connection headroom
+- ✅ Monitor connection usage in production
+- ✅ Test connection pool changes in staging first
+- ✅ Document your specific connection calculations
+- ✅ Review connection pools when scaling workers
+- ✅ Use consistent cp_max across all workers (simplifies calculation)
+
+**DON'T:**
+- ❌ Set cp_max too high "just to be safe" (wastes PostgreSQL resources)
+- ❌ Exceed 85% of max_connections with total pools
+- ❌ Forget to account for main process connections
+- ❌ Change max_connections without considering memory impact
+- ❌ Deploy worker scaling without verifying connection limits
+
+**Deployment Workflow:**
+```
+1. Calculate new total connections
+   ↓
+2. Verify < (max_connections × 0.85)
+   ↓
+3. If exceeds: Reduce cp_max OR increase max_connections
+   ↓
+4. Update configmap.yaml with new cp_max
+   ↓
+5. Rolling restart Synapse (kubectl rollout restart)
+   ↓
+6. Monitor connection count and error logs
+   ↓
+7. Adjust if needed based on actual usage
+```
+
+---
+
 

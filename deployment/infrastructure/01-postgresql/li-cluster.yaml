@@ -38,14 +38,16 @@ spec:
   postgresql:
     parameters:
       # Connection settings
-      max_connections: "200"  # Lower than main (read-only workload)
-      superuser_reserved_connections: "3"
+      # Increased from 200 to 500 to support read-heavy workload and monitoring
+      # LI Synapse has fewer workers but forensic queries can be connection-intensive
+      max_connections: "500"
+      superuser_reserved_connections: "5"
 
       # Memory settings
       shared_buffers: "2GB"
       effective_cache_size: "6GB"
       maintenance_work_mem: "512MB"
-      work_mem: "8MB"
+      work_mem: "64MB"  # Increased from 8MB for complex forensic queries
 
       # WAL settings
       wal_buffers: "16MB"

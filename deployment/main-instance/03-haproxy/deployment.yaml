@@ -128,7 +128,11 @@ data:
     resolvers k8s
         nameserver dns 10.96.0.10:53
         accepted_payload_size 8192
-        hold valid 10s
+        # Reduced from 10s to 1s for faster backend discovery during HPA scaling
+        # CRITICAL: Prevents 503 errors when workers scale up/down or pods restart
+        hold valid 1s        # DNS cache time for valid responses
+        hold obsolete 10s    # Keep old IPs briefly for connection draining
+        hold other 30s       # Cache other responses (errors, etc.)
 
     # HAProxy Statistics
     listen stats
