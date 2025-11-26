@@ -25,7 +25,7 @@ You're building a **production-grade Matrix homeserver** with these capabilities
 - **Secure messaging**: End-to-end encrypted chat
 - **Federation**: Connect with other Matrix servers
 - **Voice/Video calls**: Built-in calling with LiveKit
-- **Push notifications**: Mobile app notifications via Sygnal
+- **Real-time sync**: Long-polling via /sync endpoint (push notifications require external servers)
 - **Media storage**: Images, videos, files via MinIO S3
 - **Web interface**: Element Web client
 
@@ -81,7 +81,7 @@ Here's your path from zero to a running production Matrix homeserver:
    ├─ HAProxy (load balancer)
    ├─ Element Web (chat interface)
    ├─ coturn (NAT traversal for calls)
-   ├─ Sygnal (push notifications)
+   # NOTE: Sygnal (push) not included - requires external Apple/Google servers
    ├─ key_vault (E2EE recovery)
    └─ LiveKit (optional video/voice)
         ↓
@@ -275,9 +275,8 @@ Purpose: Handle all Matrix protocol operations
 │  Files: main-instance/06-coturn/                                   │
 │  Purpose: Enable voice/video calls through firewalls               │
 ├────────────────────────────────────────────────────────────────────┤
-│  Sygnal                       │  Push notification gateway         │
-│  Files: main-instance/07-sygnal/                                   │
-│  Purpose: Send mobile push notifications (APNs/FCM)                │
+│  NOTE: Sygnal (push notifications) NOT INCLUDED                    │
+│  Reason: Requires external Apple/Google servers (air-gapped deploy)│
 ├────────────────────────────────────────────────────────────────────┤
 │  key_vault                    │  E2EE backup key storage           │
 │  Files: main-instance/08-key-vault/                                │
@@ -615,10 +614,7 @@ deployment/
 │   │   Purpose: NAT traversal for voice/video calls
 │   │   Configuration: Shared secret, domains, port ranges
 │   │
-│   ├── 07-sygnal/
-│   │   └── deployment.yaml         → Sygnal push gateway
-│   │   Purpose: Push notifications to mobile apps
-│   │   Configuration: APNs/FCM credentials
+│   # NOTE: 07-sygnal/ NOT INCLUDED - requires external Apple/Google servers
 │   │
 │   └── 08-key-vault/
 │       └── deployment.yaml         → E2EE key backup service
@@ -734,7 +730,7 @@ You need to generate and configure secrets across multiple components:
 | Redis | Redis password | Cache access control |
 | MinIO | Root credentials, application access keys | Object storage authentication |
 | coturn | Shared secret for TURN authentication | VoIP relay access control |
-| Sygnal | APNs and FCM credentials | Push notification authentication |
+| NOTE: Sygnal NOT included - requires external Apple/Google servers |
 | key_vault | API keys, Django secret, encryption key | E2EE backup security |
 | LI Instance | Replication credentials, sync credentials | Compliance system access |
 
@@ -907,7 +903,7 @@ OPTIONAL: If LiveKit enabled
 | **HAProxy** | Route requests to correct workers | Can't use workers, main process does everything |
 | **Element Web** | User interface | Can use other clients, but no web UI |
 | **coturn** | NAT traversal for calls | Calls won't work through firewalls |
-| **Sygnal** | Mobile push notifications | Mobile apps won't get notifications |
+| NOTE: Sygnal NOT included - requires external Apple/Google servers |
 | **key_vault** | E2EE key backup | Users lose keys if they lose device |
 
 ### LI Instance
@@ -1033,10 +1029,11 @@ OPTIONAL: If LiveKit enabled
 
     ┌────────────────────────────────────────────────┐
     │          SUPPORTING SERVICES                   │
-    │  ┌──────────┐  ┌──────────┐  ┌──────────────┐ │
-    │  │ coturn   │  │ Sygnal   │  │  key_vault   │ │
-    │  │ (TURN)   │  │  (Push)  │  │  (E2EE Keys) │ │
-    │  └──────────┘  └──────────┘  └──────────────┘ │
+    │  ┌──────────┐  ┌──────────────┐               │
+    │  │ coturn   │  │  key_vault   │               │
+    │  │ (TURN)   │  │  (E2EE Keys) │               │
+    │  └──────────┘  └──────────────┘               │
+    │  NOTE: Sygnal (push) not included             │
     └────────────────────────────────────────────────┘
 
 ┌────────────────────────────────────────────────────────────────┐

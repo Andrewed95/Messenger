@@ -18,9 +18,11 @@ metadata:
 spec:
   serviceName: synapse-event-persister
   # Increased from 2 to 4 for better write distribution at scale
-  # With HPA, can scale up to 12 replicas based on CPU load
-  # NOTE: Scaling StatefulSet workers requires updating instance_map and restarting all Synapse processes
-  replicas: 4  # Increased minimum for high-scale deployment
+  # IMPORTANT: HPA CANNOT be used with event-persisters
+  # Each instance is listed by name in stream_writers.events and instance_map
+  # Scaling requires: 1) Update ConfigMap, 2) Restart ALL Synapse processes, 3) Then scale replicas
+  # See docs/SCALING-GUIDE.md section 2.5 for full explanation
+  replicas: 4  # Pre-configured for high-scale deployment (manually scale as needed)
   podManagementPolicy: Parallel
 
   selector:
@@ -307,43 +309,7 @@ spec:
       app.kubernetes.io/name: synapse
       app.kubernetes.io/component: event-persister
 
----
-# HorizontalPodAutoscaler - Auto-scale event persisters based on CPU
-# NOTE: Scaling event-persisters requires updating instance_map in Synapse config
-# and restarting ALL Synapse processes. This HPA provides automation but
-# requires coordinated deployment. See docs/OPERATIONS-UPDATE-GUIDE.md Section 9.
-apiVersion: autoscaling/v2
-kind: HorizontalPodAutoscaler
-metadata:
-  name: synapse-event-persister-hpa
-  namespace: matrix
-  labels:
-    app.kubernetes.io/name: synapse
-    app.kubernetes.io/component: event-persister
-spec:
-  scaleTargetRef:
-    apiVersion: apps/v1
-    kind: StatefulSet
-    name: synapse-event-persister
-  minReplicas: 4  # Matches StatefulSet replicas
-  maxReplicas: 12  # Maximum for high-scale deployment (20K CCU)
-  metrics:
-    - type: Resource
-      resource:
-        name: cpu
-        target:
-          type: Utilization
-          averageUtilization: 70  # Scale up at 70% CPU to prevent saturation
-  behavior:
-    scaleUp:
-      stabilizationWindowSeconds: 120  # Wait 2 minutes before scaling up
-      policies:
-        - type: Pods
-          value: 2  # Add 2 pods at a time
-          periodSeconds: 60
-    scaleDown:
-      stabilizationWindowSeconds: 300  # Wait 5 minutes before scaling down
-      policies:
-        - type: Pods
-          value: 1  # Remove 1 pod at a time slowly
-          periodSeconds: 120  # Every 2 minutes
+# NOTE: HPA is NOT used for event-persisters because:
+# - Each event-persister is referenced by name in stream_writers.events and instance_map
+# - Scaling requires: 1) Update ConfigMap, 2) Restart ALL Synapse processes, 3) Then scale
+# - See docs/WORKER-SCALING-GUIDE.md for manual scaling procedures

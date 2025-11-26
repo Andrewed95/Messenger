@@ -9,8 +9,8 @@
 # - MinIO
 # - HAProxy
 # - key_vault
-# - Sygnal
 # - Sync system
+# NOTE: Sygnal (push) not included - requires external Apple/Google servers
 
 ---
 # ServiceMonitor for Synapse Workers

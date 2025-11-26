@@ -57,10 +57,10 @@ livekit:
   image: livekit/livekit-server:v1.8.1
   imagePullPolicy: IfNotPresent
 
-sygnal:
-  # Push notification gateway
-  image: matrixdotorg/sygnal:v1.2.0
-  imagePullPolicy: IfNotPresent
+# NOTE: Sygnal (push notification gateway) intentionally NOT included
+# Per CLAUDE.md Rule 4.3: No external services - deployment operates without internet
+# Push notifications require connection to Apple/Google servers which violates air-gapped requirement
+# See deployment/docs/PUSH-NOTIFICATIONS-GUIDE.md for alternatives
 
 # Antivirus Services
 clamav:
@@ -74,10 +74,21 @@ content_scanner:
 
 # Custom Services (You must provide these images)
 key_vault:
-  # Django application for E2EE recovery key storage
-  # IMPORTANT: You must build and provide this image
-  # This should be a Django application with the key_vault functionality
-  image: CHANGEME_KEY_VAULT_IMAGE:latest  # Replace with your key-vault image
+  # Django service for LI encrypted recovery key storage
+  #
+  # IMPORTANT: This image must be built from /home/ali/Messenger/key_vault/
+  # key_vault is a custom Django application, not a public image.
+  #
+  # Build procedure:
+  #   1. cd /home/ali/Messenger/key_vault/
+  #   2. docker build -t registry.yourorg.com/matrix/key-vault:v1.0.0 .
+  #   3. docker push registry.yourorg.com/matrix/key-vault:v1.0.0
+  #   4. Update image reference below with your registry URL
+  #
+  # Replace "registry.example.com" with your organization's private registry
+  # Replace "yourorg" with your organization name
+  #
+  image: registry.example.com/matrix/key-vault:v1.0.0
   imagePullPolicy: IfNotPresent
 
 sync_system:

@@ -17,15 +17,16 @@ This document provides a quick reference of all changes made across repositories
 
 ---
 
-## Files Created (24)
+## Files Created (25)
 
 ### key_vault (2)
 - `secret/models.py` - User and EncryptedKey models
 - `secret/views.py` - StoreKeyView API endpoint
 
-### synapse (3)
+### synapse (4)
 - `synapse/rest/client/li_proxy.py` - LI proxy servlet
 - `synapse/config/li.py` - LI configuration
+- `synapse/handlers/li_endpoint_protection.py` - Endpoint protection (room forget & account deactivation)
 - `docs/sample_homeserver_li.yaml` - Configuration guide
 
 ### element-web (2)
@@ -63,17 +64,20 @@ This document provides a quick reference of all changes made across repositories
 
 ---
 
-## Files Modified (19)
+## Files Modified (21)
 
 ### key_vault (3)
 - `secret/admin.py` - Added Django admin interface
 - `secret/urls.py` - URL routing
 - `requirements.txt` - Added djangorestframework
 
-### synapse (7)
+### synapse (9)
 - `synapse/config/homeserver.py` - Added LIConfig
 - `synapse/config/registration.py` - Added max_sessions_per_user
+- `synapse/config/li.py` - Added endpoint_protection_enabled config
 - `synapse/rest/__init__.py` - Registered li_proxy
+- `synapse/rest/client/room.py` - Added room forget protection check
+- `synapse/rest/client/account.py` - Added account deactivation protection check
 - `synapse/rest/admin/__init__.py` - Registered LI servlets
 - `synapse/rest/admin/rooms.py` - Added LIRedactedEventsServlet
 - `synapse/rest/admin/statistics.py` - Added 3 LI statistics endpoints
@@ -132,6 +136,7 @@ retention:
 li:
   enabled: true
   key_vault_url: "http://key-vault.matrix-li.svc.cluster.local:8000"
+  endpoint_protection_enabled: true  # Ban room forget & account deactivation for non-admins
 ```
 
 ### RSA Public Key
@@ -144,8 +149,8 @@ Update in both clients:
 
 ## Lines of Code Added
 
-- **Total**: ~2,500 lines
-- **Python**: ~1,200 lines
+- **Total**: ~2,670 lines (added ~170 lines for endpoint protection)
+- **Python**: ~1,370 lines (added ~170 lines)
 - **TypeScript/TSX**: ~900 lines
 - **Kotlin**: ~250 lines
 - **CSS**: ~100 lines
@@ -158,12 +163,13 @@ Update in both clients:
 1. **Key Capture**: Captures recovery keys from web and Android clients
 2. **Encrypted Storage**: RSA-2048 encrypted storage with deduplication
 3. **Session Limiting**: Limits concurrent sessions per user (configurable)
-4. **Soft Delete**: Preserves deleted messages indefinitely
-5. **Deleted Messages Display**: Shows deleted messages with original content in hidden instance
-6. **Statistics Dashboard**: Real-time and historical activity statistics
-7. **Malicious Files Tab**: Lists all quarantined media files
-8. **Decryption Tool**: Browser-based RSA decryption for authorized personnel
-9. **Sync System**: Monitors PostgreSQL replication and syncs media files
+4. **Endpoint Protection**: Prevents users from forgetting rooms or deactivating accounts (admin-only)
+5. **Soft Delete**: Preserves deleted messages indefinitely
+6. **Deleted Messages Display**: Shows deleted messages with original content in hidden instance
+7. **Statistics Dashboard**: Real-time and historical activity statistics
+8. **Malicious Files Tab**: Lists all quarantined media files
+9. **Decryption Tool**: Browser-based RSA decryption for authorized personnel
+10. **Sync System**: Monitors PostgreSQL replication and syncs media files
 
 ---
 
@@ -172,6 +178,8 @@ Update in both clients:
 - [ ] Key capture from element-web works
 - [ ] Key capture from element-x-android works
 - [ ] Session limiting enforces 5 concurrent sessions
+- [ ] Endpoint protection blocks room forget for non-admins
+- [ ] Endpoint protection blocks account deactivation for non-admins
 - [ ] Deleted messages show in element-web-li with red background
 - [ ] Statistics dashboard displays today's metrics
 - [ ] Top 10 rooms table shows correctly
@@ -190,6 +198,7 @@ Update in both clients:
 4. **Audit Logging**: All LI operations logged with "LI:" prefix
 5. **Client-Side Decryption**: Private keys never stored on server
 6. **Access Control**: Hidden instance tools only accessible from isolated network
+7. **Endpoint Protection**: Prevents users from removing rooms or deactivating accounts (admin-only)
 
 ---
 

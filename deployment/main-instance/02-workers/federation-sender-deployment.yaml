@@ -303,25 +303,3 @@ spec:
     matchLabels:
       app.kubernetes.io/name: synapse
       app.kubernetes.io/component: federation-sender
----
-# Headless Service for federation-sender StatefulSet
-apiVersion: v1
-kind: Service
-metadata:
-  name: synapse-federation-sender
-  namespace: matrix
-  labels:
-    app.kubernetes.io/name: synapse
-    app.kubernetes.io/component: federation-sender
-spec:
-  clusterIP: None
-  selector:
-    app.kubernetes.io/name: synapse
-    app.kubernetes.io/component: federation-sender
-  ports:
-    - name: replication
-      port: 9093
-      targetPort: 9093
-    - name: metrics
-      port: 9090
-      targetPort: 9090

@@ -222,6 +222,44 @@ data:
           backend_url: "http://key-vault.matrix.svc.cluster.local:8000"
           api_key: "${KEY_VAULT_API_KEY}"
 
+    # LI system configuration - enables key capture, endpoint protection, and session limiting
+    # Per LI_IMPLEMENTATION.md Components 1, 3, and 3.5
+    li:
+      # Enable LI proxy endpoint for encrypted recovery key forwarding
+      # When enabled, /_synapse/client/v1/li/store_key endpoint becomes available
+      # Clients (element-web, element-x-android) POST RSA-encrypted recovery keys to this endpoint
+      enabled: true
+
+      # key_vault service URL (Django service storing RSA-encrypted keys)
+      # Only main Synapse can access this service (enforced by NetworkPolicy: key-vault-isolation)
+      # DO NOT change unless key_vault deployed on different host/port
+      key_vault_url: "http://key-vault.matrix.svc.cluster.local:8000"
+
+      # Endpoint Protection: Prevent non-admin users from:
+      # - Forgetting rooms: POST /_matrix/client/r0/rooms/{roomId}/forget
+      # - Deactivating accounts: POST /_matrix/client/r0/account/deactivate
+      # When enabled, only server administrators can perform these actions
+      # Regular users will receive HTTP 403 with message "Only server administrators can..."
+      # Set to false ONLY for testing/debugging LI features
+      endpoint_protection_enabled: true
+
+    # Session Limiting: Maximum concurrent sessions per user across all devices
+    # Enforced via synapse/handlers/li_session_limiter.py
+    # Tracks sessions in /var/lib/synapse/li_session_tracking.json (file-based with locking)
+    # When limit exceeded, returns HTTP 429 "Maximum concurrent sessions exceeded"
+    #
+    # Behavior:
+    # - Applies to ALL users without exception (no admin bypass per LI requirements)
+    # - Session = device login (each Element Web tab, each mobile app instance)
+    # - Enforced at device registration (check_device_registered in device.py)
+    # - Cleaned up hourly via sync_with_database (removes orphaned sessions)
+    #
+    # Recommended values:
+    # - 5: Standard (typical user has phone + laptop + tablet + 2 browsers)
+    # - 10: Power users (many devices/browsers)
+    # - null: Unlimited (disable feature for non-LI deployments)
+    max_sessions_per_user: 5
+
     # ==================== FEDERATION ====================
 
     # Federation disabled by default (per CLAUDE.md Rule 4.3, Rule 12)
@@ -345,10 +383,11 @@ data:
       sleep_enabled: true
 
 
-    # ==================== PUSH NOTIFICATIONS (Sygnal) ====================
-
-    push:
-      enabled: true
+    # ==================== PUSH NOTIFICATIONS ====================
+    # NOTE: Push notifications (Sygnal) intentionally NOT configured
+    # Per CLAUDE.md Rule 4.3: No external services (air-gapped deployment)
+    # Push notifications require connection to Apple/Google servers
+    # Clients will use long-polling via /sync endpoint for real-time updates
 
     # ==================== MONITORING ====================
 

@@ -418,7 +418,7 @@ After deploying the main instance:
 1. **Phase 2.4**: Deploy supporting services
    - LiveKit (video/voice calling)
    - coturn (TURN/STUN server)
-   - Sygnal (push notifications)
+   - NOTE: Sygnal (push) not included - requires external servers
    - key_vault (E2EE recovery key storage - CRITICAL for LI)
 
 2. **Phase 3**: Deploy LI instance

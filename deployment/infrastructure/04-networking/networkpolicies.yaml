@@ -210,15 +210,8 @@ spec:
         - protocol: TCP
           port: 6379
 
-    # Allow from LI instance (shared cache for read operations)
-    - from:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/name: synapse
-              matrix.instance: li
-      ports:
-        - protocol: TCP
-          port: 6379
+    # NOTE: LI instance now uses dedicated Redis LI (redis-li-access policy)
+    # This prevents information leakage via Redis pub/sub channels
 
     # Allow from sync-system
     - from:
@@ -382,9 +375,40 @@ spec:
 
 ---
 ###############################################################################
+# 7.5. Redis LI Access Control
+#     Only LI instance can access Redis LI (isolated from main Redis)
+###############################################################################
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: redis-li-access
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: networkpolicy
+    app.kubernetes.io/component: cache
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: redis
+      app.kubernetes.io/instance: li
+  policyTypes:
+    - Ingress
+  ingress:
+    # Allow from Synapse LI instance ONLY
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: synapse
+              matrix.instance: li
+      ports:
+        - protocol: TCP
+          port: 6379
+
+---
+###############################################################################
 # 8. LI Instance Isolation ⭐⭐
 #    IMPORTANT: LI instance CANNOT access main instance resources
-#    Can only access LI-specific PostgreSQL and MinIO
+#    Can only access LI-specific PostgreSQL, MinIO, and Redis LI
 ###############################################################################
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -434,11 +458,12 @@ spec:
         - protocol: TCP
           port: 9000
 
-    # Allow Redis access (shared cache, not user data)
+    # Allow Redis LI ONLY (NOT main Redis - prevents info leakage via pub/sub)
     - to:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: redis
+              app.kubernetes.io/instance: li
       ports:
         - protocol: TCP
           port: 6379
@@ -524,14 +549,9 @@ spec:
         - protocol: TCP
           port: 7880
 
-    # Allow Sygnal (push notifications)
-    - to:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/name: sygnal
-      ports:
-        - protocol: TCP
-          port: 5000
+    # NOTE: Sygnal (push notifications) intentionally NOT included
+    # Per CLAUDE.md Rule 4.3: No external services (air-gapped deployment)
+    # Push notifications require Apple/Google server connectivity
 
     # Allow coturn (TURN/STUN)
     - to:
@@ -660,23 +680,14 @@ spec:
   policyTypes:
     - Ingress
   ingress:
-    # Allow from scan workers
+    # Allow from content scanner workers (virus scanning)
     - from:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: content-scanner
       ports:
         - protocol: TCP
-          port: 3310  # ClamAV clamd
-
-    # Allow from Synapse (via spam checker module)
-    - from:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/name: synapse
-      ports:
-        - protocol: TCP
-          port: 8080  # Scan worker HTTP API
+          port: 3310  # ClamAV clamd port
 
 ---
 ###############################################################################
@@ -723,6 +734,15 @@ spec:
           port: 8009  # Synapse replication
         - protocol: TCP
           port: 9000  # Synapse metrics
+
+    # Allow access to content scanner (antivirus proxy for media downloads)
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: content-scanner
+      ports:
+        - protocol: TCP
+          port: 8080  # Content scanner HTTP API
 
 ---
 ###############################################################################
@@ -826,6 +846,15 @@ spec:
     - Ingress
     - Egress
   ingress:
+    # Allow from HAProxy (routes media downloads through scanner)
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: haproxy
+      ports:
+        - protocol: TCP
+          port: 8080
+
     # Allow from Synapse media repository workers
     - from:
         - podSelector:

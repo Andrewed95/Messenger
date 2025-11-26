@@ -57,11 +57,26 @@ data:
         acl is_initial_sync path_beg /_matrix/client/ path_end /initialSync
         use_backend synchrotron_workers if is_sync or is_events or is_initial_sync
 
-        # Media workers
-        acl is_media path_beg /_matrix/media/
-        acl is_upload path_beg /_matrix/client/ path_end /upload
-        acl is_download path_beg /_matrix/client/ path_end /download
-        use_backend media_workers if is_media or is_upload or is_download
+        # Media routing with antivirus scanning
+        # Downloads and thumbnails go through content_scanner for virus scanning
+        # Uploads go directly to media_workers (scanned on first download)
+        acl is_media_download path_beg /_matrix/media/r0/download
+        acl is_media_download path_beg /_matrix/media/v3/download
+        acl is_media_thumbnail path_beg /_matrix/media/r0/thumbnail
+        acl is_media_thumbnail path_beg /_matrix/media/v3/thumbnail
+        acl is_media_upload path_beg /_matrix/media/r0/upload
+        acl is_media_upload path_beg /_matrix/media/v3/upload
+        acl is_client_upload path_beg /_matrix/client/ path_end /upload
+        acl is_media_other path_beg /_matrix/media/
+
+        # Route downloads and thumbnails through content scanner (antivirus)
+        use_backend content_scanner if is_media_download or is_media_thumbnail
+
+        # Route uploads directly to media workers
+        use_backend media_workers if is_media_upload or is_client_upload
+
+        # Route other media requests to media workers
+        use_backend media_workers if is_media_other
 
         # Generic workers - most client endpoints
         acl is_client path_beg /_matrix/client/
@@ -89,12 +104,20 @@ data:
         timeout server 3600s
         server-template synchrotron 16 synapse-synchrotron.matrix.svc.cluster.local:8008 check resolvers k8s init-addr none
 
-    # Backend - Media Workers
+    # Backend - Media Workers (uploads and other media operations)
     backend media_workers
         balance roundrobin
         option httpchk GET /health HTTP/1.1\r\nHost:\ matrix.example.com
         timeout server 1800s
         server-template media 8 synapse-media-repository.matrix.svc.cluster.local:8008 check resolvers k8s init-addr none
+
+    # Backend - Content Scanner (antivirus scanning for downloads)
+    # Scans media files with ClamAV before serving to clients
+    backend content_scanner
+        balance roundrobin
+        option httpchk GET /health HTTP/1.1\r\nHost:\ matrix.example.com
+        timeout server 300s
+        server-template scanner 10 content-scanner.matrix.svc.cluster.local:8080 check resolvers k8s init-addr none
 
     # Backend - Generic Workers
     backend generic_workers
@@ -381,38 +404,15 @@ spec:
                 port:
                   number: 8008
 
----
-# Ingress for Matrix Federation API (via HAProxy)
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: matrix-federation
-  namespace: matrix
-  labels:
-    app.kubernetes.io/name: matrix
-    app.kubernetes.io/component: ingress
-  annotations:
-    cert-manager.io/cluster-issuer: "letsencrypt-prod"
-    nginx.ingress.kubernetes.io/ssl-redirect: "true"
-    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
-    nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
-spec:
-  ingressClassName: nginx
-  tls:
-    - hosts:
-        - matrix.example.com
-      secretName: matrix-federation-tls
-  rules:
-    - host: matrix.example.com
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: haproxy-federation
-                port:
-                  number: 8448
+# NOTE: Federation Ingress NOT deployed by default
+# Per CLAUDE.md section 12: Federation is disabled by default
+# The HAProxy federation frontend (port 8448) and service exist but no Ingress routes to them
+#
+# To enable federation later:
+# 1. Enable federation in Synapse config (homeserver.yaml)
+# 2. Create a dedicated federation Ingress on port 8448 or a separate host
+# 3. Configure firewall rules for port 8448
+# 4. See docs/FEDERATION-GUIDE.md for complete instructions
 
 ---
 # PodDisruptionBudget for HAProxy

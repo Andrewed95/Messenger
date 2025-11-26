@@ -154,6 +154,179 @@ Monitoring (Prometheus + Loki) = 50GB (base) + (CCU / 100) × 1GB per month
 - LiveKit: 2 instances minimum (Redis-backed session management)
 - coturn: 2 instances minimum (client DNS-based failover)
 
+### 2.5 Horizontal Pod Autoscaler (HPA) Compatibility
+
+**CRITICAL: Not all Synapse workers support HPA.** Understanding this is essential for proper scaling.
+
+#### Why Some Workers Cannot Use HPA
+
+Synapse's worker architecture has two categories:
+
+1. **Stateless Workers**: Handle requests without requiring consistent routing. Any instance can handle any request.
+2. **Stateful Workers**: Referenced by name in `instance_map` or `stream_writers`. Adding/removing instances requires configuration changes and full Synapse restart.
+
+#### HPA Compatibility Matrix
+
+| Worker Type | Can Use HPA | Deployment Type | Reason |
+|-------------|-------------|-----------------|--------|
+| **synchrotron** | ✅ YES | Deployment | Stateless /sync handlers. No instance_map reference. |
+| **generic-worker** | ✅ YES | Deployment | Stateless client API handlers. No instance_map reference. |
+| **event-persister** | ❌ NO | StatefulSet | Listed in `stream_writers.events`. Each instance name hardcoded. |
+| **federation-sender** | ❌ NO | StatefulSet | Listed in `federation_sender_instances`. Shards federation by destination. |
+| **media-repository** | ❌ NO | StatefulSet | Referenced in `media_instance_running_background_jobs`. Background jobs need stable identity. |
+| **typing-writer** | ❌ NO | StatefulSet | Listed in `stream_writers.typing`. |
+| **todevice-writer** | ❌ NO | StatefulSet | Listed in `stream_writers.to_device`. |
+| **receipts-writer** | ❌ NO | StatefulSet | Listed in `stream_writers.receipts`. |
+| **presence-writer** | ❌ NO | StatefulSet | Listed in `stream_writers.presence`. |
+
+#### Example: Why event-persister Cannot Use HPA
+
+The homeserver.yaml configuration explicitly lists event-persister instances:
+
+```yaml
+stream_writers:
+  events:
+    - synapse-event-persister-0
+    - synapse-event-persister-1
+    - synapse-event-persister-2
+    - synapse-event-persister-3
+
+instance_map:
+  synapse-event-persister-0:
+    host: synapse-event-persister-0.synapse-event-persister.matrix.svc.cluster.local
+    port: 9093
+  # ... entries for -1, -2, -3
+```
+
+If HPA added `synapse-event-persister-4`, Synapse would:
+1. Not know to route events to it (not in `stream_writers`)
+2. Not know how to reach it (not in `instance_map`)
+3. The new instance would fail with "not in instance_map" error
+
+**Scaling event-persisters requires:**
+1. Update homeserver.yaml to add new instance to `stream_writers.events`
+2. Update homeserver.yaml to add new instance to `instance_map`
+3. Apply ConfigMap changes
+4. Restart ALL Synapse processes (main + all workers)
+5. Then increase StatefulSet replicas
+
+#### Example: Why synchrotron CAN Use HPA
+
+Synchrotron workers:
+- Are NOT referenced in `instance_map` or `stream_writers`
+- Handle `/sync` requests via HAProxy round-robin
+- Are completely stateless (no persistent state)
+- Connect to main process for data via replication protocol
+
+HAProxy configuration routes to synchrotron by service name:
+```
+backend synchrotron
+    server-template sync 10 synapse-synchrotron.matrix.svc.cluster.local:8008
+```
+
+When HPA adds a new pod, it automatically gets traffic because:
+1. Kubernetes Service routes to all ready pods
+2. No configuration references specific instance names
+3. New pod can immediately handle requests
+
+#### HPA Configuration Examples
+
+**For synchrotron (HPA-compatible):**
+
+```yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: synapse-synchrotron-hpa
+  namespace: matrix
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: synapse-synchrotron
+  minReplicas: 2
+  maxReplicas: 12
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+        - type: Pods
+          value: 2
+          periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 120
+```
+
+**For generic-worker (HPA-compatible):**
+
+```yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: synapse-generic-worker-hpa
+  namespace: matrix
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: synapse-generic-worker
+  minReplicas: 2
+  maxReplicas: 8
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+```
+
+#### Scaling Non-HPA Workers (Manual Procedure)
+
+For workers that cannot use HPA (event-persister, federation-sender, etc.):
+
+```bash
+# WHERE: kubectl-configured workstation
+# WHEN: Load consistently exceeds current capacity
+# WHY: These workers require configuration updates before scaling
+
+# Step 1: Update homeserver.yaml ConfigMap
+kubectl edit configmap synapse-config -n matrix
+# Add new instance to stream_writers AND instance_map
+
+# Step 2: Restart all Synapse processes to load new config
+kubectl rollout restart statefulset/synapse-main -n matrix
+kubectl rollout restart statefulset/synapse-event-persister -n matrix
+# ... restart all other synapse statefulsets
+
+# Step 3: Wait for all pods to be ready
+kubectl get pods -n matrix -l app.kubernetes.io/name=synapse
+
+# Step 4: Scale the StatefulSet
+kubectl scale statefulset/synapse-event-persister --replicas=5 -n matrix
+```
+
+#### Recommendations
+
+1. **Use HPA for synchrotron and generic-worker** - These handle the majority of user requests and benefit most from auto-scaling
+
+2. **Over-provision event-persisters** - Since they can't auto-scale, ensure you have enough for peak load (4 is usually sufficient for 20K CCU)
+
+3. **Monitor queue depth** - For non-HPA workers, monitor replication lag to detect when manual scaling is needed
+
+4. **Plan scaling during maintenance** - Manual scaling of StatefulSet workers requires restarts, schedule during low-traffic periods
+
 ---
 
 ## 3. 100 CCU Scale

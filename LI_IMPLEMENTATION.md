@@ -200,6 +200,287 @@ max_sessions_per_user: 5  # Limits each user to 5 concurrent sessions
 
 ---
 
+## Component 3.5: Endpoint Protection (Room & Account Security)
+
+**Purpose**: Prevent users from removing rooms from view or deactivating accounts. Only server administrators can perform these actions via synapse-admin.
+
+**Location**: `/home/user/Messenger/synapse/`
+
+**Rationale**:
+- Ensures all rooms remain visible for lawful interception purposes
+- Prevents users from deactivating accounts to avoid investigation
+- Maintains data accessibility for compliance and audit requirements
+
+### Implementation
+
+**Files Implemented**:
+
+1. **`synapse/handlers/li_endpoint_protection.py`** (NEW FILE - ~120 lines)
+
+   Core protection logic that checks user permissions before allowing protected operations.
+
+   **Class**: `EndpointProtection`
+
+   **Methods**:
+   - `check_can_forget_room(user_id: str) -> bool`
+     - Returns True only if user is a server administrator
+     - Blocks regular users from forgetting rooms (removing from room list)
+     - Logs all blocked attempts with "LI:" prefix for audit trail
+
+   - `check_can_deactivate_account(user_id: str, requester_user_id: str) -> bool`
+     - Returns True only if requester is a server administrator
+     - Blocks regular users from deactivating any accounts (including their own)
+     - Logs all blocked attempts with user IDs for compliance
+
+   **Configuration Handling**:
+   - Checks `hs.config.li.endpoint_protection_enabled` flag
+   - If protection disabled, all operations are allowed (returns True)
+   - If protection enabled, only admins can perform protected actions
+
+2. **`synapse/config/li.py`** (MODIFIED)
+
+   Added configuration option for endpoint protection.
+
+   **New Config Option**:
+   ```python
+   # LI: Endpoint protection (ban room forget and account deactivation for non-admins)
+   self.endpoint_protection_enabled = li_config.get("endpoint_protection_enabled", True)
+   ```
+
+   **Configuration Section**:
+   ```yaml
+   li:
+     # ... existing options ...
+
+     # Endpoint protection: Prevent users from removing rooms or deactivating accounts
+     # When enabled, only server administrators can:
+     # - Forget rooms (remove from room list)
+     # - Deactivate user accounts
+     # This ensures rooms and accounts remain accessible for lawful interception.
+     # Default: true
+     endpoint_protection_enabled: true
+   ```
+
+3. **`synapse/rest/client/room.py`** (MODIFIED)
+
+   Integrated protection into room forget endpoint.
+
+   **Class**: `RoomForgetRestServlet`
+
+   **Changes** (marked with `# LI:` comments):
+   ```python
+   def __init__(self, hs: "HomeServer"):
+       # ... existing code ...
+       # LI: Import endpoint protection handler
+       from synapse.handlers.li_endpoint_protection import EndpointProtection
+       self.endpoint_protection = EndpointProtection(hs)
+
+   async def _do(self, requester: Requester, room_id: str):
+       # LI: Check if user is allowed to forget rooms
+       user_id = requester.user.to_string()
+       can_forget = await self.endpoint_protection.check_can_forget_room(user_id)
+
+       if not can_forget:
+           # LI: Block non-admin users from forgetting rooms
+           raise SynapseError(
+               403,
+               "Only server administrators can remove rooms from view. "
+               "Please contact an administrator if you need to remove this room.",
+               errcode=Codes.FORBIDDEN
+           )
+
+       # ... continue with normal forget logic ...
+   ```
+
+   **User Experience**:
+   - Regular user tries to forget a room → HTTP 403 error
+   - Error message: "Only server administrators can remove rooms from view."
+   - Admin user can forget rooms normally via synapse-admin or API
+
+4. **`synapse/rest/client/account.py`** (MODIFIED)
+
+   Integrated protection into account deactivation endpoint.
+
+   **Class**: `DeactivateAccountRestServlet`
+
+   **Changes** (marked with `# LI:` comments):
+   ```python
+   def __init__(self, hs: "HomeServer"):
+       # ... existing code ...
+       # LI: Import endpoint protection handler
+       from synapse.handlers.li_endpoint_protection import EndpointProtection
+       self.endpoint_protection = EndpointProtection(hs)
+
+   async def on_POST(self, request: SynapseRequest):
+       # ... existing auth code ...
+
+       # LI: Check if user is allowed to deactivate accounts
+       user_id = requester.user.to_string()
+       can_deactivate = await self.endpoint_protection.check_can_deactivate_account(
+           user_id=user_id,
+           requester_user_id=user_id
+       )
+
+       if not can_deactivate:
+           # LI: Block non-admin users from deactivating accounts
+           raise SynapseError(
+               403,
+               "Only server administrators can deactivate accounts. "
+               "Please contact an administrator if you need account deactivation.",
+               errcode=Codes.FORBIDDEN
+           )
+
+       # ... continue with normal deactivation logic ...
+   ```
+
+   **User Experience**:
+   - Regular user tries to deactivate account → HTTP 403 error
+   - Error message: "Only server administrators can deactivate accounts."
+   - Admin user can deactivate any account via synapse-admin
+
+### Configuration
+
+**Main Instance Only** (homeserver.yaml):
+
+```yaml
+# Lawful Interception Configuration
+li:
+  enabled: true
+  key_vault_url: "http://key-vault.matrix-li.svc.cluster.local:8000"
+
+  # Endpoint Protection
+  # Prevent regular users from:
+  # - Forgetting rooms (removing from room list)
+  # - Deactivating accounts
+  # Only server administrators can perform these actions
+  endpoint_protection_enabled: true  # Default: true
+```
+
+**To Disable Protection** (not recommended for LI deployments):
+
+```yaml
+li:
+  enabled: true
+  key_vault_url: "http://..."
+  endpoint_protection_enabled: false  # Allow users to forget rooms and deactivate accounts
+```
+
+### Admin Operations
+
+**How Admins Can Perform Protected Actions**:
+
+1. **Forget Room for User** (via synapse-admin):
+   - Navigate to Users → Select User → Rooms
+   - Find the room and click "Remove" or "Forget"
+   - Admin token is used, so protection check passes
+
+2. **Deactivate Account** (via synapse-admin):
+   - Navigate to Users → Select User
+   - Click "Deactivate Account"
+   - Admin token is used, so protection check passes
+
+3. **Via Admin API** (programmatic):
+   ```bash
+   # Deactivate user account
+   curl -X POST "https://matrix.example.com/_synapse/admin/v1/deactivate/@user:example.com" \
+     -H "Authorization: Bearer ADMIN_TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{"erase": false}'
+
+   # Note: Room forget must be done by the user, but as an admin you can:
+   # - Remove user from room (kick)
+   # - Delete entire room
+   ```
+
+### Security & Audit Logging
+
+**All blocked attempts are logged**:
+
+```
+2025-01-15 10:23:45 - synapse.handlers.li_endpoint_protection - WARNING - LI: Blocked non-admin user @alice:example.com from forgetting room. Only administrators can remove rooms from view.
+
+2025-01-15 10:24:12 - synapse.handlers.li_endpoint_protection - WARNING - LI: Blocked user @bob:example.com from deactivating their own account. Only administrators can deactivate accounts.
+```
+
+**Log Level**: WARNING (ensures visibility in standard log monitoring)
+
+**Log Format**: Always includes "LI:" prefix for easy filtering and compliance auditing
+
+### Testing
+
+**Test Room Forget Protection**:
+
+1. As regular user, try to forget a room via Element:
+   ```
+   Room Options → Leave → Forget Room
+   ```
+   Expected: Error message about administrator permissions
+
+2. As admin, try to forget a room:
+   ```
+   Should work normally
+   ```
+
+3. Check logs:
+   ```bash
+   grep "LI: Blocked.*forgetting room" /var/log/synapse/homeserver.log
+   ```
+
+**Test Account Deactivation Protection**:
+
+1. As regular user, try to deactivate account via Element:
+   ```
+   Settings → Account → Deactivate Account
+   ```
+   Expected: Error message about administrator permissions
+
+2. As admin, deactivate a test user via synapse-admin:
+   ```
+   Should work normally
+   ```
+
+3. Check logs:
+   ```bash
+   grep "LI: Blocked.*deactivating.*account" /var/log/synapse/homeserver.log
+   ```
+
+### Edge Cases Handled
+
+1. **Application Services (AS)**:
+   - ASes can still deactivate their own users (existing logic preserved)
+   - Protection check happens before AS check
+
+2. **Configuration Disabled**:
+   - If `endpoint_protection_enabled: false`, all users can perform operations normally
+   - Useful for non-LI deployments or testing
+
+3. **Admin Check**:
+   - Uses `is_server_admin()` from Synapse's data store
+   - Checks the `admin` column in `users` table
+   - Consistent with all other admin checks in Synapse
+
+4. **User Experience**:
+   - Clear error messages explain why operation was blocked
+   - Directs users to contact administrators
+   - Prevents confusion about why operations fail
+
+### Code Change Summary
+
+**Total Changes**:
+- **1 New File**: `synapse/handlers/li_endpoint_protection.py` (~120 lines)
+- **3 Modified Files**:
+  - `synapse/config/li.py` (added 1 config option, ~15 lines)
+  - `synapse/rest/client/room.py` (added protection check, ~15 lines)
+  - `synapse/rest/client/account.py` (added protection check, ~18 lines)
+
+**Total Lines Added**: ~168 lines
+
+**All Changes Marked**: Every modification has `# LI:` comment for easy identification and future upstream merging
+
+**Testing Status**: Ready for testing after deployment
+
+---
+
 ## Component 4: Soft Delete Configuration
 
 **Location**: `/home/user/Messenger/synapse/`
@@ -587,7 +868,9 @@ Automated (cron):
 │   │   ├── rest/
 │   │   │   ├── __init__.py                 # Registered li_proxy
 │   │   │   ├── client/
-│   │   │   │   └── li_proxy.py             # Key storage proxy endpoint
+│   │   │   │   ├── li_proxy.py             # Key storage proxy endpoint
+│   │   │   │   ├── room.py                 # Added endpoint protection
+│   │   │   │   └── account.py              # Added endpoint protection
 │   │   │   └── admin/
 │   │   │       ├── __init__.py             # Registered LI servlets
 │   │   │       ├── rooms.py                # LIRedactedEventsServlet
@@ -595,6 +878,7 @@ Automated (cron):
 │   │   │       └── media.py                # LIListQuarantinedMediaRestServlet
 │   │   └── handlers/
 │   │       ├── li_session_limiter.py       # Session limiting logic
+│   │       ├── li_endpoint_protection.py   # Endpoint protection (room/account)
 │   │       └── device.py                   # Integrated session limiter
 │   └── docs/
 │       └── sample_homeserver_li.yaml       # LI configuration guide
@@ -861,9 +1145,9 @@ cat /var/lib/synapse/li_session_tracking.json | jq '.sessions'
 ## Implementation Statistics
 
 - **Repositories Modified**: 7 (key_vault, synapse, element-web, element-web-li, element-x-android, synapse-admin, synapse-admin-li, synapse-li)
-- **Files Created**: 24
-- **Files Modified**: 19
-- **Total Lines Added**: ~2,500
+- **Files Created**: 25 (added li_endpoint_protection.py)
+- **Files Modified**: 21 (added li.py, room.py, account.py modifications)
+- **Total Lines Added**: ~2,670 (added ~170 lines for endpoint protection)
 - **Languages**: Python, TypeScript, Kotlin, CSS, Shell
 - **Frameworks**: Django, React, Matrix SDK, Material-UI
 - **APIs**: 10 new REST endpoints

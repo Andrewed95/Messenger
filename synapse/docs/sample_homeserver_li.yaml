@@ -39,6 +39,16 @@ li:
   # Only main Synapse can access this URL
   key_vault_url: "http://key-vault.matrix-li.svc.cluster.local:8000"
 
+  # Endpoint Protection
+  # Prevent users from removing rooms or deactivating accounts
+  # When enabled, only server administrators can:
+  # - Forget rooms (remove from room list)
+  # - Deactivate user accounts
+  # This ensures rooms and accounts remain accessible for lawful interception
+  # Default: true
+  # LI Recommendation: true (enabled)
+  endpoint_protection_enabled: true
+
 # ==============================================================================
 # LI: MEDIA RETENTION
 # ==============================================================================
@@ -100,7 +110,12 @@ database:
 #    - Log in from multiple devices
 #    - 6th login should fail with 429 error (if max_sessions_per_user=5)
 #
-# 4. Check for pruned events (should be 0):
+# 4. Test endpoint protection:
+#    - As regular user, try to forget a room → Should fail with 403
+#    - As regular user, try to deactivate account → Should fail with 403
+#    - As admin, both operations should work normally
+#
+# 5. Check for pruned events (should be 0):
 #    SELECT COUNT(*) FROM event_json
 #    WHERE json::json->>'content' = '{}'
 #    AND event_id IN (SELECT redacts FROM events WHERE type = 'm.room.redaction');
@@ -119,4 +134,10 @@ database:
 #    - No admin bypass (per requirements)
 #    - Users will see "Maximum sessions exceeded" error
 #
-# 4. Test thoroughly before production deployment
+# 4. Endpoint protection blocks regular users
+#    - Users CANNOT forget rooms (remove from room list)
+#    - Users CANNOT deactivate their accounts
+#    - Only server administrators can perform these actions
+#    - Users will see "Only server administrators can..." error messages
+#
+# 5. Test thoroughly before production deployment

@@ -6,7 +6,6 @@ Complete Prometheus monitoring configuration for Matrix/Synapse production deplo
 
 This directory contains:
 - **servicemonitors.yaml**: ServiceMonitor and PodMonitor CRDs for all components
-- **prometheusrules.yaml**: Comprehensive alerting rules
 - Prometheus configuration via Helm values in `deployment/values/prometheus-stack-values.yaml`
 
 ## Components Monitored
@@ -31,10 +30,7 @@ This directory contains:
    - Path: `/_synapse/metrics`
    - Labeled with `matrix.instance: li`
 
-4. **Sygnal Push Gateway**
-   - Port: 9000
-   - Path: `/metrics`
-   - Metrics: Push notification delivery, APNs/FCM status
+4. **NOTE**: Sygnal (push) not included - requires external Apple/Google servers
 
 5. **key_vault (E2EE Key Storage)**
    - Port: 8000 (metrics endpoint)
@@ -63,7 +59,7 @@ This directory contains:
    - Metrics: Storage capacity, disk health, request rate, errors
 
 9. **HAProxy**
-   - Port: 9101 (stats endpoint)
+   - Port: 8404 (stats endpoint)
    - Path: `/metrics`
    - Metrics: Backend health, request rate, error rate, response times
 
@@ -125,21 +121,15 @@ spec:
         key: queries
 ```
 
-### 3. Deploy ServiceMonitors and PrometheusRules
+### 3. Deploy ServiceMonitors
 
 ```bash
 # Apply ServiceMonitors
 kubectl apply -f servicemonitors.yaml
 
-# Apply PrometheusRules
-kubectl apply -f prometheusrules.yaml
-
 # Verify ServiceMonitors
 kubectl get servicemonitors -n matrix
 kubectl get podmonitors -n matrix
-
-# Verify PrometheusRules
-kubectl get prometheusrules -n matrix
 ```
 
 ### 4. Verify Prometheus is Scraping Targets
@@ -155,32 +145,6 @@ open http://localhost:9090
 # Navigate to: Status > Targets
 # All targets should show "UP"
 ```
-
-## Alert Rules
-
-### Critical Alerts (require immediate action)
-
-1. **SynapseMainDown**: Main Synapse process is down (2min)
-2. **PostgreSQLDown**: Database is down (2min)
-3. **RedisDown**: Cache is down (2min)
-4. **MinIODown**: Storage is down (5min)
-5. **HAProxyDown**: Load balancer is down (2min)
-6. **KeyVaultDown**: E2EE key storage is down (5min)
-7. **NginxIngressDown**: Ingress controller is down (2min)
-8. **PostgreSQLBackupFailing**: Backups are failing (30min)
-9. **SynapseLIHighReplicationLag**: LI data sync delayed >5min
-10. **SyncSystemMediaJobFailing**: LI media sync failing (15min)
-
-### Warning Alerts (investigate soon)
-
-1. **SynapseHighSyncLatency**: /sync endpoint slow >500ms (10min)
-2. **SynapseHighCPU**: CPU usage >80% (15min)
-3. **SynapseHighMemory**: Memory usage >3.5GB (10min)
-4. **PostgreSQLReplicationLag**: Standby lagging >60s (5min)
-5. **PostgreSQLTooManyConnections**: >80% connections used (5min)
-6. **RedisHighMemoryUsage**: >90% memory used (10min)
-7. **MinIOHighStorageUsage**: <20% free space (30min)
-8. **HAProxyHighErrorRate**: >5% 5xx errors (5min)
 
 ## Prometheus Queries
 
@@ -313,22 +277,6 @@ kubectl port-forward -n matrix <minio-pod> 9000:9000
 curl http://localhost:9000/minio/v2/metrics/cluster
 ```
 
-### PrometheusRule not loading
-
-```bash
-# Check if rule was created
-kubectl get prometheusrule matrix-alerts -n matrix
-
-# Check Prometheus configuration
-kubectl get prometheus -n monitoring -o yaml | grep ruleSelector
-
-# Check for syntax errors
-kubectl describe prometheusrule matrix-alerts -n matrix
-
-# View loaded rules in Prometheus UI
-# Navigate to: Status > Rules
-```
-
 ## Retention and Storage
 
 ### Default Configuration
@@ -373,9 +321,7 @@ rate(prometheus_tsdb_head_samples_appended_total[5m])
 1. **Label Consistency**: Ensure all services use standard Kubernetes labels
 2. **Scrape Intervals**: Use 30s for critical services, 60s for less critical
 3. **Recording Rules**: Pre-compute expensive queries for dashboards
-4. **Alert Grouping**: Group related alerts to reduce noise
-5. **Alert Routing**: Use Alertmanager (if enabled) for routing to different channels
-6. **High Cardinality**: Avoid labels with high cardinality (user IDs, message IDs)
+4. **High Cardinality**: Avoid labels with high cardinality (user IDs, message IDs)
 7. **Federation**: Use Prometheus federation for long-term storage (Thanos, Cortex)
 
 ## Integration with Grafana

@@ -380,7 +380,7 @@ After deploying workers:
 
 1. **Phase 2.3**: Deploy HAProxy for intelligent routing to worker pools
 2. **Phase 2.3**: Deploy Element Web for client access
-3. **Phase 2.4**: Deploy supporting services (LiveKit, coturn, Sygnal, key_vault)
+3. **Phase 2.4**: Deploy supporting services (LiveKit, coturn, key_vault)
 
 ## References
 

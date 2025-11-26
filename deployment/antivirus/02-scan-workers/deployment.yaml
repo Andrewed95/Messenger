@@ -54,8 +54,8 @@ data:
       # Remove metadata from images (privacy)
       remove_metadata: true
 
-    # Proxy configuration (upstream Synapse media repository)
-    proxy:
+    # Download configuration (upstream Synapse media repository)
+    download:
       # Base URL of the Matrix media repository
       # This points to Synapse media workers
       base_homeserver_url: http://synapse-media-repository.matrix.svc.cluster.local:8008

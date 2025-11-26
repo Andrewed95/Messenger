@@ -383,7 +383,7 @@ After deploying the main process:
 
 1. **Phase 2.2**: Deploy Synapse workers for horizontal scaling
 2. **Phase 2.3**: Deploy Element Web and HAProxy for routing
-3. **Phase 2.4**: Deploy supporting services (LiveKit, coturn, Sygnal, key_vault)
+3. **Phase 2.4**: Deploy supporting services (LiveKit, coturn, key_vault)
 
 ## References
 

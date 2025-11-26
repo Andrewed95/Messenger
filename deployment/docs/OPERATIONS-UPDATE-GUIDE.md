@@ -63,87 +63,92 @@
 - New features needed
 - Bug fixes available
 
-**Pre-Update Checklist:**
+**Pre-Update Checklist (Required):**
 
 ```bash
 # WHERE: kubectl-configured workstation
 # WHEN: Before starting update
-# WHY: Ensure system is healthy and prepare for update
-# HOW:
+# WHY: Establish baseline and prepare rollback capability
 
-# 1. Check current version
+# 1. Record current version (for rollback reference)
 kubectl get deployment synapse-main -n matrix -o jsonpath='{.spec.template.spec.containers[0].image}'
 # Note the current version (e.g., matrixdotorg/synapse:v1.102.0)
 
-# 2. Review Synapse changelog
+# 2. Review changelog for breaking changes
 # Visit: https://github.com/element-hq/synapse/releases
-# Check for:
-# - Breaking changes
-# - Database migrations
-# - Configuration changes required
+# Check for: breaking changes, database migrations, config changes
 
-# 3. Backup database
-kubectl exec -n matrix synapse-postgres-1 -- \
-  pg_dump -U synapse synapse > synapse-backup-$(date +%Y%m%d).sql
+# 3. Backup database (rollback safety)
+kubectl exec -n matrix matrix-postgresql-0 -- \
+  pg_dump -U synapse matrix > synapse-backup-$(date +%Y%m%d).sql
 
-# 4. Backup current config
+# 4. Backup current config (rollback safety)
 kubectl get configmap synapse-config -n matrix -o yaml > synapse-config-backup-$(date +%Y%m%d).yaml
-
-# 5. Check system health
-kubectl get pods -n matrix
-kubectl top pods -n matrix
-# All pods should be Running with reasonable resource usage
 ```
 
-**Update Procedure:**
+**NOTE**: System health checks (pod status, resource usage) are automatically monitored via Prometheus/Grafana. Check Grafana dashboards before proceeding if you observe alerts.
+
+**Update Procedure (Centralized Approach):**
+
+All image versions are managed centrally in `values/images.yaml`. This ensures consistency across all deployments and simplifies updates.
 
 ```bash
-# WHERE: kubectl-configured workstation
+# WHERE: kubectl-configured workstation, deployment/ directory
 # WHEN: During planned maintenance or off-peak hours
-# WHY: Minimize impact on users
-# HOW:
+# WHY: Centralized image management ensures consistency
 
-# Step 1: Update main process image
-kubectl set image deployment/synapse-main \
-  synapse=matrixdotorg/synapse:v1.103.0 \
-  -n matrix
+# Step 1: Update version in values/images.yaml
+# Edit the file and change the Synapse version:
+nano values/images.yaml
 
-# Monitor rollout
-kubectl rollout status deployment/synapse-main -n matrix
-# Wait for "successfully rolled out"
+# Change synapse version (all instances use same version):
+# synapse:
+#   main:
+#     image: matrixdotorg/synapse:v1.120.0  # ← Update version here
+#   workers:
+#     image: matrixdotorg/synapse:v1.120.0  # ← Must match main
+#   li:
+#     image: matrixdotorg/synapse:v1.120.0  # ← Must match main
 
-# Check logs for errors
-kubectl logs -n matrix deployment/synapse-main --tail=50 | grep -i error
-# Should show no critical errors
+# Step 2: Apply updated manifests
+# The deployment manifests reference images.yaml values
+# Re-apply all Synapse deployments to pick up new images:
 
-# Step 2: Update sync workers
-kubectl set image statefulset/synapse-sync-worker \
-  synapse=matrixdotorg/synapse:v1.103.0 \
-  -n matrix
+# Main Synapse
+kubectl apply -f main-instance/01-synapse/
+kubectl rollout status statefulset/synapse-main -n matrix
 
-# Monitor rollout (one pod at a time due to StatefulSet)
-kubectl rollout status statefulset/synapse-sync-worker -n matrix
+# Workers (one at a time to minimize disruption)
+kubectl apply -f main-instance/02-workers/synchrotron-deployment.yaml
+kubectl rollout status deployment/synapse-synchrotron -n matrix
 
-# Step 3: Update generic workers
-kubectl set image statefulset/synapse-generic-worker \
-  synapse=matrixdotorg/synapse:v1.103.0 \
-  -n matrix
+kubectl apply -f main-instance/02-workers/generic-worker-deployment.yaml
+kubectl rollout status deployment/synapse-generic-worker -n matrix
 
-kubectl rollout status statefulset/synapse-generic-worker -n matrix
-
-# Step 4: Update event persisters
-kubectl set image statefulset/synapse-event-persister \
-  synapse=matrixdotorg/synapse:v1.103.0 \
-  -n matrix
-
+kubectl apply -f main-instance/02-workers/event-persister-deployment.yaml
 kubectl rollout status statefulset/synapse-event-persister -n matrix
 
-# Step 5: Update federation senders
-kubectl set image statefulset/synapse-federation-sender \
-  synapse=matrixdotorg/synapse:v1.103.0 \
-  -n matrix
-
+kubectl apply -f main-instance/02-workers/federation-sender-deployment.yaml
 kubectl rollout status statefulset/synapse-federation-sender -n matrix
+
+# Media repository and other workers
+kubectl apply -f main-instance/02-workers/media-repository-statefulset.yaml
+kubectl rollout status statefulset/synapse-media-repository -n matrix
+
+kubectl apply -f main-instance/02-workers/
+kubectl rollout status deployment -l app.kubernetes.io/name=synapse -n matrix
+
+# Step 3: Update LI instance (if applicable)
+kubectl apply -f li-instance/01-synapse-li/
+kubectl rollout status statefulset/synapse-li -n matrix
+```
+
+**Alternative: Use deploy-all.sh for Full Redeployment:**
+
+```bash
+# For comprehensive updates affecting multiple services:
+./scripts/deploy-all.sh --phase 2  # Redeploy main instance
+./scripts/deploy-all.sh --phase 3  # Redeploy LI instance (if needed)
 ```
 
 **Post-Update Validation:**

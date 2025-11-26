@@ -1,0 +1,214 @@
+# Redis for LI Instance
+# Single-node Redis (no Sentinel/HA required for LI per CLAUDE.md section 3.4)
+#
+# SECURITY: LI Redis is isolated from main instance Redis
+# This prevents potential information leakage through Redis pub/sub channels
+
+---
+# Secret for Redis LI password
+apiVersion: v1
+kind: Secret
+metadata:
+  name: redis-li-secret
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/instance: li
+    matrix.instance: li
+type: Opaque
+stringData:
+  # Redis password for LI instance
+  # CHANGEME: Generate with: openssl rand -base64 32
+  password: "CHANGEME_LI_REDIS_PASSWORD"
+
+---
+# ConfigMap for Redis LI configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: redis-li-config
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/instance: li
+    matrix.instance: li
+data:
+  redis.conf: |
+    # Redis LI Configuration
+    # Single-node configuration (no replication)
+
+    # Network
+    bind 0.0.0.0
+    port 6379
+    tcp-backlog 511
+    timeout 0
+    tcp-keepalive 300
+
+    # General
+    daemonize no
+    supervised no
+    loglevel notice
+    databases 16
+
+    # Snapshotting (persistence)
+    save 900 1
+    save 300 10
+    save 60 10000
+    stop-writes-on-bgsave-error yes
+    rdbcompression yes
+    rdbchecksum yes
+    dbfilename dump.rdb
+    dir /data
+
+    # Memory
+    maxmemory 512mb
+    maxmemory-policy volatile-lru
+
+    # Append only mode (AOF) for durability
+    appendonly yes
+    appendfilename "appendonly.aof"
+    appendfsync everysec
+    no-appendfsync-on-rewrite no
+    auto-aof-rewrite-percentage 100
+    auto-aof-rewrite-min-size 64mb
+
+    # Slow log
+    slowlog-log-slower-than 10000
+    slowlog-max-len 128
+
+    # Client output buffer limits
+    client-output-buffer-limit normal 0 0 0
+    client-output-buffer-limit replica 256mb 64mb 60
+    client-output-buffer-limit pubsub 32mb 8mb 60
+
+---
+# Redis LI Deployment (single replica)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis-li
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/instance: li
+    matrix.instance: li
+spec:
+  replicas: 1  # Single replica for LI (no HA required)
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: redis
+      app.kubernetes.io/instance: li
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: redis
+        app.kubernetes.io/instance: li
+        matrix.instance: li
+    spec:
+      securityContext:
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+
+      containers:
+        - name: redis
+          image: redis:7.2-alpine
+          imagePullPolicy: IfNotPresent
+
+          command:
+            - redis-server
+            - /config/redis.conf
+            - --requirepass
+            - $(REDIS_PASSWORD)
+
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: redis-li-secret
+                  key: password
+
+          ports:
+            - name: redis
+              containerPort: 6379
+              protocol: TCP
+
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            - name: data
+              mountPath: /data
+
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+
+          livenessProbe:
+            exec:
+              command:
+                - redis-cli
+                - -a
+                - $(REDIS_PASSWORD)
+                - ping
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+          readinessProbe:
+            exec:
+              command:
+                - redis-cli
+                - -a
+                - $(REDIS_PASSWORD)
+                - ping
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 2
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 999
+            runAsGroup: 999
+            capabilities:
+              drop:
+                - ALL
+
+      volumes:
+        - name: config
+          configMap:
+            name: redis-li-config
+        - name: data
+          emptyDir: {}  # LI Redis data can be ephemeral (synced from main)
+
+---
+# Service for Redis LI
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-li
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/instance: li
+    matrix.instance: li
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/instance: li
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: 6379
+      protocol: TCP

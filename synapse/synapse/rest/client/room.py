@@ -1067,12 +1067,28 @@ class RoomForgetRestServlet(TransactionRestServlet):
         super().__init__(hs)
         self.room_member_handler = hs.get_room_member_handler()
         self.auth = hs.get_auth()
+        # LI: Import endpoint protection handler
+        from synapse.handlers.li_endpoint_protection import EndpointProtection
+        self.endpoint_protection = EndpointProtection(hs)
 
     def register(self, http_server: HttpServer) -> None:
         PATTERNS = "/rooms/(?P<room_id>[^/]*)/forget"
         register_txn_path(self, PATTERNS, http_server)
 
     async def _do(self, requester: Requester, room_id: str) -> tuple[int, JsonDict]:
+        # LI: Check if user is allowed to forget rooms
+        user_id = requester.user.to_string()
+        can_forget = await self.endpoint_protection.check_can_forget_room(user_id)
+
+        if not can_forget:
+            # LI: Block non-admin users from forgetting rooms
+            raise SynapseError(
+                403,
+                "Only server administrators can remove rooms from view. "
+                "Please contact an administrator if you need to remove this room.",
+                errcode=Codes.FORBIDDEN
+            )
+
         await self.room_member_handler.forget(user=requester.user, room_id=room_id)
 
         return 200, {}

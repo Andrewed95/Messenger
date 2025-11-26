@@ -117,7 +117,7 @@ All Matrix components automatically ship logs to Loki via Promtail:
 | MinIO | matrix | `v1.min.io/tenant=matrix-minio` | MinIO logs |
 | HAProxy | matrix | `app.kubernetes.io/name=haproxy` | HAProxy logs |
 | key_vault | matrix | `app.kubernetes.io/name=key-vault` | Django logs |
-| Sygnal | matrix | `app.kubernetes.io/name=sygnal` | Python logs |
+| NOTE: Sygnal (push) not included - requires external Apple/Google servers |
 | Sync System | matrix | `app.kubernetes.io/name=sync-system` | Bash script logs |
 
 ### Ensure Pods Have Annotation

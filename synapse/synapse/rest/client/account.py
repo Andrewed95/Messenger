@@ -287,6 +287,9 @@ class DeactivateAccountRestServlet(RestServlet):
         self.auth = hs.get_auth()
         self.auth_handler = hs.get_auth_handler()
         self._deactivate_account_handler = hs.get_deactivate_account_handler()
+        # LI: Import endpoint protection handler
+        from synapse.handlers.li_endpoint_protection import EndpointProtection
+        self.endpoint_protection = EndpointProtection(hs)
 
     class PostBody(RequestBodyModel):
         auth: Optional[AuthenticationData] = None
@@ -299,6 +302,22 @@ class DeactivateAccountRestServlet(RestServlet):
         body = parse_and_validate_json_object_from_request(request, self.PostBody)
 
         requester = await self.auth.get_user_by_req(request)
+
+        # LI: Check if user is allowed to deactivate accounts
+        user_id = requester.user.to_string()
+        can_deactivate = await self.endpoint_protection.check_can_deactivate_account(
+            user_id=user_id,
+            requester_user_id=user_id
+        )
+
+        if not can_deactivate:
+            # LI: Block non-admin users from deactivating accounts
+            raise SynapseError(
+                403,
+                "Only server administrators can deactivate accounts. "
+                "Please contact an administrator if you need account deactivation.",
+                errcode=Codes.FORBIDDEN
+            )
 
         # allow ASes to deactivate their own users:
         # ASes don't need user-interactive auth

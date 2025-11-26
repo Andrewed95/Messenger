@@ -20,24 +20,14 @@ data:
             "m.homeserver": {
                 "base_url": "https://matrix.example.com",
                 "server_name": "matrix.example.com"
-            },
-            "m.identity_server": {
-                "base_url": "https://vector.im"
             }
         },
         "default_server_name": "matrix.example.com",
         "disable_custom_urls": false,
         "disable_guests": true,
         "disable_login_language_selector": false,
-        "disable_3pid_login": false,
+        "disable_3pid_login": true,
         "brand": "Element",
-        "integrations_ui_url": "https://scalar.vector.im/",
-        "integrations_rest_url": "https://scalar.vector.im/api",
-        "integrations_widgets_urls": [
-            "https://scalar.vector.im/_matrix/integrations/v1",
-            "https://scalar.vector.im/api"
-        ],
-        "bug_report_endpoint_url": "https://element.io/bugreports/submit",
         "default_country_code": "US",
         "show_labs_settings": true,
         "features": {
@@ -50,32 +40,21 @@ data:
         "default_theme": "light",
         "room_directory": {
             "servers": [
-                "matrix.example.com",
-                "matrix.org"
+                "matrix.example.com"
             ]
         },
         "enable_presence_by_hs_url": {
-            "https://matrix.example.com": true,
-            "https://matrix.org": false
+            "https://matrix.example.com": true
         },
         "setting_defaults": {
             "breadcrumbs": true,
             "UIFeature.urlPreviews": true,
             "UIFeature.feedback": false,
             "UIFeature.voip": true,
-            "UIFeature.widgets": true,
+            "UIFeature.widgets": false,
             "UIFeature.advancedSettings": true,
             "UIFeature.shareQrCode": true,
-            "UIFeature.shareSocial": true
-        },
-        "jitsi": {
-            "preferred_domain": "meet.element.io"
-        },
-        "element_call": {
-            "url": "https://call.element.io",
-            "use_exclusively": false,
-            "participant_limit": 8,
-            "brand": "Element Call"
+            "UIFeature.shareSocial": false
         }
     }
 

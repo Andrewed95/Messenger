@@ -50,7 +50,7 @@ deployment/
 │   ├── 03-haproxy/              # Intelligent load balancer
 │   ├── 04-livekit/              # Video/voice calling (Helm reference)
 │   ├── 06-coturn/               # TURN/STUN NAT traversal
-│   ├── 07-sygnal/               # Push notifications (APNs/FCM)
+│   # NOTE: Sygnal (push notifications) not included - requires external Apple/Google servers
 │   └── 08-key-vault/            # E2EE recovery key storage
 │
 ├── li-instance/                 ← Phase 3: Lawful Intercept
@@ -176,7 +176,7 @@ main-instance/01-synapse/secrets.yaml              # 12 secrets
 li-instance/01-synapse-li/deployment.yaml          # 7 secrets
 main-instance/08-key-vault/deployment.yaml         # 4 secrets
 main-instance/06-coturn/deployment.yaml            # 2 secrets
-main-instance/07-sygnal/deployment.yaml            # 8 secrets (APNs/FCM)
+# NOTE: Sygnal (push) not included - requires external Apple/Google servers
 infrastructure/03-minio/secrets.yaml               # 2 secrets
 li-instance/04-sync-system/deployment.yaml         # 5 secrets
 ```
@@ -503,8 +503,8 @@ kubectl apply -f main-instance/02-element-web/deployment.yaml
 # coturn (TURN/STUN)
 kubectl apply -f main-instance/06-coturn/deployment.yaml
 
-# Sygnal (Push notifications)
-kubectl apply -f main-instance/07-sygnal/deployment.yaml
+# NOTE: Sygnal (push) not deployed - requires external Apple/Google servers
+# Clients will use /sync endpoint for real-time updates (no push notifications)
 
 # key_vault (E2EE recovery)
 kubectl apply -f main-instance/08-key-vault/deployment.yaml

@@ -7,7 +7,6 @@ Complete monitoring and observability solution for Matrix/Synapse production dep
 The monitoring stack provides comprehensive observability for:
 - ✅ **Metrics**: Prometheus + Grafana
 - ✅ **Logs**: Loki + Promtail
-- ✅ **Alerts**: PrometheusRules (Alertmanager disabled per requirements)
 - ✅ **Dashboards**: Pre-configured Grafana dashboards
 - ✅ **LI Compliance**: Dedicated monitoring for LI instance and sync system
 
@@ -41,9 +40,9 @@ The monitoring stack provides comprehensive observability for:
 │  │              MATRIX COMPONENTS                      │      │
 │  │                                                     │      │
 │  │  Synapse │ PostgreSQL │ Redis │ MinIO │ HAProxy   │      │
-│  │  Sygnal  │ key_vault  │ Sync  │ NGINX │ Element   │      │
+│  │  key_vault │ Sync  │ NGINX │ Element │ coturn    │      │
 │  │                                                     │      │
-│  │  Metrics Port: 9090, 9187, 9121, 9000, 9101       │      │
+│  │  Metrics Port: 9090, 9187, 9121, 9000, 8404       │      │
 │  │  Logs: stdout/stderr → /var/log/pods              │      │
 │  └─────────────────────────────────────────────────────┘      │
 │                     MATRIX NAMESPACE                          │
@@ -59,13 +58,11 @@ The monitoring stack provides comprehensive observability for:
 - **Scrape Interval**: 30s
 - **Files**:
   - `servicemonitors.yaml`: 12 ServiceMonitors for all components
-  - `prometheusrules.yaml`: 60+ alerting rules
   - `README.md`: Complete documentation
 
 **Key Features**:
 - ServiceMonitor-based auto-discovery
 - CloudNativePG PodMonitors
-- Comprehensive alerting (critical + warning)
 - PromQL examples for common queries
 
 ### 2. Grafana (`02-grafana/`)
@@ -124,9 +121,8 @@ helm install loki grafana/loki-stack \
   --values ../values/loki-values.yaml \
   --version 2.10.0
 
-# 3. Deploy ServiceMonitors and PrometheusRules
+# 3. Deploy ServiceMonitors
 kubectl apply -f 01-prometheus/servicemonitors.yaml
-kubectl apply -f 01-prometheus/prometheusrules.yaml
 
 # 4. Deploy Grafana Dashboards
 kubectl apply -f 02-grafana/dashboards-configmap.yaml
@@ -187,9 +183,6 @@ kubectl get servicemonitors -n matrix
 # Check PodMonitors
 kubectl get podmonitors -n matrix
 
-# Check PrometheusRules
-kubectl get prometheusrules -n matrix
-
 # Check Prometheus targets (should all be UP)
 kubectl port-forward -n monitoring svc/prometheus-kube-prometheus-prometheus 9090:9090
 # Navigate to: http://localhost:9090/targets
@@ -208,9 +201,9 @@ kubectl port-forward -n monitoring svc/prometheus-kube-prometheus-prometheus 909
 | **PostgreSQL LI** | 9187 | `/metrics` | ✅ PodMonitor | CloudNativePG LI |
 | **Redis** | 9121 | `/metrics` | ✅ redis | Requires redis-exporter |
 | **MinIO** | 9000 | `/minio/v2/metrics/cluster` | ✅ minio | S3 storage |
-| **HAProxy** | 9101 | `/metrics` | ✅ haproxy | Load balancer |
+| **HAProxy** | 8404 | `/metrics` | ✅ haproxy | Load balancer |
 | **key_vault** | 8000 | `/metrics` | ✅ key-vault | E2EE key storage |
-| **Sygnal** | 9000 | `/metrics` | ✅ sygnal | Push notifications |
+| NOTE: Sygnal (push) not included - requires external Apple/Google servers |
 | **Sync System** | 9090 | `/metrics` | ✅ sync-system | LI sync jobs |
 | **NGINX Ingress** | 10254 | `/metrics` | ✅ nginx-ingress | Ingress controller |
 
@@ -262,38 +255,6 @@ cnpg_pg_replication_lag{cnpg_io_cluster="matrix-postgresql-li"}
 # Last media sync
 time() - kube_job_status_completion_time{job_name=~"sync-system-media.*"}
 ```
-
-## Alerting Rules
-
-### Critical Alerts (60+ rules)
-
-**Infrastructure**:
-- SynapseMainDown, PostgreSQLDown, RedisDown, MinIODown
-- HAProxyDown, KeyVaultDown, NginxIngressDown
-
-**Data Integrity**:
-- PostgreSQLBackupFailing
-- SynapseLIHighReplicationLag (>5min)
-- SyncSystemMediaJobFailing
-
-**Resource Exhaustion**:
-- SynapseConnectionPoolExhausted
-- PostgreSQLTooManyConnections
-- RedisConnectionsExhausted
-
-### Warning Alerts
-
-**Performance**:
-- SynapseHighSyncLatency (>500ms)
-- SynapseHighCPU (>80%)
-- SynapseHighMemory (>3.5GB)
-
-**Capacity**:
-- PostgreSQLReplicationLag (>60s)
-- RedisHighMemoryUsage (>90%)
-- MinIOHighStorageUsage (<20% free)
-
-See `01-prometheus/prometheusrules.yaml` for complete list.
 
 ## Log Queries (LogQL)
 
@@ -418,28 +379,10 @@ kubectl get pod <pod-name> -n matrix -o jsonpath='{.metadata.annotations}'
 kubectl logs -n monitoring loki-0
 ```
 
-### Alerts Not Firing
-
-1. **Check PrometheusRule**:
-```bash
-kubectl get prometheusrule matrix-alerts -n matrix
-```
-
-2. **Verify rule loaded in Prometheus**:
-```
-http://localhost:9090/rules
-```
-
-3. **Check alert state**:
-```
-http://localhost:9090/alerts
-```
-
 ## Best Practices
 
 ### 1. Monitoring Hygiene
 - **Review dashboards weekly**: Check for anomalies
-- **Test alerts monthly**: Verify alert routing works
 - **Tune thresholds**: Adjust based on actual usage patterns
 - **Clean up unused metrics**: Reduce cardinality
 

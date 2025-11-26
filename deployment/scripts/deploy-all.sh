@@ -321,11 +321,23 @@ deploy_phase2() {
     log_info "Deploying Synapse workers..."
     apply_manifest "$DEPLOYMENT_DIR/main-instance/02-workers/synchrotron-deployment.yaml"
     apply_manifest "$DEPLOYMENT_DIR/main-instance/02-workers/generic-worker-deployment.yaml"
-    apply_manifest "$DEPLOYMENT_DIR/main-instance/02-workers/media-repository-deployment.yaml"
+    apply_manifest "$DEPLOYMENT_DIR/main-instance/02-workers/media-repository-statefulset.yaml"
     apply_manifest "$DEPLOYMENT_DIR/main-instance/02-workers/event-persister-deployment.yaml"
     apply_manifest "$DEPLOYMENT_DIR/main-instance/02-workers/federation-sender-deployment.yaml"
+
+    # Deploy stream writers (required for stream_writers config)
+    log_info "Deploying stream writers..."
+    apply_manifest "$DEPLOYMENT_DIR/main-instance/02-workers/typing-writer-deployment.yaml"
+    apply_manifest "$DEPLOYMENT_DIR/main-instance/02-workers/todevice-writer-deployment.yaml"
+    apply_manifest "$DEPLOYMENT_DIR/main-instance/02-workers/receipts-writer-deployment.yaml"
+    apply_manifest "$DEPLOYMENT_DIR/main-instance/02-workers/presence-writer-deployment.yaml"
+
     sleep 30
-    check_pod_status "app.kubernetes.io/component=worker" "matrix" 10
+    check_pod_status "app.kubernetes.io/type=worker" "matrix" 10
+
+    # Deploy HPAs for auto-scaling (synchrotron and generic-worker only)
+    log_info "Deploying HPAs for auto-scaling..."
+    apply_manifest "$DEPLOYMENT_DIR/main-instance/02-workers/hpa.yaml"
 
     # Deploy HAProxy
     log_info "Deploying HAProxy..."
@@ -341,9 +353,13 @@ deploy_phase2() {
     log_info "Deploying coturn..."
     apply_manifest "$DEPLOYMENT_DIR/main-instance/06-coturn/deployment.yaml"
 
-    # Deploy Sygnal
-    log_info "Deploying Sygnal..."
-    apply_manifest "$DEPLOYMENT_DIR/main-instance/07-sygnal/deployment.yaml"
+    # Deploy LiveKit (WebRTC SFU for video/voice calling)
+    log_info "Deploying LiveKit..."
+    apply_manifest "$DEPLOYMENT_DIR/main-instance/04-livekit/deployment.yaml"
+
+    # NOTE: Sygnal (push notifications) intentionally NOT deployed
+    # Per CLAUDE.md Rule 4.3: No external services (air-gapped deployment)
+    # Push notifications require Apple/Google server connectivity
 
     # Deploy key_vault
     log_info "Deploying key_vault..."
@@ -358,6 +374,12 @@ deploy_phase2() {
 
 deploy_phase3() {
     log_section "Phase 3: Deploying LI Instance"
+
+    # Deploy Redis LI (isolated from main Redis for security)
+    log_info "Deploying Redis LI..."
+    apply_manifest "$DEPLOYMENT_DIR/li-instance/00-redis-li/deployment.yaml"
+    sleep 10
+    check_pod_status "app.kubernetes.io/name=redis,app.kubernetes.io/instance=li" "matrix" 1
 
     # Deploy Sync System
     log_info "Deploying sync system..."
@@ -431,9 +453,8 @@ deploy_phase4() {
     sleep 20
     apply_manifest "$DEPLOYMENT_DIR/monitoring/01-prometheus/servicemonitors.yaml"
 
-    # Deploy PrometheusRules
-    log_info "Deploying PrometheusRules..."
-    apply_manifest "$DEPLOYMENT_DIR/monitoring/01-prometheus/prometheusrules.yaml"
+    # NOTE: PrometheusRules (alerting) intentionally NOT deployed
+    # Per requirements: No alerting service - monitoring metrics only
 
     # Deploy Grafana Dashboards
     log_info "Deploying Grafana dashboards..."

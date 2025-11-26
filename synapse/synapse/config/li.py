@@ -19,6 +19,8 @@ class LIConfig(Config):
             "key_vault_url",
             "http://key-vault.matrix-li.svc.cluster.local:8000"
         )
+        # LI: Endpoint protection (ban room forget and account deactivation for non-admins)
+        self.endpoint_protection_enabled = li_config.get("endpoint_protection_enabled", True)
 
     def generate_config_section(self, **kwargs: Any) -> str:
         return """\
@@ -30,4 +32,12 @@ class LIConfig(Config):
           # key_vault Django service URL (hidden instance network)
           # Only main Synapse can access this URL
           key_vault_url: "http://key-vault.matrix-li.svc.cluster.local:8000"
+
+          # Endpoint protection: Prevent users from removing rooms or deactivating accounts
+          # When enabled, only server administrators can:
+          # - Forget rooms (remove from room list)
+          # - Deactivate user accounts
+          # This ensures rooms and accounts remain accessible for lawful interception.
+          # Default: true
+          endpoint_protection_enabled: true
         """

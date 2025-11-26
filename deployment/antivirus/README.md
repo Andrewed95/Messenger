@@ -513,9 +513,102 @@ All scans are logged:
 4. Cache hit ratio
 5. Average scan latency
 
+## Air-Gapped Deployment
+
+For deployments without internet access, ClamAV virus definitions must be pre-loaded or updated via an internal mirror.
+
+### Option 1: Pre-download Virus Definitions
+
+**WHERE:** Management node with internet access before air-gap installation
+
+```bash
+# 1. Create temporary ClamAV container to download definitions
+docker run --rm -v /tmp/clamav-db:/var/lib/clamav clamav/clamav:1.4 freshclam
+
+# 2. Copy definitions to deployment server
+# Files needed: main.cvd, daily.cvd, bytecode.cvd
+scp /tmp/clamav-db/*.cvd admin@deployment-node:/path/to/virus-db/
+
+# 3. Create ConfigMap from virus definitions
+kubectl create configmap clamav-virus-db \
+  --from-file=main.cvd=/path/to/virus-db/main.cvd \
+  --from-file=daily.cvd=/path/to/virus-db/daily.cvd \
+  --from-file=bytecode.cvd=/path/to/virus-db/bytecode.cvd \
+  -n matrix
+
+# 4. Update ClamAV DaemonSet to mount pre-loaded definitions
+# Edit 01-clamav/deployment.yaml to add volume mount
+```
+
+**Update Procedure** (Periodic):
+1. On internet-connected machine: Run `freshclam` to get latest definitions
+2. Copy updated files to air-gapped network
+3. Update ConfigMap: `kubectl create configmap clamav-virus-db --from-file=... --dry-run=client -o yaml | kubectl apply -f -`
+4. Restart ClamAV pods: `kubectl rollout restart daemonset/clamav -n matrix`
+
+### Option 2: Internal ClamAV Mirror
+
+**WHERE:** Internal server with controlled internet access (DMZ)
+
+```bash
+# 1. Set up cvdupdate on internal mirror server
+pip install cvdupdate
+cvd config set --dbdir /var/lib/clamav-mirror
+
+# 2. Create cron job to update definitions
+# /etc/cron.d/clamav-mirror
+0 */4 * * * root cvd update
+
+# 3. Serve definitions via HTTP
+# nginx config:
+server {
+    listen 80;
+    server_name clamav-mirror.internal.example.com;
+    root /var/lib/clamav-mirror;
+    autoindex on;
+}
+
+# 4. Update ClamAV freshclam.conf to use internal mirror
+# Edit 01-clamav/deployment.yaml ConfigMap:
+# freshclam.conf:
+#   DatabaseMirror http://clamav-mirror.internal.example.com
+#   ScriptedUpdates no
+```
+
+### Option 3: Disable Automatic Updates (Not Recommended)
+
+For fully isolated networks where virus definitions cannot be updated:
+
+```yaml
+# Edit 01-clamav/deployment.yaml ConfigMap
+freshclam.conf: |
+  # Disable automatic updates in air-gapped environment
+  # WARNING: Virus definitions will become outdated
+  # Only use this if Options 1 or 2 are not feasible
+  Checks 0
+  DNSDatabaseInfo no
+```
+
+**Risk:** Without updates, new viruses won't be detected. Consider monthly manual updates at minimum.
+
+### Verification After Air-Gap Setup
+
+```bash
+# Check virus definition age
+kubectl exec -n matrix <clamav-pod> -c clamd -- sigtool --info /var/lib/clamav/main.cvd
+
+# Expected output shows "Build time" - should be recent
+
+# Test scanning works
+kubectl exec -n matrix <clamav-pod> -c clamd -- \
+  echo 'X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*' | clamdscan -
+
+# Should return: EICAR-Test-File FOUND
+```
+
 ## Best Practices
 
-1. **Keep virus definitions updated**: FreshClam runs every 6 hours (default)
+1. **Keep virus definitions updated**: FreshClam runs every 6 hours (default) - or use air-gapped procedures above
 2. **Monitor scan latency**: Alert if > 2 seconds average
 3. **Monitor infected file rate**: Alert if sudden spike
 4. **Test monthly**: Upload EICAR test file to verify scanning works
@@ -558,9 +651,3 @@ kubectl rollout status deployment/content-scanner -n matrix
 - [ClamAV Virus Database](https://www.clamav.net/documents/clamav-virus-database-faq)
 - [Synapse Media Repository](https://matrix-org.github.io/synapse/latest/media_repository.html)
 
----
-
-**Antivirus System Version**: 1.0
-**Last Updated**: 2025-11-18
-**ClamAV Version**: 1.4.1
-**Content Scanner Version**: 2.1.0
