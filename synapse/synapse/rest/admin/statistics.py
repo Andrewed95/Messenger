@@ -160,13 +160,12 @@ class LIStatisticsTodayRestServlet(RestServlet):
             WHERE type = 'm.room.message'
             AND origin_server_ts >= ?
         """
-        messages_count = await self.store.db_pool.simple_select_one_onecol(
-            table="events",
-            keyvalues={},
-            retcol="COUNT(*)",
-            desc="li_count_messages_today",
-            allow_none=False,
+        messages_rows = await self.store.db_pool.execute(
+            "li_count_messages_today",
+            messages_sql,
+            today_ts_ms,
         )
+        messages_count = messages_rows[0][0] if messages_rows else 0
 
         # LI: Count active users today (users who sent events)
         active_users_sql = """

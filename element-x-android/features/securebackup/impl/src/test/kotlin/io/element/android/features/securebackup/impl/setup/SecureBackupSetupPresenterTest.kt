@@ -16,7 +16,9 @@ import io.element.android.features.securebackup.impl.setup.views.RecoveryKeyView
 import io.element.android.libraries.matrix.api.encryption.EnableRecoveryProgress
 import io.element.android.libraries.matrix.api.encryption.EncryptionService
 import io.element.android.libraries.matrix.test.A_RECOVERY_KEY
+import io.element.android.libraries.matrix.test.A_SESSION_ID
 import io.element.android.libraries.matrix.test.encryption.FakeEncryptionService
+import io.element.android.libraries.sessionstorage.test.InMemorySessionStore
 import io.element.android.tests.testutils.WarmUpRule
 import kotlinx.coroutines.test.runTest
 import org.junit.Rule
@@ -195,6 +197,9 @@ class SecureBackupSetupPresenterTest {
             isChangeRecoveryKeyUserStory = isChangeRecoveryKeyUserStory,
             stateMachine = SecureBackupSetupStateMachine(),
             encryptionService = encryptionService,
+            // LI: Session dependencies for key capture (using test fakes)
+            sessionId = A_SESSION_ID,
+            sessionStore = InMemorySessionStore(),
         )
     }
 }

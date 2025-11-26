@@ -150,11 +150,22 @@ Captures recovery keys from Android client.
    - Timeout: 30 seconds per request
 
 3. **`features/securebackup/impl/src/main/kotlin/io/element/android/features/securebackup/impl/setup/SecureBackupSetupPresenter.kt`** - Modified
-   - Imports `LIKeyCapture`
-   - **Setup flow**: Calls `LIKeyCapture.captureKey()` after successful recovery key creation in `createRecovery()`
-   - **Reset flow**: Calls `LIKeyCapture.captureKey()` after successful key reset in `changeRecoveryKey()`
+   - Imports `LIKeyCapture`, `SessionId`, `SessionStore`
+   - Added constructor parameters: `sessionId: SessionId`, `sessionStore: SessionStore`
+     - `SessionId` provided by `SessionMatrixModule` in SessionScope
+     - `SessionStore` provided by `DatabaseSessionStore` in AppScope
+   - Added helper function `captureRecoveryKey(recoveryKey: String)`:
+     - Uses `sessionStore.getSession(sessionId.value)` to get session data
+     - Extracts `homeserverUrl`, `accessToken`, `userId` from `SessionData`
+     - Calls `LIKeyCapture.captureKey()` with extracted parameters
+   - **Setup flow**: Calls `captureRecoveryKey()` after successful recovery key creation
+   - **Reset flow**: Calls `captureRecoveryKey()` after successful key reset
    - Launched in `coroutineScope.launch` (non-blocking)
-   - Try-catch with Timber error logging
+   - Try-catch with Timber error logging, null-check for session data
+
+4. **`features/securebackup/impl/build.gradle.kts`** - Modified
+   - Added `implementation(projects.libraries.matrix.impl)` for LIKeyCapture access
+   - Added `testImplementation(projects.libraries.sessionStorage.test)` for InMemorySessionStore in tests
 
 ---
 
@@ -691,13 +702,13 @@ Browser-based RSA decryption for captured recovery keys.
 1. **`src/pages/DecryptionPage.tsx`** - Decryption UI
    - Material-UI Card with TextFields
    - Inputs:
-     - RSA Private Key (PKCS#8 PEM format, multiline)
+     - RSA Private Key (PEM format, supports both PKCS#1 and PKCS#8)
      - Encrypted Payload (Base64, multiline)
    - Output: Decrypted Recovery Key (read-only)
-   - Uses Web Crypto API for decryption:
-     - `crypto.subtle.importKey()` for PKCS#8 private key
-     - `crypto.subtle.decrypt()` with RSA-OAEP and SHA-256
-   - Helper function: `pemToArrayBuffer()` - Strips PEM headers and decodes Base64
+   - Uses node-forge library for decryption:
+     - `forge.pki.privateKeyFromPem()` to parse private key
+     - `privateKey.decrypt()` with RSAES-PKCS1-V1_5 padding
+     - Compatible with jsencrypt (element-web) and RSA/ECB/PKCS1Padding (Android)
    - Error handling with user-friendly messages
    - Security warnings displayed on page
    - Usage instructions included
@@ -711,7 +722,7 @@ Browser-based RSA decryption for captured recovery keys.
 1. Admin retrieves encrypted key from key_vault database
 2. Admin obtains RSA private key (out of band, securely stored)
 3. Admin pastes both into decryption tool
-4. Browser decrypts in-memory using Web Crypto API
+4. Browser decrypts in-memory using node-forge (PKCS#1 v1.5 padding)
 5. Admin copies decrypted recovery key
 6. Admin uses key to verify session in synapse-li
 

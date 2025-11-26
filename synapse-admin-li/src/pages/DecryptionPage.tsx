@@ -1,5 +1,6 @@
 // LI: RSA decryption tool for decrypting captured recovery keys
 // This page is ONLY for synapse-admin-li (hidden instance)
+// Uses node-forge for PKCS#1 v1.5 decryption (compatible with jsencrypt/Android)
 
 import {
   Box,
@@ -11,6 +12,7 @@ import {
   Typography,
   Alert,
 } from "@mui/material";
+import forge from "node-forge";
 import { useState } from "react";
 import { Title } from "react-admin";
 
@@ -21,24 +23,8 @@ export const DecryptionPage = () => {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  // LI: Helper function to convert PEM to ArrayBuffer
-  const pemToArrayBuffer = (pem: string): ArrayBuffer => {
-    const pemHeader = "-----BEGIN PRIVATE KEY-----";
-    const pemFooter = "-----END PRIVATE KEY-----";
-    const pemContents = pem
-      .replace(pemHeader, "")
-      .replace(pemFooter, "")
-      .replace(/\\s/g, "");
-
-    const binaryString = window.atob(pemContents);
-    const bytes = new Uint8Array(binaryString.length);
-    for (let i = 0; i < binaryString.length; i++) {
-      bytes[i] = binaryString.charCodeAt(i);
-    }
-    return bytes.buffer;
-  };
-
-  // LI: Decrypt using Web Crypto API
+  // LI: Decrypt using node-forge with PKCS#1 v1.5 padding
+  // This is compatible with jsencrypt (element-web) and RSA/ECB/PKCS1Padding (Android)
   const handleDecrypt = async () => {
     try {
       setLoading(true);
@@ -53,34 +39,34 @@ export const DecryptionPage = () => {
         throw new Error("Please enter an encrypted payload");
       }
 
-      // LI: Import RSA private key
-      const privateKeyBuffer = pemToArrayBuffer(privateKey);
-      const cryptoKey = await window.crypto.subtle.importKey(
-        "pkcs8",
-        privateKeyBuffer,
-        {
-          name: "RSA-OAEP",
-          hash: "SHA-256",
-        },
-        false,
-        ["decrypt"]
-      );
+      // LI: Parse the PEM private key using node-forge
+      let privateKeyObj: forge.pki.rsa.PrivateKey;
+      try {
+        privateKeyObj = forge.pki.privateKeyFromPem(privateKey);
+      } catch (e) {
+        throw new Error("Invalid private key format. Please ensure it's a valid PEM-encoded RSA private key.");
+      }
 
-      // LI: Decode base64 encrypted payload
-      const encryptedBytes = Uint8Array.from(window.atob(encryptedPayload), c => c.charCodeAt(0));
+      // LI: Decode the Base64 encrypted payload
+      let encryptedBytes: string;
+      try {
+        encryptedBytes = forge.util.decode64(encryptedPayload.trim());
+      } catch (e) {
+        throw new Error("Invalid Base64 encoding in encrypted payload.");
+      }
 
-      // LI: Decrypt
-      const decryptedBuffer = await window.crypto.subtle.decrypt(
-        {
-          name: "RSA-OAEP",
-        },
-        cryptoKey,
-        encryptedBytes
-      );
+      // LI: Decrypt using PKCS#1 v1.5 padding (RSAES-PKCS1-V1_5)
+      // This matches the encryption used by:
+      // - element-web: jsencrypt library (uses PKCS#1 v1.5 by default)
+      // - element-x-android: Cipher.getInstance("RSA/ECB/PKCS1Padding")
+      let decryptedBytes: string;
+      try {
+        decryptedBytes = privateKeyObj.decrypt(encryptedBytes, "RSAES-PKCS1-V1_5");
+      } catch (e) {
+        throw new Error("Decryption failed. Please verify the private key matches the public key used for encryption.");
+      }
 
-      // LI: Convert to string
-      const decryptedText = new TextDecoder().decode(decryptedBuffer);
-      setDecrypted(decryptedText);
+      setDecrypted(decryptedBytes);
     } catch (err) {
       console.error("LI: Decryption error", err);
       setError(err instanceof Error ? err.message : "Decryption failed. Please check your private key and encrypted payload.");
@@ -115,12 +101,18 @@ export const DecryptionPage = () => {
             fullWidth
             multiline
             rows={8}
-            label="RSA Private Key (PKCS#8 PEM Format)"
+            label="RSA Private Key (PEM Format)"
             value={privateKey}
             onChange={(e) => setPrivateKey(e.target.value)}
             margin="normal"
-            placeholder={`-----BEGIN PRIVATE KEY-----
-MIIEvwIBADANBgkqhkiG9w0BAQEFAASCBKkwggSlAgEAAoIBAQC...
+            placeholder={`-----BEGIN RSA PRIVATE KEY-----
+MIIEpAIBAAKCAQEA...
+-----END RSA PRIVATE KEY-----
+
+or
+
+-----BEGIN PRIVATE KEY-----
+MIIEvgIBADANBgkqhkiG9w0BAQEFAASC...
 -----END PRIVATE KEY-----`}
             sx={{
               fontFamily: "monospace",
@@ -207,7 +199,7 @@ MIIEvwIBADANBgkqhkiG9w0BAQEFAASCBKkwggSlAgEAAoIBAQC...
             </Typography>
             <Typography variant="body2" component="div">
               <ol>
-                <li>Paste your RSA private key in PKCS#8 PEM format</li>
+                <li>Paste your RSA private key in PEM format (PKCS#1 or PKCS#8)</li>
                 <li>Paste the Base64 encoded encrypted payload from the key_vault database</li>
                 <li>Click "Decrypt" to reveal the recovery key</li>
                 <li>Use the recovery key to restore the user's secure backup if authorized</li>

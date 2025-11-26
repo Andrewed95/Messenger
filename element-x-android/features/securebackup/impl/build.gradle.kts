@@ -31,6 +31,8 @@ dependencies {
     implementation(projects.libraries.androidutils)
     implementation(projects.libraries.architecture)
     implementation(projects.libraries.matrix.api)
+    // LI: Required for LIKeyCapture access
+    implementation(projects.libraries.matrix.impl)
     implementation(projects.libraries.matrixui)
     implementation(projects.libraries.designsystem)
     implementation(projects.libraries.oidc.api)
@@ -41,4 +43,6 @@ dependencies {
 
     testCommonDependencies(libs, true)
     testImplementation(projects.libraries.matrix.test)
+    // LI: Required for InMemorySessionStore in tests
+    testImplementation(projects.libraries.sessionStorage.test)
 }

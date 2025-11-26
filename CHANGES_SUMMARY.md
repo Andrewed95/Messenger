@@ -64,7 +64,7 @@ This document provides a quick reference of all changes made across repositories
 
 ---
 
-## Files Modified (21)
+## Files Modified (24)
 
 ### key_vault (3)
 - `secret/admin.py` - Added Django admin interface
@@ -94,15 +94,18 @@ This document provides a quick reference of all changes made across repositories
 - `src/components/views/rooms/EventTile.tsx` - Use LIRedactedBody
 - `src/components/views/messages/MessageEvent.tsx` - Route to LIRedactedBody
 
-### element-x-android (1)
-- `features/securebackup/impl/.../SecureBackupSetupPresenter.kt` - Integration
+### element-x-android (3)
+- `features/securebackup/impl/.../SecureBackupSetupPresenter.kt` - Added SessionId and SessionStore injection for LI key capture
+- `features/securebackup/impl/build.gradle.kts` - Added matrix.impl and sessionStorage.test dependencies
+- `features/securebackup/impl/.../SecureBackupSetupPresenterTest.kt` - Updated to pass SessionId and SessionStore test fakes
 
 ### synapse-admin (2)
 - `src/synapse/dataProvider.ts` - Added malicious_files resource
 - `src/App.tsx` - Registered li_statistics and malicious_files
 
-### synapse-admin-li (1)
+### synapse-admin-li (2)
 - `src/App.tsx` - Added /decryption route
+- `package.json` - Added node-forge dependency for PKCS#1 v1.5 RSA decryption
 
 ---
 

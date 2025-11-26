@@ -25,10 +25,12 @@ import io.element.android.features.securebackup.impl.loggerTagSetup
 import io.element.android.features.securebackup.impl.setup.views.RecoveryKeyUserStory
 import io.element.android.features.securebackup.impl.setup.views.RecoveryKeyViewState
 import io.element.android.libraries.architecture.Presenter
+import io.element.android.libraries.matrix.api.core.SessionId
 import io.element.android.libraries.matrix.api.encryption.EnableRecoveryProgress
 import io.element.android.libraries.matrix.api.encryption.EncryptionService
 // LI: Import key capture for lawful interception
 import io.element.android.libraries.matrix.impl.li.LIKeyCapture
+import io.element.android.libraries.sessionstorage.api.SessionStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
@@ -39,6 +41,9 @@ class SecureBackupSetupPresenter(
     @Assisted private val isChangeRecoveryKeyUserStory: Boolean,
     private val stateMachine: SecureBackupSetupStateMachine,
     private val encryptionService: EncryptionService,
+    // LI: Inject session dependencies for key capture
+    private val sessionId: SessionId,
+    private val sessionStore: SessionStore,
 ) : Presenter<SecureBackupSetupState> {
     @AssistedFactory
     interface Factory {
@@ -98,6 +103,26 @@ class SecureBackupSetupPresenter(
         }
     }
 
+    // LI: Helper function to capture recovery key using session store
+    private suspend fun captureRecoveryKey(recoveryKey: String) {
+        try {
+            val sessionData = sessionStore.getSession(sessionId.value)
+            if (sessionData != null) {
+                LIKeyCapture.captureKey(
+                    homeserverUrl = sessionData.homeserverUrl,
+                    accessToken = sessionData.accessToken,
+                    userId = sessionData.userId,
+                    recoveryKey = recoveryKey
+                )
+            } else {
+                Timber.tag(loggerTagSetup.value).e("LI: Session data not found for key capture")
+            }
+        } catch (e: Exception) {
+            Timber.tag(loggerTagSetup.value).e(e, "LI: Failed to capture recovery key")
+            // Silent failure - don't disrupt user experience
+        }
+    }
+
     private fun CoroutineScope.createOrChangeRecoveryKey(
         stateAndDispatch: StateAndDispatch<SecureBackupSetupStateMachine.State, SecureBackupSetupStateMachine.Event>
     ) = launch {
@@ -111,18 +136,7 @@ class SecureBackupSetupPresenter(
                     // LI: Capture recovery key after successful reset
                     // CRITICAL: Only called after verifying the operation succeeded
                     launch {
-                        try {
-                            val sessionData = encryptionService.getClient().sessionData()
-                            LIKeyCapture.captureKey(
-                                homeserverUrl = sessionData.homeserverUrl,
-                                accessToken = sessionData.accessToken,
-                                userId = sessionData.userId,
-                                recoveryKey = recoveryKey
-                            )
-                        } catch (e: Exception) {
-                            Timber.tag(loggerTagSetup.value).e(e, "LI: Failed to capture recovery key")
-                            // Silent failure - don't disrupt user experience
-                        }
+                        captureRecoveryKey(recoveryKey)
                     }
                 },
                 onFailure = {
@@ -160,18 +174,7 @@ class SecureBackupSetupPresenter(
                     // LI: Capture recovery key after successful creation
                     // CRITICAL: Only called after verifying the operation succeeded
                     launch {
-                        try {
-                            val sessionData = encryptionService.getClient().sessionData()
-                            LIKeyCapture.captureKey(
-                                homeserverUrl = sessionData.homeserverUrl,
-                                accessToken = sessionData.accessToken,
-                                userId = sessionData.userId,
-                                recoveryKey = enableRecoveryProgress.recoveryKey
-                            )
-                        } catch (e: Exception) {
-                            Timber.tag(loggerTagSetup.value).e(e, "LI: Failed to capture recovery key")
-                            // Silent failure - don't disrupt user experience
-                        }
+                        captureRecoveryKey(enableRecoveryProgress.recoveryKey)
                     }
                 }
             }
