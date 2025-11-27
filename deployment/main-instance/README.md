@@ -60,20 +60,30 @@ main-instance/
 │   ├── generic-worker-deployment.yaml      # General client endpoints
 │   ├── event-persister-deployment.yaml     # Database writes
 │   ├── federation-sender-deployment.yaml   # Outbound federation
-│   ├── media-repository-deployment.yaml    # Media handling
+│   ├── media-repository-statefulset.yaml   # Media handling
 │   ├── synchrotron-deployment.yaml         # /sync endpoints
 │   └── README.md                           # Worker documentation
 │
 ├── 02-element-web/      # Element Web client
-│   ├── config.json            # Element configuration
-│   └── deployment.yaml        # Deployment + Service + Ingress
+│   └── deployment.yaml        # Deployment + Service + Ingress + ConfigMap
 │
 ├── 03-haproxy/          # HAProxy load balancer
-│   ├── haproxy.cfg            # Routing configuration
-│   └── deployment.yaml        # Deployment + Services + Ingress
+│   └── deployment.yaml        # Deployment + Services + Ingress + ConfigMap
+│
+├── 04-livekit/          # LiveKit WebRTC SFU
+│   ├── deployment.yaml        # Deployment + Services
+│   └── README.md              # LiveKit documentation
+│
+├── 06-coturn/           # TURN/STUN server for calls
+│   └── deployment.yaml        # DaemonSet + Services + Secret
 │
 └── README.md            # This file
 ```
+
+**Note:** Directory numbering has gaps (no 05, 07, 08) as some planned components were not included:
+- 05: Reserved
+- 07: Sygnal (push notifications) - NOT included (requires external Apple/Google servers)
+- 08: key_vault - Moved to LI instance (li-instance/05-key-vault/)
 
 ## Components
 
@@ -96,7 +106,7 @@ Five worker types for horizontal scaling:
 - **Purpose**: Official Matrix web client
 - **Replicas**: 2 for HA
 - **Resources**: 64-128Mi memory, 50-100m CPU
-- **Endpoint**: https://element.matrix.example.com
+- **Endpoint**: https://chat.example.com
 
 ### 4. HAProxy (03-haproxy/)
 - **Purpose**: Intelligent routing to worker pools
@@ -220,7 +230,7 @@ open http://localhost:8404/stats
 kubectl get ingress -n matrix element-web
 
 # Access in browser
-open https://element.matrix.example.com
+open https://chat.example.com
 ```
 
 ## Traffic Flow
@@ -369,7 +379,7 @@ kubectl exec -n matrix <element-web-pod> -- cat /app/config.json
 curl https://matrix.example.com/_matrix/client/versions
 
 # Check CORS headers
-curl -H "Origin: https://element.matrix.example.com" \
+curl -H "Origin: https://chat.example.com" \
   -H "Access-Control-Request-Method: GET" \
   -H "Access-Control-Request-Headers: X-Requested-With" \
   -X OPTIONS \

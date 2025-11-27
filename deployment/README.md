@@ -49,15 +49,15 @@ deployment/
 │   ├── 02-workers/              # 5 worker types (synchrotron, generic, etc.)
 │   ├── 03-haproxy/              # Intelligent load balancer
 │   ├── 04-livekit/              # Video/voice calling (Helm reference)
-│   ├── 06-coturn/               # TURN/STUN NAT traversal
+│   └── 06-coturn/               # TURN/STUN NAT traversal
 │   # NOTE: Sygnal (push notifications) not included - requires external Apple/Google servers
-│   └── 08-key-vault/            # E2EE recovery key storage
 │
 ├── li-instance/                 ← Phase 3: Lawful Intercept
 │   ├── 01-synapse-li/           # Read-only Synapse instance
 │   ├── 02-element-web-li/       # LI web client (shows deleted messages)
 │   ├── 03-synapse-admin-li/     # Admin interface for forensics
-│   └── 04-sync-system/          # DB replication + media sync
+│   ├── 04-sync-system/          # DB replication + media sync
+│   └── 05-key-vault/            # E2EE recovery key storage (SQLite)
 │
 ├── monitoring/                  ← Phase 4: Observability Stack
 │   ├── 01-prometheus/           # ServiceMonitors + AlertRules
@@ -174,7 +174,7 @@ grep -r "CHANGEME" . --include="*.yaml" | cut -d: -f1 | sort -u
 # Key files that MUST be updated (paths relative to deployment/):
 main-instance/01-synapse/secrets.yaml              # 12 secrets
 li-instance/01-synapse-li/deployment.yaml          # 7 secrets
-main-instance/08-key-vault/deployment.yaml         # 4 secrets
+li-instance/05-key-vault/deployment.yaml           # 3 secrets (DJANGO_SECRET_KEY, API_KEY, RSA_PRIVATE_KEY)
 main-instance/06-coturn/deployment.yaml            # 2 secrets
 # NOTE: Sygnal (push) not included - requires external Apple/Google servers
 infrastructure/03-minio/secrets.yaml               # 2 secrets
@@ -192,57 +192,63 @@ li-instance/04-sync-system/deployment.yaml         # 5 secrets
 
 ### Step 3: Configure Domains
 
-Replace `matrix.example.com` with your actual domains:
+Replace example domains with your actual domains.
 
-**Domain mapping:**
+**Complete Domain Reference:**
+
+| Instance | Service | Example Domain | Purpose |
+|----------|---------|----------------|---------|
+| **Main** | Synapse homeserver | `matrix.example.com` | Matrix server_name (user IDs: @user:matrix.example.com) |
+| **Main** | Element Web | `chat.example.com` | Main web client |
+| **Main** | coturn | `turn.example.com` | TURN/STUN server for calls |
+| **LI** | Synapse LI | `matrix.example.com` | **SAME as main** (required for user login) |
+| **LI** | Element Web LI | `chat-li.example.com` | **DIFFERENT** - LI admin web client |
+| **LI** | Synapse Admin LI | `admin-li.example.com` | **DIFFERENT** - LI forensics interface |
+| **LI** | key_vault | `keyvault.example.com` | **DIFFERENT** - Django admin for E2EE keys |
+
+**Note:** Main instance admin API is accessed via HAProxy routing (`/_synapse/admin/*`) through `matrix.example.com`. Synapse Admin UI is only deployed for LI instance.
+
+**IMPORTANT - Domain Rules:**
+- **Synapse homeserver** (server_name): MUST be the **SAME** for main and LI
+  - Users log in as `@user:matrix.example.com` on both instances
+  - LI needs same server_name to authenticate users from main
+- **Element Web, Synapse Admin, key_vault**: Use **DIFFERENT** domains for LI
+  - LI admin accesses separate UI at different URLs
+  - Network isolation controls who can reach LI domains
+
+**Files to update:**
+
 ```bash
-matrix.example.com        → your-domain.com          # Synapse homeserver (main AND LI)
-element.example.com       → chat.your-domain.com     # Element Web (main AND LI)
-admin.example.com         → admin.your-domain.com    # Synapse Admin (main AND LI)
-turn.example.com          → turn.your-domain.com     # TURN server
+# Main instance
+main-instance/01-synapse/configmap.yaml         # server_name, public_baseurl
+main-instance/02-element-web/deployment.yaml    # Element Web config + Ingress
+main-instance/06-coturn/deployment.yaml         # TURN realm
+
+# LI instance (DIFFERENT domains except homeserver)
+li-instance/01-synapse-li/deployment.yaml       # server_name (SAME as main)
+li-instance/02-element-web-li/deployment.yaml   # chat-li domain (DIFFERENT)
+li-instance/03-synapse-admin-li/deployment.yaml # admin-li domain (DIFFERENT)
+li-instance/05-key-vault/deployment.yaml        # keyvault domain (DIFFERENT)
+
+# Infrastructure
+infrastructure/04-networking/cert-manager-install.yaml  # TLS certificates
 ```
 
-**IMPORTANT - LI Instance Uses Same Hostnames:**
-- LI does NOT use separate domains (no li.your-domain.com)
-- Access to LI is controlled via **network isolation**, not different hostnames
-- Organization configures separate DNS in LI network to point to LI Ingress
-- See `li-instance/README.md` and `docs/PRE-DEPLOYMENT-CHECKLIST.md` for details
-
-**Files to update (85 occurrences across multiple files):**
-
-**WHERE:** On your **management node**, in the `deployment/` directory
-
-**Key files that contain domain references (paths relative to deployment/):**
-```bash
-# Main configuration
-main-instance/01-synapse/configmap.yaml
-
-# LI configuration
-li-instance/01-synapse-li/deployment.yaml
-li-instance/02-element-web-li/deployment.yaml
-
-# Element Web
-main-instance/02-element-web/deployment.yaml
-
-# Coturn, Ingress, Certificates
-main-instance/06-coturn/deployment.yaml
-infrastructure/04-networking/cert-manager-install.yaml
-```
-
-**HOW TO UPDATE - Option 1: Automated find-and-replace**
+**HOW TO UPDATE:**
 ```bash
 # Run from the deployment directory:
-# Replace all occurrences (replace YOUR-DOMAIN.COM with your actual domain):
-find . -name "*.yaml" -type f -exec sed -i 's/matrix\.example\.com/YOUR-DOMAIN.COM/g' {} +
-find . -name "*.yaml" -type f -exec sed -i 's/element\.example\.com/chat.YOUR-DOMAIN.COM/g' {} +
-find . -name "*.yaml" -type f -exec sed -i 's/admin\.example\.com/admin.YOUR-DOMAIN.COM/g' {} +
-find . -name "*.yaml" -type f -exec sed -i 's/turn\.example\.com/turn.YOUR-DOMAIN.COM/g' {} +
+
+# Main instance domains
+find . -path "./main-instance/*" -name "*.yaml" -exec sed -i 's/matrix\.example\.com/YOUR-MATRIX-DOMAIN/g' {} +
+find . -path "./main-instance/*" -name "*.yaml" -exec sed -i 's/chat\.example\.com/YOUR-CHAT-DOMAIN/g' {} +
+find . -path "./main-instance/*" -name "*.yaml" -exec sed -i 's/turn\.example\.com/YOUR-TURN-DOMAIN/g' {} +
+
+# LI instance domains (homeserver SAME, others DIFFERENT)
+find . -path "./li-instance/*" -name "*.yaml" -exec sed -i 's/matrix\.example\.com/YOUR-MATRIX-DOMAIN/g' {} +
+find . -path "./li-instance/*" -name "*.yaml" -exec sed -i 's/chat-li\.example\.com/YOUR-CHAT-LI-DOMAIN/g' {} +
+find . -path "./li-instance/*" -name "*.yaml" -exec sed -i 's/admin-li\.example\.com/YOUR-ADMIN-LI-DOMAIN/g' {} +
+find . -path "./li-instance/*" -name "*.yaml" -exec sed -i 's/keyvault\.example\.com/YOUR-KEYVAULT-DOMAIN/g' {} +
 ```
-
-**Note:** LI instance uses the SAME domain names as main (no separate LI domains needed).
-
-**HOW TO UPDATE - Option 2: Manual editing**
-Edit each file individually using nano and search/replace example.com with your domain.
 
 ### Step 4: Verify Storage Class
 
@@ -347,20 +353,33 @@ ed25519 a_long ed25519_key_string_here
 
 **IMPORTANT: Configure DNS A records BEFORE deploying** (so cert-manager can get TLS certificates):
 
+**Main Instance DNS Records:**
 ```bash
-# Main instance DNS records (point to main Kubernetes Ingress external IP)
+# Point to main Kubernetes Ingress external IP
 # (You'll get this IP after deploying Ingress in Phase 1)
 
-your-domain.com            → <main-ingress-external-ip>  # Synapse homeserver
-chat.your-domain.com       → <main-ingress-external-ip>  # Element Web
-admin.your-domain.com      → <main-ingress-external-ip>  # Synapse Admin
-turn.your-domain.com       → <turn-external-ip>           # TURN server
+matrix.example.com         → <main-ingress-external-ip>  # Synapse homeserver
+chat.example.com           → <main-ingress-external-ip>  # Element Web (main)
+turn.example.com           → <turn-external-ip>           # TURN server
 ```
 
-**LI Instance DNS Configuration:**
-LI uses the **SAME hostnames** as main instance - no separate DNS records needed.
-Access control is via network isolation (organization configures separate DNS in LI network).
-See `li-instance/README.md` and `docs/PRE-DEPLOYMENT-CHECKLIST.md` for LI network setup.
+**LI Instance DNS Records:**
+```bash
+# Point to LI Kubernetes Ingress IP (in LI network)
+# LI network is isolated - only authorized admins can reach these
+
+matrix.example.com         → <li-ingress-ip>              # SAME homeserver (in LI network DNS)
+chat-li.example.com        → <li-ingress-ip>              # Element Web LI (DIFFERENT domain)
+admin-li.example.com       → <li-ingress-ip>              # Synapse Admin LI (DIFFERENT domain)
+keyvault.example.com       → <li-ingress-ip>              # key_vault Django admin
+```
+
+**LI Network Isolation:**
+- LI services run on isolated network (organization configures this)
+- LI DNS resolves `matrix.example.com` to LI Ingress (not main Ingress)
+- Element Web LI and Synapse Admin LI use different domain names
+- Only authorized LI admins can reach the LI network
+- See `li-instance/README.md` for complete LI setup details
 
 **Note:** You can configure DNS after Phase 1 (Infrastructure) is complete.
 
@@ -489,9 +508,13 @@ kubectl wait --for=condition=Ready pod/synapse-main-0 -n matrix --timeout=600s
 ```bash
 kubectl apply -f main-instance/02-workers/synchrotron-deployment.yaml
 kubectl apply -f main-instance/02-workers/generic-worker-deployment.yaml
-kubectl apply -f main-instance/02-workers/media-repository-deployment.yaml
+kubectl apply -f main-instance/02-workers/media-repository-statefulset.yaml
 kubectl apply -f main-instance/02-workers/event-persister-deployment.yaml
 kubectl apply -f main-instance/02-workers/federation-sender-deployment.yaml
+kubectl apply -f main-instance/02-workers/typing-writer-deployment.yaml
+kubectl apply -f main-instance/02-workers/todevice-writer-deployment.yaml
+kubectl apply -f main-instance/02-workers/receipts-writer-deployment.yaml
+kubectl apply -f main-instance/02-workers/presence-writer-deployment.yaml
 
 # Wait for workers to be ready
 kubectl wait --for=condition=Available deployment -l app.kubernetes.io/component=worker -n matrix --timeout=600s
@@ -516,8 +539,7 @@ kubectl apply -f main-instance/06-coturn/deployment.yaml
 # NOTE: Sygnal (push) not deployed - requires external Apple/Google servers
 # Clients will use /sync endpoint for real-time updates (no push notifications)
 
-# key_vault (E2EE recovery)
-kubectl apply -f main-instance/08-key-vault/deployment.yaml
+# NOTE: key_vault is deployed in Phase 3 (LI Instance) - it resides in LI network
 ```
 
 **5. Deploy LiveKit (Optional - Video/Voice):**
@@ -586,11 +608,26 @@ kubectl apply -f li-instance/02-element-web-li/deployment.yaml
 kubectl apply -f li-instance/03-synapse-admin-li/deployment.yaml
 ```
 
+**5. Deploy key_vault (E2EE Recovery Key Storage):**
+```bash
+# key_vault stores encrypted recovery keys for E2EE messages
+# Synapse main (main network) can STORE keys
+# LI admin (LI network) can RETRIEVE keys
+kubectl apply -f li-instance/05-key-vault/deployment.yaml
+
+# Wait for key_vault to be ready
+kubectl wait --for=condition=Ready pod/key-vault-0 -n matrix --timeout=300s
+```
+
 **✅ Verification:**
 ```bash
-# Check LI components
+# Check LI components (including key_vault)
 kubectl get pods -n matrix -l matrix.instance=li
+kubectl get pods -n matrix -l app.kubernetes.io/name=key-vault
 kubectl get ingress -n matrix | grep li
+
+# Check key_vault is responding (TCP socket check - Django app doesn't expose /health)
+kubectl exec -n matrix key-vault-0 -- python -c "import socket; s=socket.socket(); s.settimeout(3); s.connect(('localhost', 8000)); print('OK'); s.close()"
 
 # Check replication lag (CRITICAL - should be < 5 seconds)
 kubectl exec -n matrix matrix-postgresql-li-1-0 -- \
@@ -842,11 +879,21 @@ kubectl get networkpolicies -n matrix
 | Role | Count | CPU | RAM | Storage | Purpose |
 |------|-------|-----|-----|---------|---------|
 | **Control Plane** | 3 | 4 vCPU | 8GB | 100GB SSD | Kubernetes masters |
-| **Application Nodes** | 3 | 8 vCPU | 16GB | 200GB SSD | Synapse, monitoring |
+| **Application Nodes** | 3 | 8 vCPU | 16GB | 200GB SSD | Synapse, Element Web, workers |
 | **Database Nodes** | 3 | 4 vCPU | 16GB | 500GB NVMe | PostgreSQL (1 primary + 2 replicas) |
 | **Storage Nodes** | 4 | 4 vCPU | 8GB | 1TB HDD | MinIO (media files, EC:4) |
 | **Call Servers** | 2 | 4 vCPU | 8GB | 50GB SSD | LiveKit + coturn |
-| **Total VMs** | **15** | **92 vCPU** | **180GB RAM** | **5.4TB** | |
+| **LI Server** | 1 | 4 vCPU | 8GB | 100GB SSD | Synapse LI, Element LI, Admin LI, key_vault |
+| **Monitoring Server** | 1 | 4 vCPU | 16GB | 200GB SSD | Prometheus, Grafana, Loki |
+| **Total VMs** | **17** | **100 vCPU** | **204GB RAM** | **5.7TB** | |
+
+**Where Services Run:**
+- **Application Nodes**: Synapse main, Synapse workers, Element Web, HAProxy, Synapse Admin, Content Scanner
+- **Database Nodes**: PostgreSQL main cluster (CloudNativePG), PostgreSQL LI cluster
+- **Storage Nodes**: MinIO distributed storage (S3-compatible media storage)
+- **Call Servers**: LiveKit (SFU for video/voice), coturn (TURN/STUN for NAT traversal)
+- **LI Server**: Synapse LI, Element Web LI, Synapse Admin LI, key_vault (isolated network)
+- **Monitoring Server**: Prometheus, Grafana, Loki, Promtail
 
 **Component Breakdown:**
 - **Synapse**: 1 main + 8 workers (2 sync, 2 generic, 2 event-persister, 2 federation)
@@ -854,7 +901,8 @@ kubectl get networkpolicies -n matrix
 - **Redis**: 3 instances (Sentinel HA)
 - **MinIO**: 4 nodes (EC:4 erasure coding, 1TB usable)
 - **ClamAV**: DaemonSet (1 pod per app node)
-- **Monitoring**: Prometheus + Grafana + Loki
+- **Monitoring**: Prometheus + Grafana + Loki (dedicated server)
+- **LI Instance**: Synapse LI + Element LI + Admin LI (dedicated server)
 
 **Expected Capacity:**
 - **Users**: 100 concurrent users
@@ -872,11 +920,21 @@ kubectl get networkpolicies -n matrix
 | Role | Count | CPU | RAM | Storage | Purpose |
 |------|-------|-----|-----|---------|---------|
 | **Control Plane** | 3 | 8 vCPU | 16GB | 200GB SSD | Kubernetes masters |
-| **Application Nodes** | 21 | 32 vCPU | 128GB | 2TB SSD | Synapse, monitoring, workers |
+| **Application Nodes** | 21 | 32 vCPU | 128GB | 2TB SSD | Synapse, Element Web, workers |
 | **Database Nodes** | 5 | 32 vCPU | 128GB | 4TB NVMe | PostgreSQL (1 primary + 4 replicas) |
 | **Storage Nodes** | 12 | 16 vCPU | 32GB | 4TB HDD | MinIO (3 pools of 4 nodes, EC:4) |
 | **Call Servers** | 10 | 16 vCPU | 32GB | 200GB SSD | LiveKit (5) + coturn (5) |
-| **Total VMs** | **51** | **1024 vCPU** | **3.7TB RAM** | **63TB** | |
+| **LI Server** | 1 | 16 vCPU | 64GB | 1TB SSD | Synapse LI, Element LI, Admin LI, key_vault |
+| **Monitoring Server** | 1 | 16 vCPU | 64GB | 1TB SSD | Prometheus, Grafana, Loki |
+| **Total VMs** | **53** | **1056 vCPU** | **3.8TB RAM** | **65.6TB** | |
+
+**Where Services Run:**
+- **Application Nodes**: Synapse main, Synapse workers, Element Web, HAProxy, Synapse Admin, Content Scanner
+- **Database Nodes**: PostgreSQL main cluster (CloudNativePG), PostgreSQL LI cluster
+- **Storage Nodes**: MinIO distributed storage (S3-compatible media storage)
+- **Call Servers**: LiveKit (SFU for video/voice), coturn (TURN/STUN for NAT traversal)
+- **LI Server**: Synapse LI, Element Web LI, Synapse Admin LI, key_vault (isolated network)
+- **Monitoring Server**: Prometheus, Grafana, Loki, Promtail
 
 **Component Breakdown:**
 - **Synapse**: 1 main + 38 workers (18 sync, 8 generic, 4 event-persister, 8 federation)
@@ -886,7 +944,8 @@ kubectl get networkpolicies -n matrix
 - **LiveKit**: 5 instances (HA + performance)
 - **coturn**: 5 instances (HA + performance)
 - **ClamAV**: DaemonSet (1 pod per app node = 21 pods)
-- **Monitoring**: Prometheus + Grafana + Loki (HA setup)
+- **Monitoring**: Prometheus + Grafana + Loki (dedicated server)
+- **LI Instance**: Synapse LI + Element LI + Admin LI (dedicated server)
 
 **Expected Capacity:**
 - **Users**: 20,000 concurrent users
@@ -901,9 +960,11 @@ kubectl get networkpolicies -n matrix
 
 | Scale | VMs | Total vCPU | Total RAM | Storage | Users (CCU) |
 |-------|-----|------------|-----------|---------|-------------|
-| **Small** | 15 | 92 | 180GB | 5.4TB | 100 |
-| **Medium** | 30 | 480 | 900GB | 20TB | 1,000 |
-| **Large** | 51 | 1024 | 3.7TB | 63TB | 20,000 |
+| **Small** | 17 | 100 | 204GB | 5.7TB | 100 |
+| **Medium** | 21 | 240 | 516GB | 12.2TB | 1,000 |
+| **Large** | 53 | 1056 | 3.8TB | 65.6TB | 20,000 |
+
+**Note:** All scales include dedicated LI server and Monitoring server. LI is mandatory for compliance.
 
 **📘 For detailed sizing (including 1K, 5K, 10K CCU), see `docs/SCALING-GUIDE.md`**
 
@@ -935,15 +996,10 @@ curl https://matrix.example.com/_matrix/client/versions
 
 **2. Element Web:**
 ```bash
-open https://element.matrix.example.com
+open https://chat.example.com
 ```
 
-**3. Admin Interface:**
-```bash
-open https://admin.matrix.example.com
-```
-
-**4. LI Instance:**
+**3. LI Instance:**
 ```bash
 # Only accessible from LI network (organization's responsibility to isolate)
 # From LI network, DNS resolves matrix.example.com to LI Ingress IP
@@ -965,6 +1021,88 @@ http://localhost:3000/dashboards
 # Check Content Scanner logs for scan confirmation
 kubectl logs -n matrix -l app.kubernetes.io/name=content-scanner | grep "scan"
 ```
+
+---
+
+## 👤 Creating Admin Users
+
+After deployment, create admin users for Synapse (main and LI) and key_vault Django admin.
+
+### **1. Synapse Main Instance - Admin User**
+
+**WHERE:** Run from your **management node**
+
+```bash
+# Create an admin user for the main Synapse instance
+kubectl exec -it -n matrix synapse-main-0 -- \
+  register_new_matrix_user \
+  -c /config/homeserver.yaml \
+  -u admin \
+  -p YOUR_SECURE_PASSWORD \
+  -a \
+  http://localhost:8008
+
+# The -a flag creates an admin user
+# Replace 'admin' with your preferred username
+# Replace 'YOUR_SECURE_PASSWORD' with a secure password
+```
+
+**Expected output:**
+```
+New user registered: @admin:matrix.example.com
+```
+
+### **2. Synapse LI Instance - Admin User**
+
+**WHERE:** Run from your **management node**
+
+```bash
+# Create an admin user for the LI Synapse instance
+kubectl exec -it -n matrix synapse-li-0 -- \
+  register_new_matrix_user \
+  -c /config/homeserver.yaml \
+  -u li-admin \
+  -p YOUR_SECURE_PASSWORD \
+  -a \
+  http://localhost:8008
+
+# This creates a SEPARATE admin account on the LI instance
+# LI admin can access forensics features via Synapse Admin LI
+```
+
+**Note:** LI admin is a separate account from main admin. This user accesses LI services only.
+
+### **3. key_vault Django Admin User**
+
+**WHERE:** Run from your **management node**
+
+The key_vault Django application requires a superuser to access the `/admin` panel.
+
+```bash
+# Create Django superuser for key_vault
+kubectl exec -it -n matrix key-vault-0 -- \
+  python manage.py createsuperuser \
+  --username keyvault-admin \
+  --email admin@example.com
+
+# You will be prompted to enter a password interactively
+# This user accesses the key_vault Django admin panel at https://keyvault.example.com/admin
+```
+
+**After creation, access key_vault admin:**
+1. Navigate to `https://keyvault.example.com/admin`
+2. Login with the superuser credentials you just created
+3. You can now view and manage E2EE recovery keys
+
+**Note:** Django automatically creates the SQLite database file if it doesn't exist. No manual database initialization is required.
+
+### **Admin User Summary**
+
+| Service | Admin Username | Access URL | Purpose |
+|---------|---------------|------------|---------|
+| Synapse Main | `@admin:matrix.example.com` | `https://matrix.example.com/_synapse/admin/` | Main instance administration (via API) |
+| Synapse LI | `@li-admin:matrix.example.com` | `https://admin-li.example.com` | LI forensics and user inspection |
+| key_vault | `keyvault-admin` | `https://keyvault.example.com/admin` | E2EE recovery key management |
 
 ---
 

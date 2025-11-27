@@ -22,7 +22,7 @@ data:
     server_name: "matrix.example.com"
     public_baseurl: "https://matrix.example.com"
     pid_file: /data/homeserver.pid
-    web_client_location: "https://element.matrix.example.com"
+    web_client_location: "https://chat.example.com"
 
     # ==================== LISTENERS ====================
 
@@ -289,9 +289,14 @@ data:
       msc3401_enabled: true  # Enable native group VoIP signaling
 
     # TURN server configuration for WebRTC (uses coturn)
+    # CRITICAL: These URIs are sent to clients - must be externally reachable addresses!
+    # Use the external domain configured for coturn (turn.matrix.example.com)
+    # The coturn DaemonSet uses hostNetwork:true so clients connect directly to node IPs
+    # Replace turn.matrix.example.com with your actual TURN server domain/IP
     turn_uris:
-      - "turn:coturn.matrix.svc.cluster.local:3478?transport=udp"
-      - "turn:coturn.matrix.svc.cluster.local:3478?transport=tcp"
+      - "turn:turn.matrix.example.com:3478?transport=udp"
+      - "turn:turn.matrix.example.com:3478?transport=tcp"
+      - "turns:turn.matrix.example.com:5349?transport=tcp"  # TLS variant for restrictive firewalls
     turn_shared_secret: "${TURN_SECRET}"
     turn_user_lifetime: 86400000  # 24 hours in milliseconds
 

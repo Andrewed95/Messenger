@@ -383,11 +383,53 @@ kubectl scale deployment content-scanner -n matrix --replicas=5
 - ✅ Macro viruses (Office files)
 - ✅ Infected archives (zip, tar, rar)
 - ✅ PDF exploits
+- ✅ **Files in encrypted (E2EE) rooms** - see below
 
 **Not protected against**:
 - ❌ Zero-day exploits (not yet in virus DB)
-- ❌ Encrypted archives (ClamAV cannot scan inside)
+- ❌ Password-protected archives (ClamAV cannot decrypt passwords)
 - ❌ Steganography (hidden data in images)
+
+### Encrypted Room (E2EE) Support
+
+The content scanner **CAN scan files shared in end-to-end encrypted rooms**.
+
+**How it works:**
+1. When a user shares a file in an E2EE room, Matrix encrypts the file with a symmetric key
+2. The symmetric key is shared with room members via E2EE message (room key)
+3. When downloading media, clients request the encrypted file + decryption info
+4. The content scanner's `crypto` configuration enables it to:
+   - Receive the encrypted file and decryption parameters
+   - Decrypt the file temporarily in memory
+   - Scan the decrypted content with ClamAV
+   - Return clean/infected result
+   - Never store the decrypted file
+
+**Configuration (required for E2EE support):**
+```yaml
+# In 02-scan-workers/deployment.yaml ConfigMap
+crypto:
+  pickle_path: /tmp/matrix-content-scanner/pickle.dat
+  pickle_key: "YOUR_SECURE_PICKLE_KEY"  # Generate with: openssl rand -hex 32
+```
+
+**Security notes:**
+- The `pickle_key` encrypts the Olm session state (not the media files)
+- Decryption is performed in memory only
+- The scanner never stores decrypted content to disk
+- All temporary files are in a size-limited emptyDir (5Gi)
+
+**Testing E2EE scanning:**
+```bash
+# 1. Create an E2EE room in Element
+# 2. Share a file (e.g., an image)
+# 3. Check content scanner logs:
+kubectl logs -n matrix -l app.kubernetes.io/name=content-scanner | grep "scan"
+# Should show the file was scanned
+
+# 4. Share EICAR test file in E2EE room
+# Expected: HTTP 403 when other members try to download
+```
 
 ### False Positives
 

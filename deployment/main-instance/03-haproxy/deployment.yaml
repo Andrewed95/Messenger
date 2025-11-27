@@ -132,12 +132,22 @@ data:
         server main synapse-main-0.synapse-main.matrix.svc.cluster.local:8008 check
 
     # Backend - Metrics
+    # Aggregates metrics from all Synapse workers for Prometheus scraping
     backend synapse_metrics
         balance roundrobin
+        # Main process
         server main synapse-main-0.synapse-main.matrix.svc.cluster.local:9090 check
+        # Scalable workers (handled by HPA)
         server-template generic 16 synapse-generic-worker.matrix.svc.cluster.local:9090 check resolvers k8s init-addr none
         server-template synchrotron 16 synapse-synchrotron.matrix.svc.cluster.local:9090 check resolvers k8s init-addr none
         server-template media 8 synapse-media-repository.matrix.svc.cluster.local:9090 check resolvers k8s init-addr none
+        # Stream writer workers (fixed replicas)
+        server-template event-persister 4 synapse-event-persister.matrix.svc.cluster.local:9090 check resolvers k8s init-addr none
+        server-template federation-sender 2 synapse-federation-sender.matrix.svc.cluster.local:9090 check resolvers k8s init-addr none
+        server-template typing-writer 2 synapse-typing-writer.matrix.svc.cluster.local:9090 check resolvers k8s init-addr none
+        server-template todevice-writer 2 synapse-todevice-writer.matrix.svc.cluster.local:9090 check resolvers k8s init-addr none
+        server-template receipts-writer 2 synapse-receipts-writer.matrix.svc.cluster.local:9090 check resolvers k8s init-addr none
+        server-template presence-writer 2 synapse-presence-writer.matrix.svc.cluster.local:9090 check resolvers k8s init-addr none
 
     # Health Check Backend
     backend health_check

@@ -28,31 +28,24 @@ metadata:
 data:
   config.yaml: |
     # Matrix Content Scanner Configuration
+    # Schema: https://github.com/element-hq/matrix-content-scanner-python
 
     # Web server configuration
     web:
       host: 0.0.0.0
       port: 8080
-      # Trust X-Forwarded-For headers
-      trust_x_forwarded_for: true
 
     # Scan configuration
     scan:
       # Script to run for scanning
-      # We use a custom script that calls clamdscan
+      # We use a custom script that calls ClamAV daemon
       script: /app/scan.sh
 
       # Temp directory for downloads
       temp_directory: /tmp/matrix-content-scanner
 
-      # Maximum file size to scan (100MB)
-      max_size: 104857600
-
       # Allowed MIME types (empty = allow all)
       allowed_mimetypes: []
-
-      # Remove metadata from images (privacy)
-      remove_metadata: true
 
     # Download configuration (upstream Synapse media repository)
     download:
@@ -60,16 +53,23 @@ data:
       # This points to Synapse media workers
       base_homeserver_url: http://synapse-media-repository.matrix.svc.cluster.local:8008
 
+    # Crypto configuration (REQUIRED for encrypted media support)
+    # Used to decrypt encrypted media files for scanning
+    crypto:
+      # Path to store the pickle file (Olm session state)
+      pickle_path: /tmp/matrix-content-scanner/pickle.dat
+      # Key for encrypting the pickle file
+      # CHANGEME: Generate with: openssl rand -hex 32
+      pickle_key: "CHANGEME_CONTENT_SCANNER_PICKLE_KEY"
+
     # Result cache (avoid re-scanning)
     result_cache:
-      # Cache type: memory or redis
-      type: memory
-
       # TTL in seconds (1 hour)
       ttl: 3600
-
       # Maximum cache size (entries)
       max_size: 10000
+      # Maximum file size to cache (100MB)
+      max_file_size: 104857600
 
     # Logging
     logging:
@@ -280,9 +280,11 @@ spec:
               cpu: 2000m
               memory: 2Gi
 
+          # Health probes - TCP socket check
+          # NOTE: matrix-content-scanner does not expose a /health endpoint
+          # Using TCP socket probe on the HTTP port
           livenessProbe:
-            httpGet:
-              path: /health
+            tcpSocket:
               port: 8080
             initialDelaySeconds: 30
             periodSeconds: 30
@@ -290,8 +292,7 @@ spec:
             failureThreshold: 3
 
           readinessProbe:
-            httpGet:
-              path: /health
+            tcpSocket:
               port: 8080
             initialDelaySeconds: 10
             periodSeconds: 10
@@ -299,8 +300,7 @@ spec:
             failureThreshold: 2
 
           startupProbe:
-            httpGet:
-              path: /health
+            tcpSocket:
               port: 8080
             initialDelaySeconds: 5
             periodSeconds: 5

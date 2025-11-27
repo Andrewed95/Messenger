@@ -335,9 +335,8 @@ deploy_phase2() {
     sleep 30
     check_pod_status "app.kubernetes.io/type=worker" "matrix" 10
 
-    # Deploy HPAs for auto-scaling (synchrotron and generic-worker only)
-    log_info "Deploying HPAs for auto-scaling..."
-    apply_manifest "$DEPLOYMENT_DIR/main-instance/02-workers/hpa.yaml"
+    # NOTE: HPAs are defined within synchrotron-deployment.yaml and generic-worker-deployment.yaml
+    # No separate hpa.yaml file needed
 
     # Deploy HAProxy
     log_info "Deploying HAProxy..."
@@ -361,9 +360,8 @@ deploy_phase2() {
     # Per CLAUDE.md Rule 4.3: No external services (air-gapped deployment)
     # Push notifications require Apple/Google server connectivity
 
-    # Deploy key_vault
-    log_info "Deploying key_vault..."
-    apply_manifest "$DEPLOYMENT_DIR/main-instance/08-key-vault/deployment.yaml"
+    # NOTE: key_vault is deployed in Phase 3 (LI Instance) per CLAUDE.md section 3.3
+    # key_vault is located in the LI network
 
     log_success "Phase 2 deployment complete!"
 }
@@ -390,7 +388,7 @@ deploy_phase3() {
     log_info "Running replication setup job..."
     if [[ "$DRY_RUN" == "false" ]]; then
         local job_name="sync-setup-$(date +%s)"
-        kubectl create job --from=cronjob/sync-system-setup-replication \
+        kubectl create job --from=job/sync-system-setup-replication \
             "$job_name" -n matrix || true
         sleep 5
         kubectl wait --for=condition=complete "job/$job_name" \
@@ -410,6 +408,12 @@ deploy_phase3() {
     # Deploy Synapse Admin LI
     log_info "Deploying Synapse Admin LI..."
     apply_manifest "$DEPLOYMENT_DIR/li-instance/03-synapse-admin-li/deployment.yaml"
+
+    # Deploy key_vault (E2EE recovery key storage)
+    # Located in LI network per CLAUDE.md section 3.3
+    log_info "Deploying key_vault..."
+    apply_manifest "$DEPLOYMENT_DIR/li-instance/05-key-vault/deployment.yaml"
+    check_pod_status "app.kubernetes.io/name=key-vault" "matrix" 1
 
     log_success "Phase 3 deployment complete!"
 }

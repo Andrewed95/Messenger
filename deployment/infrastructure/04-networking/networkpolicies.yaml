@@ -94,14 +94,7 @@ spec:
         - protocol: TCP
           port: 5432
 
-    # Allow from key_vault
-    - from:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/name: key-vault
-      ports:
-        - protocol: TCP
-          port: 5432
+    # NOTE: key_vault no longer needs PostgreSQL access - uses SQLite
 
     # Allow internal cluster replication
     - from:
@@ -201,15 +194,7 @@ spec:
         - protocol: TCP
           port: 6379
 
-    # Allow from key_vault
-    - from:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/name: key-vault
-      ports:
-        - protocol: TCP
-          port: 6379
-
+    # NOTE: key_vault no longer needs Redis access - uses SQLite
     # NOTE: LI instance now uses dedicated Redis LI (redis-li-access policy)
     # This prevents information leakage via Redis pub/sub channels
 
@@ -309,20 +294,29 @@ spec:
 
 ---
 ###############################################################################
-# 7. KEY_VAULT CRITICAL ISOLATION ⭐⭐⭐
-#    MOST IMPORTANT: Only Synapse main can access key_vault
-#    LI instance and all other pods MUST NOT access key_vault
+# 7. KEY_VAULT ACCESS CONTROL ⭐⭐⭐
+#    key_vault is located in LI network (per CLAUDE.md requirements)
+#
+#    ACCESS MODEL:
+#    - Synapse main (main network): Can STORE recovery keys when users set up E2EE
+#    - LI admin (LI network): Can RETRIEVE recovery keys for lawful intercept
+#    - All other access: BLOCKED
+#
+#    DATABASE: SQLite (local file) - no external database access needed
 ###############################################################################
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: key-vault-isolation
+  name: key-vault-access
   namespace: matrix
   labels:
     app.kubernetes.io/name: networkpolicy
     app.kubernetes.io/component: security-critical
   annotations:
-    description: "CRITICAL: Ensures only Synapse main can access encrypted recovery keys"
+    description: |
+      key_vault is in LI network. Access controlled as follows:
+      - Synapse main: STORE keys (cross-network, NetworkPolicy allows)
+      - LI admin: RETRIEVE keys (within LI network)
 spec:
   podSelector:
     matchLabels:
@@ -331,7 +325,9 @@ spec:
     - Ingress
     - Egress
   ingress:
-    # ONLY allow from Synapse main instance
+    # 1. Allow from Synapse main instance (for STORING recovery keys)
+    #    This is cross-network access: main network → LI network
+    #    Required when users set up E2EE, Synapse stores encrypted recovery key
     - from:
         - podSelector:
             matchLabels:
@@ -339,10 +335,31 @@ spec:
               matrix.instance: main
       ports:
         - protocol: TCP
-          port: 8000  # Django HTTP
+          port: 8000  # Django HTTP API
+
+    # 2. Allow from LI Synapse Admin (for RETRIEVING recovery keys)
+    #    LI admin uses this to get encrypted keys for lawful intercept
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: synapse-admin
+              matrix.instance: li
+      ports:
+        - protocol: TCP
+          port: 8000
+
+    # 3. Allow from within LI network (for admin API access)
+    #    LI administrators may access key_vault directly via API
+    - from:
+        - podSelector:
+            matchLabels:
+              matrix.instance: li
+      ports:
+        - protocol: TCP
+          port: 8000
 
   egress:
-    # Allow DNS
+    # Allow DNS only - SQLite database requires no external connections
     - to:
         - namespaceSelector:
             matchExpressions:
@@ -354,24 +371,7 @@ spec:
           port: 53
         - protocol: TCP
           port: 53
-
-    # Allow PostgreSQL main access (for key_vault database)
-    - to:
-        - podSelector:
-            matchLabels:
-              cnpg.io/cluster: matrix-postgresql
-      ports:
-        - protocol: TCP
-          port: 5432
-
-    # Allow Redis access (for Django sessions)
-    - to:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/name: redis
-      ports:
-        - protocol: TCP
-          port: 6379
+    # NOTE: No PostgreSQL or Redis egress needed - using SQLite
 
 ---
 ###############################################################################
@@ -729,11 +729,9 @@ spec:
               app.kubernetes.io/name: synapse
       ports:
         - protocol: TCP
-          port: 8008  # Synapse HTTP
+          port: 8008  # Synapse HTTP API
         - protocol: TCP
-          port: 8009  # Synapse replication
-        - protocol: TCP
-          port: 9000  # Synapse metrics
+          port: 9090  # Synapse metrics (for stats backend)
 
     # Allow access to content scanner (antivirus proxy for media downloads)
     - to:
@@ -812,7 +810,7 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: synapse
-              app.kubernetes.io/component: main
+              app.kubernetes.io/component: homeserver
       ports:
         - protocol: TCP
           port: 9093  # Replication
@@ -870,7 +868,7 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: synapse
-              app.kubernetes.io/component: main
+              app.kubernetes.io/component: homeserver
       ports:
         - protocol: TCP
           port: 8080
@@ -907,62 +905,5 @@ spec:
         - protocol: TCP
           port: 8008
 
----
-###############################################################################
-# 17. Sync System Access
-#     Sync system needs access to both main and LI PostgreSQL and MinIO
-###############################################################################
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: sync-system-access
-  namespace: matrix
-  labels:
-    app.kubernetes.io/name: networkpolicy
-    app.kubernetes.io/component: sync
-spec:
-  podSelector:
-    matchLabels:
-      app.kubernetes.io/name: sync-system
-  policyTypes:
-    - Egress
-  egress:
-    # Allow DNS
-    - to:
-        - namespaceSelector:
-            matchExpressions:
-              - key: kubernetes.io/metadata.name
-                operator: In
-                values: ["kube-system"]
-      ports:
-        - protocol: UDP
-          port: 53
-        - protocol: TCP
-          port: 53
-
-    # Allow main PostgreSQL access
-    - to:
-        - podSelector:
-            matchLabels:
-              cnpg.io/cluster: matrix-postgresql
-      ports:
-        - protocol: TCP
-          port: 5432
-
-    # Allow LI PostgreSQL access
-    - to:
-        - podSelector:
-            matchLabels:
-              cnpg.io/cluster: matrix-postgresql-li
-      ports:
-        - protocol: TCP
-          port: 5432
-
-    # Allow MinIO access for rclone sync
-    - to:
-        - podSelector:
-            matchLabels:
-              v1.min.io/tenant: matrix-minio
-      ports:
-        - protocol: TCP
-          port: 9000
+# NOTE: Sync System NetworkPolicy is defined in sync-system-networkpolicy.yaml
+# That file contains the complete sync-system-access policy with Redis access

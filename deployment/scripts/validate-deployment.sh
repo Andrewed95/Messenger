@@ -132,14 +132,14 @@ check_pattern "monitoring/01-prometheus/servicemonitors.yaml" \
     'path: /stats;csv' \
     "HAProxy ServiceMonitor metrics path"
 
-# Check key_vault Django app
-check_pattern "main-instance/08-key-vault/deployment.yaml" \
-    "name: setup-django-app" \
-    "key_vault Django app setup"
+# Check key_vault in LI instance (per CLAUDE.md section 3.3)
+check_pattern "li-instance/05-key-vault/deployment.yaml" \
+    "name: run-migrations" \
+    "key_vault Django migrations init container"
 
-check_pattern "main-instance/08-key-vault/deployment.yaml" \
-    "cat > /app/manage.py" \
-    "key_vault Django structure generation"
+check_pattern "li-instance/05-key-vault/deployment.yaml" \
+    "sqlite3" \
+    "key_vault SQLite database configuration"
 
 # Check LiveKit configuration
 check_pattern "main-instance/04-livekit/deployment.yaml" \
@@ -156,8 +156,8 @@ echo "-----------------------------------------"
 
 # Check sync system replication
 check_pattern "li-instance/04-sync-system/deployment.yaml" \
-    "GRANT SELECT ON ALL TABLES IN SCHEMA public TO synapse" \
-    "Replication using existing synapse user"
+    "GRANT SELECT ON ALL TABLES IN SCHEMA public TO postgres" \
+    "Replication setup using postgres superuser"
 
 check_pattern "li-instance/04-sync-system/deployment.yaml" \
     'name: POSTGRES_PASSWORD' \
@@ -169,12 +169,12 @@ echo "-----------------------------------------"
 
 # Check content scanner
 check_pattern "antivirus/02-scan-workers/deployment.yaml" \
-    'nc -w 30 clamav.matrix.svc.cluster.local' \
-    "Content scanner TCP connection to ClamAV"
+    'clamav.matrix.svc.cluster.local' \
+    "Content scanner ClamAV connection configuration"
 
 check_pattern "antivirus/02-scan-workers/deployment.yaml" \
-    'echo "SCAN' \
-    "Content scanner using netcat"
+    'tcpSocket' \
+    "Content scanner TCP socket health probe"
 
 echo ""
 echo "5. Checking for Remaining Issues..."

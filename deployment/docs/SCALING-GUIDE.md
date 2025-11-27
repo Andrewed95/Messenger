@@ -354,16 +354,18 @@ kubectl scale statefulset/synapse-event-persister --replicas=5 -n matrix
 | Role | Count | CPU | RAM | Storage | Purpose |
 |------|-------|-----|-----|---------|---------|
 | **Control Plane** | 3 | 4 vCPU | 8GB | 100GB SSD | Kubernetes masters |
-| **Application Nodes** | 3 | 8 vCPU | 16GB | 200GB SSD | Synapse, monitoring |
-| **Database Node** | 3 | 4 vCPU | 16GB | 500GB NVMe | PostgreSQL cluster |
+| **Application Nodes** | 3 | 8 vCPU | 16GB | 200GB SSD | Synapse, Element Web, workers |
+| **Database Nodes** | 3 | 4 vCPU | 16GB | 500GB NVMe | PostgreSQL cluster |
 | **Storage Nodes** | 4 | 4 vCPU | 8GB | 1TB HDD | MinIO (media files) |
 | **Call Servers** | 2 | 4 vCPU | 8GB | 50GB SSD | LiveKit + coturn |
-| **Total Servers** | **15** | | | | |
+| **LI Server** | 1 | 4 vCPU | 8GB | 100GB SSD | Synapse LI, Element LI, Admin LI, key_vault |
+| **Monitoring Server** | 1 | 4 vCPU | 16GB | 200GB SSD | Prometheus, Grafana, Loki |
+| **Total Servers** | **17** | | | | |
 
 **Total Resources:**
-- vCPU: 92 cores
-- RAM: 180GB
-- Storage: 5.4TB (1TB usable for media with EC:4)
+- vCPU: 100 cores
+- RAM: 204GB
+- Storage: 5.7TB (1TB usable for media with EC:4)
 
 #### Component Configuration
 
@@ -539,16 +541,18 @@ checkpoint_completion_target = 0.9
 | Role | Count | CPU | RAM | Storage | Purpose |
 |------|-------|-----|-----|---------|---------|
 | **Control Plane** | 3 | 4 vCPU | 8GB | 100GB SSD | Kubernetes masters |
-| **Application Nodes** | 5 | 16 vCPU | 32GB | 500GB SSD | Synapse, monitoring |
+| **Application Nodes** | 5 | 16 vCPU | 32GB | 500GB SSD | Synapse, Element Web, workers |
 | **Database Nodes** | 3 | 8 vCPU | 32GB | 1TB NVMe | PostgreSQL cluster |
 | **Storage Nodes** | 4 | 8 vCPU | 16GB | 2TB HDD | MinIO (media files) |
 | **Call Servers** | 4 | 8 vCPU | 16GB | 100GB SSD | LiveKit + coturn (2+2) |
-| **Total Servers** | **19** | | | | |
+| **LI Server** | 1 | 4 vCPU | 16GB | 200GB SSD | Synapse LI, Element LI, Admin LI, key_vault |
+| **Monitoring Server** | 1 | 8 vCPU | 32GB | 300GB SSD | Prometheus, Grafana, Loki |
+| **Total Servers** | **21** | | | | |
 
 **Total Resources:**
-- vCPU: 228 cores
-- RAM: 468GB
-- Storage: 11.7TB (2TB usable for media)
+- vCPU: 240 cores
+- RAM: 516GB
+- Storage: 12.2TB (2TB usable for media)
 
 #### Component Configuration
 
@@ -699,16 +703,18 @@ autovacuum_max_workers = 4
 | Role | Count | CPU | RAM | Storage | Purpose |
 |------|-------|-----|-----|---------|---------|
 | **Control Plane** | 3 | 8 vCPU | 16GB | 200GB SSD | Kubernetes masters |
-| **Application Nodes** | 8 | 16 vCPU | 64GB | 1TB SSD | Synapse, monitoring |
+| **Application Nodes** | 8 | 16 vCPU | 64GB | 1TB SSD | Synapse, Element Web, workers |
 | **Database Nodes** | 3 | 16 vCPU | 64GB | 2TB NVMe | PostgreSQL cluster |
 | **Storage Nodes** | 4 | 16 vCPU | 32GB | 4TB HDD | MinIO (media files) |
 | **Call Servers** | 6 | 16 vCPU | 32GB | 200GB SSD | LiveKit + coturn (3+3) |
-| **Total Servers** | **24** | | | | |
+| **LI Server** | 1 | 8 vCPU | 32GB | 500GB SSD | Synapse LI, Element LI, Admin LI, key_vault |
+| **Monitoring Server** | 1 | 8 vCPU | 32GB | 500GB SSD | Prometheus, Grafana, Loki |
+| **Total Servers** | **26** | | | | |
 
 **Total Resources:**
-- vCPU: 448 cores
-- RAM: 1,056GB (1TB)
-- Storage: 21.4TB (4TB usable for media)
+- vCPU: 464 cores
+- RAM: 1,120GB (~1.1TB)
+- Storage: 22.4TB (4TB usable for media)
 
 #### Component Configuration
 
@@ -860,16 +866,18 @@ autovacuum_naptime = 30s
 | Role | Count | CPU | RAM | Storage | Purpose |
 |------|-------|-----|-----|---------|---------|
 | **Control Plane** | 3 | 8 vCPU | 16GB | 200GB SSD | Kubernetes masters |
-| **Application Nodes** | 12 | 32 vCPU | 128GB | 2TB SSD | Synapse, monitoring |
+| **Application Nodes** | 12 | 32 vCPU | 128GB | 2TB SSD | Synapse, Element Web, workers |
 | **Database Nodes** | 3 | 32 vCPU | 128GB | 4TB NVMe | PostgreSQL cluster |
 | **Storage Nodes** | 8 | 16 vCPU | 32GB | 4TB HDD | MinIO (2 pools of 4) |
 | **Call Servers** | 8 | 16 vCPU | 32GB | 200GB SSD | LiveKit + coturn (4+4) |
-| **Total Servers** | **34** | | | | |
+| **LI Server** | 1 | 8 vCPU | 32GB | 500GB SSD | Synapse LI, Element LI, Admin LI, key_vault |
+| **Monitoring Server** | 1 | 16 vCPU | 64GB | 1TB SSD | Prometheus, Grafana, Loki |
+| **Total Servers** | **36** | | | | |
 
 **Total Resources:**
-- vCPU: 704 cores
-- RAM: 2,144GB (2.1TB)
-- Storage: 42.4TB (8TB usable for media)
+- vCPU: 728 cores
+- RAM: 2,240GB (~2.2TB)
+- Storage: 43.9TB (8TB usable for media)
 
 #### Component Configuration
 
@@ -1021,16 +1029,18 @@ autovacuum_naptime = 20s
 | Role | Count | CPU | RAM | Storage | Purpose |
 |------|-------|-----|-----|---------|---------|
 | **Control Plane** | 3 | 8 vCPU | 16GB | 200GB SSD | Kubernetes masters |
-| **Application Nodes** | 21 | 32 vCPU | 128GB | 2TB SSD | Synapse, monitoring |
+| **Application Nodes** | 21 | 32 vCPU | 128GB | 2TB SSD | Synapse, Element Web, workers |
 | **Database Nodes** | 5 | 32 vCPU | 128GB | 4TB NVMe | PostgreSQL (1 primary + 4 replicas) |
 | **Storage Nodes** | 12 | 16 vCPU | 32GB | 4TB HDD | MinIO (3 pools of 4) |
 | **Call Servers** | 10 | 16 vCPU | 32GB | 200GB SSD | LiveKit + coturn (5+5) |
-| **Total Servers** | **51** | | | | |
+| **LI Server** | 1 | 16 vCPU | 64GB | 1TB SSD | Synapse LI, Element LI, Admin LI, key_vault |
+| **Monitoring Server** | 1 | 16 vCPU | 64GB | 1TB SSD | Prometheus, Grafana, Loki |
+| **Total Servers** | **53** | | | | |
 
 **Total Resources:**
-- vCPU: 1,024 cores (1.0TB)
-- RAM: 3,712GB (3.6TB)
-- Storage: 63.6TB (12TB usable for media)
+- vCPU: 1,056 cores
+- RAM: 3,840GB (~3.8TB)
+- Storage: 65.6TB (12TB usable for media)
 
 #### Component Configuration
 
@@ -1170,11 +1180,13 @@ autovacuum_analyze_scale_factor = 0.025
 
 | Scale | Servers | Total vCPU | Total RAM | Usable Storage |
 |-------|---------|------------|-----------|----------------|
-| **100 CCU** | 15 | 92 | 180GB | 1TB |
-| **1K CCU** | 19 | 228 | 468GB | 2TB |
-| **5K CCU** | 24 | 448 | 1,056GB | 4TB |
-| **10K CCU** | 34 | 704 | 2,144GB | 8TB |
-| **20K CCU** | 51 | 1,024 | 3,712GB | 12TB |
+| **100 CCU** | 17 | 100 | 204GB | 1TB |
+| **1K CCU** | 21 | 240 | 516GB | 2TB |
+| **5K CCU** | 26 | 464 | 1,120GB | 4TB |
+| **10K CCU** | 36 | 728 | 2,240GB | 8TB |
+| **20K CCU** | 53 | 1,056 | 3,840GB | 12TB |
+
+**Note:** All scales include dedicated LI server and Monitoring server. LI is mandatory for compliance.
 
 ### 8.2 When to Scale Up
 

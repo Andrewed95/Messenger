@@ -82,14 +82,14 @@ Here's your path from zero to a running production Matrix homeserver:
    ├─ Element Web (chat interface)
    ├─ coturn (NAT traversal for calls)
    # NOTE: Sygnal (push) not included - requires external Apple/Google servers
-   ├─ key_vault (E2EE recovery)
    └─ LiveKit (optional video/voice)
         ↓
 🔍 PHASE 5: LI INSTANCE DEPLOYMENT
    ├─ Sync system (DB replication + media sync)
    ├─ Synapse LI (read-only instance)
    ├─ Element Web LI (shows deleted messages)
-   └─ Synapse Admin LI (forensics interface)
+   ├─ Synapse Admin LI (forensics interface)
+   └─ key_vault (E2EE recovery - in LI network)
         ↓
 📊 PHASE 6: MONITORING DEPLOYMENT
    ├─ Prometheus (metrics collection)
@@ -278,9 +278,8 @@ Purpose: Handle all Matrix protocol operations
 │  NOTE: Sygnal (push notifications) NOT INCLUDED                    │
 │  Reason: Requires external Apple/Google servers (air-gapped deploy)│
 ├────────────────────────────────────────────────────────────────────┤
-│  key_vault                    │  E2EE backup key storage           │
-│  Files: main-instance/08-key-vault/                                │
-│  Purpose: Store encryption key backups for recovery                │
+│  NOTE: key_vault is deployed in LI INSTANCE (Phase 5)              │
+│  Located in LI network for security (per CLAUDE.md requirements)   │
 ├────────────────────────────────────────────────────────────────────┤
 │  LiveKit (optional)           │  Advanced video/voice              │
 │  Files: main-instance/04-livekit/                                  │
@@ -363,12 +362,28 @@ Purpose: Handle all Matrix protocol operations
 └─────────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────────┐
+│                      KEY_VAULT SERVICE                          │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │  key_vault (E2EE Recovery Key Storage)                   │  │
+│  │  • Stores encrypted recovery keys (RSA 2048-bit)        │  │
+│  │  • SQLite database (low I/O, simple deployment)         │  │
+│  │  • Located in LI network for isolation                  │  │
+│  │  • Cross-network access model:                          │  │
+│  │    - Synapse main (main network) → STORE keys           │  │
+│  │    - LI admin (LI network) → RETRIEVE keys              │  │
+│  │  Files: li-instance/05-key-vault/                       │  │
+│  └──────────────────────────────────────────────────────────┘  │
+│  Purpose: Enable E2EE recovery for lawful intercept            │
+└─────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────┐
 │                    CRITICAL SECURITY                            │
 │  ┌──────────────────────────────────────────────────────────┐  │
-│  │  NetworkPolicy: key-vault-isolation                      │  │
-│  │  • ONLY Synapse main can access key_vault                │  │
-│  │  • LI instance CANNOT access encryption keys             │  │
-│  │  • Prevents LI from decrypting E2EE messages             │  │
+│  │  NetworkPolicy: key-vault-access                         │  │
+│  │  • key_vault located in LI network (isolation)          │  │
+│  │  • Synapse main can STORE recovery keys (cross-network) │  │
+│  │  • LI admin can RETRIEVE keys for E2EE recovery         │  │
+│  │  • All other access BLOCKED                             │  │
 │  └──────────────────────────────────────────────────────────┘  │
 │  ┌──────────────────────────────────────────────────────────┐  │
 │  │  NetworkPolicy: li-instance-isolation                    │  │
@@ -615,11 +630,7 @@ deployment/
 │   │   Configuration: Shared secret, domains, port ranges
 │   │
 │   # NOTE: 07-sygnal/ NOT INCLUDED - requires external Apple/Google servers
-│   │
-│   └── 08-key-vault/
-│       └── deployment.yaml         → E2EE key backup service
-│       Purpose: Store encryption key backups
-│       Configuration: API keys, Django secret, encryption key
+│   # NOTE: key_vault is in li-instance/05-key-vault/ (LI network)
 │
 ├── li-instance/                ← PHASE 5: Compliance
 │   │
@@ -642,6 +653,12 @@ deployment/
 │   │   └── deployment.yaml         → Replication + sync jobs
 │   │   Purpose: Keep LI database and media synchronized
 │   │   Configuration: DB credentials, MinIO credentials
+│   │
+│   ├── 05-key-vault/
+│   │   └── deployment.yaml         → E2EE key backup service
+│   │   Purpose: Store encrypted recovery keys (SQLite)
+│   │   Configuration: API keys, Django secret, RSA encryption key
+│   │   Access: Synapse main (store) + LI admin (retrieve)
 │   │
 │   └── README.md               → Complete LI architecture guide
 │       Purpose: Deep dive into LI design and compliance
@@ -904,7 +921,6 @@ OPTIONAL: If LiveKit enabled
 | **Element Web** | User interface | Can use other clients, but no web UI |
 | **coturn** | NAT traversal for calls | Calls won't work through firewalls |
 | NOTE: Sygnal NOT included - requires external Apple/Google servers |
-| **key_vault** | E2EE key backup | Users lose keys if they lose device |
 
 ### LI Instance
 
@@ -914,6 +930,7 @@ OPTIONAL: If LiveKit enabled
 | **Synapse LI** | Read-only access to all data | Can't access deleted messages |
 | **Element Web LI** | UI for forensics | Can't view LI data easily |
 | **Synapse Admin LI** | Admin/forensics tools | Limited search capabilities |
+| **key_vault** | E2EE recovery key storage | Users lose keys if they lose device; LI cannot decrypt E2EE |
 | **NetworkPolicy Isolation** | Prevent LI from affecting production | LI could disrupt main instance |
 
 ### Monitoring
@@ -1029,10 +1046,14 @@ OPTIONAL: If LiveKit enabled
 
     ┌────────────────────────────────────────────────┐
     │          SUPPORTING SERVICES                   │
-    │  ┌──────────┐  ┌──────────────┐               │
-    │  │ coturn   │  │  key_vault   │               │
-    │  │ (TURN)   │  │  (E2EE Keys) │               │
-    │  └──────────┘  └──────────────┘               │
+    │  ┌──────────┐                                 │
+    │  │ coturn   │  (Main Instance)                │
+    │  │ (TURN)   │                                 │
+    │  └──────────┘                                 │
+    │  ┌──────────────┐                             │
+    │  │  key_vault   │  (LI Instance - see above)  │
+    │  │  (E2EE Keys) │  Cross-network from main    │
+    │  └──────────────┘                             │
     │  NOTE: Sygnal (push) not included             │
     └────────────────────────────────────────────────┘
 
@@ -1043,9 +1064,10 @@ OPTIONAL: If LiveKit enabled
 │  Rules:                                                        │
 │  • Default deny all traffic                                   │
 │  • Synapse main → PostgreSQL main, Redis, MinIO ✓             │
+│  • Synapse main → key_vault (LI network) ✓ (STORE keys)       │
 │  • Synapse LI → PostgreSQL LI, MinIO LI ✓                     │
 │  • Synapse LI → PostgreSQL main ✗ (BLOCKED)                   │
-│  • Synapse LI → key_vault ✗ (BLOCKED - CRITICAL!)             │
+│  • LI admin → key_vault ✓ (RETRIEVE keys for E2EE recovery)   │
 │  • Workers → Redis ✓                                          │
 │  • All → DNS ✓                                                │
 │  • Ingress → HAProxy, Element Web ✓                           │
@@ -1053,7 +1075,7 @@ OPTIONAL: If LiveKit enabled
 └────────────────────────────────────────────────────────────────┘
 
 SECURITY HIGHLIGHTS:
-🔒 LI instance CANNOT access encryption keys (key_vault isolated)
+🔒 key_vault in LI network with controlled cross-network access
 🔒 LI instance CANNOT access main database (read-only replica only)
 🔒 All traffic TLS encrypted (cert-manager + Let's Encrypt)
 🔒 All media scanned for malware (ClamAV)

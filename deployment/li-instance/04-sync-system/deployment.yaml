@@ -273,6 +273,11 @@ spec:
                 secretKeyRef:
                   name: sync-system-secrets
                   key: LI_DB_NAME
+            - name: MAIN_DB_PORT
+              valueFrom:
+                secretKeyRef:
+                  name: sync-system-secrets
+                  key: MAIN_DB_PORT
           volumeMounts:
             - name: config
               mountPath: /config

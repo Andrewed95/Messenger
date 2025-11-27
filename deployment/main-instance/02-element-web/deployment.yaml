@@ -249,10 +249,12 @@ spec:
   ingressClassName: nginx
   tls:
     - hosts:
-        - element.matrix.example.com
+        # CHANGEME: Replace with your Element Web domain
+        - chat.example.com
       secretName: element-web-tls
   rules:
-    - host: element.matrix.example.com
+    # CHANGEME: Replace with your Element Web domain
+    - host: chat.example.com
       http:
         paths:
           - path: /

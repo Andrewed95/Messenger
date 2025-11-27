@@ -30,7 +30,7 @@ Used for sensitive data like passwords and API keys.
 **Example Services:**
 - **Synapse**: `main-instance/01-synapse/secrets.yaml` - database passwords, API keys
 - **PostgreSQL**: CloudNativePG automatically creates secrets
-- **key_vault**: `main-instance/08-key-vault/deployment.yaml` - Django secrets, RSA keys
+- **key_vault**: `li-instance/05-key-vault/deployment.yaml` - Django secrets, RSA keys (in LI network)
 - **LiveKit**: `main-instance/04-livekit/deployment.yaml` - API keys and secrets
 
 ### 3. Environment Variables
@@ -175,14 +175,23 @@ initContainers:
 
 ### key_vault (E2EE Recovery)
 
+**Location:** LI Instance (per CLAUDE.md section 3.3)
+
 **Files:**
-- `main-instance/08-key-vault/deployment.yaml` - Django settings and secrets
+- `li-instance/05-key-vault/deployment.yaml` - Django settings and secrets
 
 **Configurable Items:**
-- Database connection
-- RSA encryption keys
-- API authentication
+- SQLite database (auto-created by Django)
+- RSA encryption keys (2048-bit)
+- API authentication key
 - Django settings
+
+**Database:** SQLite (low I/O, simple deployment - no PostgreSQL needed)
+
+**Access Model:**
+- Synapse main (main network): Can STORE recovery keys
+- LI admin (LI network): Can RETRIEVE keys via Django admin panel
+- All other access: BLOCKED by NetworkPolicy
 
 **IMPORTANT:** You must provide a pre-built key_vault Django application image.
 

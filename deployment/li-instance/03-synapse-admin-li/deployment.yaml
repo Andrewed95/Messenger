@@ -187,10 +187,10 @@ spec:
 
 ---
 # Ingress for Synapse Admin LI
-# CRITICAL: Uses SAME hostname as main Synapse Admin (admin.example.com)
-# Access control is handled via network isolation, NOT different hostnames
+# Uses DIFFERENT hostname from main (admin-li.example.com vs admin.example.com)
+# Access control is handled via network isolation
 # The org must ensure LI network is only accessible to authorized administrators
-# Administrators configure their DNS to resolve admin.example.com to LI Ingress IP
+# CHANGEME: Replace admin-li.example.com with your LI admin domain
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -212,10 +212,12 @@ spec:
   ingressClassName: nginx
   tls:
     - hosts:
-        - admin.example.com
+        # CHANGEME: Replace with your LI admin domain
+        - admin-li.example.com
       secretName: synapse-admin-li-tls
   rules:
-    - host: admin.example.com
+    # CHANGEME: Replace with your LI admin domain
+    - host: admin-li.example.com
       http:
         paths:
           - path: /

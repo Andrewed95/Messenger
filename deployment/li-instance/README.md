@@ -6,33 +6,38 @@ Complete read-only Matrix instance for law enforcement access with E2EE recovery
 
 ## Overview
 
-The LI instance is a **separate, isolated Matrix homeserver** that receives data from the main instance but cannot modify it or access sensitive components like `key_vault`.
+The LI instance is a **separate, isolated Matrix homeserver** that receives data from the main instance but cannot modify it. The `key_vault` service is located within the LI network (per CLAUDE.md requirements), storing encrypted E2EE recovery keys.
 
 **Key Features**:
 - ✅ Read-only database (enforced at PostgreSQL level)
 - ✅ Infinite message retention (including soft-deleted messages)
 - ✅ Isolated from federation network
-- ✅ Cannot access `key_vault` (NetworkPolicy enforced)
+- ✅ **key_vault in LI network** - stores encrypted E2EE recovery keys
 - ✅ Real-time data replication via PostgreSQL logical replication
 - ✅ Media sync via rclone (every 15 minutes)
 - ✅ Separate web interfaces (Element, Synapse Admin)
 - ✅ IP whitelisting for authorized access only
+
+**key_vault Access Model** (per CLAUDE.md section 3.3):
+- **Synapse main (main network)**: Can STORE recovery keys when users set up E2EE
+- **LI admin (LI network)**: Can RETRIEVE recovery keys for lawful intercept
+- **All other access**: BLOCKED by NetworkPolicy
 
 ## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────┐
 │                    MAIN INSTANCE                        │
-│  ┌──────────────┐   ┌──────────────┐   ┌────────────┐ │
-│  │  PostgreSQL  │───│  Synapse     │───│ key_vault  │ │
-│  │    Main      │   │    Main      │   │  (E2EE)    │ │
-│  └──────┬───────┘   └──────────────┘   └────────────┘ │
-│         │                                               │
-│         │ PostgreSQL Logical Replication                │
-└─────────┼───────────────────────────────────────────────┘
-          │
-          │
-          ▼
+│  ┌──────────────┐   ┌──────────────┐                   │
+│  │  PostgreSQL  │───│  Synapse     │                   │
+│  │    Main      │   │    Main      │────────┐          │
+│  └──────┬───────┘   └──────────────┘        │          │
+│         │                                    │          │
+│         │ PostgreSQL Logical Replication     │ Store    │
+└─────────┼────────────────────────────────────┼──────────┘
+          │                                    │ Recovery
+          │                                    │ Keys
+          ▼                                    ▼
 ┌─────────────────────────────────────────────────────────┐
 │                   SYNC SYSTEM                           │
 │  ┌──────────────────────┐   ┌───────────────────────┐  │
@@ -44,16 +49,20 @@ The LI instance is a **separate, isolated Matrix homeserver** that receives data
               ▼                           ▼
 ┌─────────────────────────────────────────────────────────┐
 │                    LI INSTANCE                          │
+│                                                         │
 │  ┌──────────────┐   ┌──────────────┐   ┌────────────┐ │
 │  │  PostgreSQL  │   │   Synapse    │   │  Element   │ │
 │  │      LI      │───│      LI      │───│  Web LI    │ │
 │  │  (read-only) │   │  (read-only) │   │            │ │
 │  └──────────────┘   └──────────────┘   └────────────┘ │
-│  ┌──────────────┐   ┌──────────────┐                  │
-│  │    MinIO     │   │   Synapse    │                  │
-│  │ synapse-     │───│   Admin LI   │                  │
-│  │  media-li    │   │              │                  │
-│  └──────────────┘   └──────────────┘                  │
+│                                                         │
+│  ┌──────────────┐   ┌──────────────┐   ┌────────────┐ │
+│  │    MinIO     │   │   Synapse    │   │ key_vault  │ │
+│  │ synapse-     │───│   Admin LI   │───│  (E2EE     │ │
+│  │  media-li    │   │              │   │  Recovery) │ │
+│  └──────────────┘   └──────────────┘   └────────────┘ │
+│                                                         │
+│  LI Admin can retrieve recovery keys from key_vault    │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -79,7 +88,7 @@ The LI instance is a **separate, isolated Matrix homeserver** that receives data
 kubectl apply -f 01-synapse-li/deployment.yaml
 ```
 
-**Access**: https://matrix.example.com (from LI network)
+**Access**: https://matrix.example.com (from LI network - SAME as main)
 
 ### 2. Element Web LI (02-element-web-li/)
 
@@ -100,7 +109,7 @@ kubectl apply -f 01-synapse-li/deployment.yaml
 kubectl apply -f 02-element-web-li/deployment.yaml
 ```
 
-**Access**: https://element.example.com (from LI network)
+**Access**: https://chat-li.example.com (DIFFERENT domain from main)
 
 ### 3. Synapse Admin LI (03-synapse-admin-li/)
 
@@ -121,7 +130,7 @@ kubectl apply -f 02-element-web-li/deployment.yaml
 kubectl apply -f 03-synapse-admin-li/deployment.yaml
 ```
 
-**Access**: https://admin.example.com (from LI network)
+**Access**: https://admin-li.example.com (DIFFERENT domain from main)
 
 ### 4. Sync System (04-sync-system/)
 
@@ -148,13 +157,121 @@ kubectl apply -f 04-sync-system/deployment.yaml
 kubectl create job --from=job/sync-system-setup-replication sync-setup-$(date +%s) -n matrix
 ```
 
+### 5. key_vault (05-key-vault/)
+
+**E2EE Recovery Key Storage** - stores encrypted recovery keys for lawful intercept.
+
+**Location**: key_vault is in the LI network per CLAUDE.md section 3.3:
+> "From the main environment, only: Main Synapse may access `key_vault` in the LI network, and only for: Storing recovery keys."
+
+**Database**: SQLite (local file storage)
+- Low I/O requirements (only stores recovery keys, ~1KB each)
+- Simple deployment (no external database dependency)
+- Data persisted on PVC (1Gi, supports millions of keys)
+
+**Access Model** (enforced by NetworkPolicy):
+
+| Actor | Action | Allowed |
+|-------|--------|---------|
+| Synapse main (main network) | STORE recovery keys | ✅ Yes |
+| LI admin (LI network) | RETRIEVE recovery keys | ✅ Yes |
+| Synapse LI | Access key_vault | ❌ No |
+| Main users | Access key_vault | ❌ No |
+
+**Workflow for E2EE Recovery**:
+1. User sets up E2EE in Element → Synapse main stores encrypted recovery key in key_vault
+2. LI admin changes user's password via Synapse Admin LI
+3. LI admin retrieves encrypted recovery key from key_vault
+4. LI admin decrypts recovery key using RSA private key
+5. LI admin logs into Element LI as user, enters recovery key
+6. LI admin can now view all E2EE messages for that user
+
+**Security**:
+- Recovery keys encrypted with RSA 2048-bit before storage
+- RSA private key stored as Kubernetes Secret
+- NetworkPolicy strictly limits access
+- SQLite database on persistent volume with fsGroup security
+
+**Deployment**:
+
+**WHERE:** Run from your **management node**
+
+```bash
+kubectl apply -f 05-key-vault/deployment.yaml
+```
+
+**Access**: https://keyvault.example.com (Django admin panel - from LI network)
+
+**Creating Django Admin User**:
+
+After deployment, create a superuser to access the Django admin panel:
+
+```bash
+# Create Django superuser for key_vault
+kubectl exec -it -n matrix key-vault-0 -- \
+  python manage.py createsuperuser \
+  --username keyvault-admin \
+  --email admin@example.com
+
+# You will be prompted to enter a password interactively
+```
+
+**Note:** Django automatically creates the SQLite database file if it doesn't exist. No manual database initialization is required.
+
+**Accessing key_vault Admin Panel**:
+1. Navigate to `https://keyvault.example.com/admin` (from LI network)
+2. Login with the superuser credentials you created
+3. You can view and manage E2EE recovery keys
+
+**Verification**:
+```bash
+# Check pod is running
+kubectl get pods -n matrix -l app.kubernetes.io/name=key-vault
+
+# Check PVC is bound
+kubectl get pvc key-vault-data -n matrix
+
+# Test health endpoint
+kubectl exec -n matrix key-vault-0 -- curl -s http://localhost:8000/health
+
+# Check Ingress is configured
+kubectl get ingress key-vault-ingress -n matrix
+```
+
 ---
 
-## DNS Configuration & Network Isolation
+## Domain Configuration
 
-**CRITICAL**: The LI instance uses the **SAME hostnames** as the main instance. Access control is via **network isolation**, NOT different domains.
+### Complete Domain Reference for LI Instance
 
-### Why Same Hostnames?
+| Service | Domain | Same as Main? | Purpose |
+|---------|--------|---------------|---------|
+| Synapse LI | `matrix.example.com` | **YES** | Homeserver (required for user auth) |
+| Element Web LI | `chat-li.example.com` | **NO** | LI admin web client |
+| Synapse Admin LI | `admin-li.example.com` | **NO** | LI forensics interface |
+| key_vault | `keyvault.example.com` | **NO** | Django admin for E2EE keys |
+
+**Important:**
+- **Synapse homeserver** must use the SAME domain as main (`matrix.example.com`)
+- **Element Web, Synapse Admin, key_vault** use DIFFERENT domains
+- DNS resolution controls which instance receives traffic (main vs LI network)
+
+---
+
+## Network Isolation
+
+### Domain Strategy
+
+**The LI instance uses a MIX of same and different domains:**
+
+| Service | Domain Strategy | Reason |
+|---------|----------------|--------|
+| Synapse homeserver | **SAME** (`matrix.example.com`) | Required for Matrix protocol - user IDs, signatures, tokens reference this domain |
+| Element Web LI | **DIFFERENT** (`chat-li.example.com`) | Separate UI accessible only from LI network |
+| Synapse Admin LI | **DIFFERENT** (`admin-li.example.com`) | Separate admin interface for LI only |
+| key_vault | **DIFFERENT** (`keyvault.example.com`) | Django admin for E2EE key recovery |
+
+### Why Synapse Must Use Same Hostname
 
 Matrix protocol requires that:
 1. `server_name` MUST be identical (`matrix.example.com`)
@@ -163,28 +280,28 @@ Matrix protocol requires that:
 **Reasons:**
 - LI uses replicated data from main instance
 - User IDs, event signatures, tokens all reference `matrix.example.com`
-- Different URLs would break authentication and event verification
+- Different server_name would break authentication and event verification
 - Matrix clients validate server signatures against the `server_name`
 
 ### Configuration
 
-**Both Main and LI instances use:**
+**Synapse (both Main and LI):**
 ```yaml
-server_name: "matrix.example.com"
-public_baseurl: "https://matrix.example.com"
+server_name: "matrix.example.com"  # MUST be same
+public_baseurl: "https://matrix.example.com"  # MUST be same
 ```
 
-**Element Web (both main and LI):**
+**Element Web LI:**
 ```json
 "m.homeserver": {
-    "base_url": "https://matrix.example.com",
+    "base_url": "https://matrix.example.com",  // Points to Synapse LI (via LI network DNS)
     "server_name": "matrix.example.com"
 }
 ```
 
 ### How LI Access Works
 
-Access to LI is controlled via **network isolation and DNS**, NOT different hostnames:
+Access to LI is controlled via **network isolation and DNS**:
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -196,12 +313,15 @@ Access to LI is controlled via **network isolation and DNS**, NOT different host
 │  │  DNS:                │      │                            │   │
 │  │  matrix.example.com  │      │  DNS:                      │   │
 │  │    → Main Ingress IP │      │  matrix.example.com        │   │
+│  │  chat.example.com    │      │    → LI Ingress IP         │   │
+│  │    → Main Ingress IP │      │  chat-li.example.com       │   │
 │  │                      │      │    → LI Ingress IP         │   │
-│  │  element.example.com │      │                            │   │
-│  │    → Main Ingress IP │      │  element.example.com       │   │
+│  │  Regular users       │      │  admin-li.example.com      │   │
+│  │  access main         │      │    → LI Ingress IP         │   │
+│  │                      │      │  keyvault.example.com      │   │
 │  │                      │      │    → LI Ingress IP         │   │
-│  │  Regular users       │      │                            │   │
-│  │  access main         │      │  LI admins only            │   │
+│  │                      │      │                            │   │
+│  │                      │      │  LI admins only            │   │
 │  └──────────────────────┘      └───────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -211,13 +331,14 @@ Access to LI is controlled via **network isolation and DNS**, NOT different host
 **For LI administrators to access the LI instance:**
 
 1. **Network Access**: Admin must be on the LI network (org responsibility)
-2. **DNS Resolution**: LI network DNS resolves hostnames to LI Ingress IP
-3. **Browser Access**: Admin opens `https://element.example.com`
+2. **DNS Resolution**: LI network DNS resolves domains to LI Ingress IP
+3. **Browser Access**: Admin opens `https://chat-li.example.com`
 4. **Traffic Flow**: DNS resolves to LI Ingress → routes to Element Web LI → connects to Synapse LI
 
-**To switch back to main instance:**
-- Admin switches to main network (or changes DNS)
-- Same hostname now resolves to main Ingress IP
+**LI Admin URLs:**
+- Element Web LI: `https://chat-li.example.com`
+- Synapse Admin LI: `https://admin-li.example.com`
+- key_vault Admin: `https://keyvault.example.com/admin`
 
 ### Organization Requirements for LI Network
 
@@ -229,32 +350,33 @@ Access to LI is controlled via **network isolation and DNS**, NOT different host
    - Contains LI Kubernetes nodes or has routes to LI services
 
 2. **LI DNS Server**:
-   - Resolves `matrix.example.com` → LI Ingress IP
-   - Resolves `element.example.com` → LI Ingress IP
-   - Can be internal DNS server, hosts file, or split-horizon DNS
+   - Resolves `matrix.example.com` → LI Ingress IP (for Synapse LI)
+   - Resolves `chat-li.example.com` → LI Ingress IP
+   - Resolves `admin-li.example.com` → LI Ingress IP
+   - Resolves `keyvault.example.com` → LI Ingress IP
 
 3. **Access Control**:
    - VPN, firewall rules, or physical access control
    - Only authorized personnel can reach LI network
    - Audit trail for network access
 
-**Example Split-Horizon DNS:**
+**Example DNS Configuration:**
 ```
 # Main DNS server (used by regular users)
 matrix.example.com     A    10.0.1.100  # Main Ingress
-element.example.com    A    10.0.1.100  # Main Ingress
+chat.example.com       A    10.0.1.100  # Main Ingress
 
 # LI DNS server (used by LI network only)
-matrix.example.com     A    10.0.2.100  # LI Ingress
-element.example.com    A    10.0.2.100  # LI Ingress
+matrix.example.com     A    10.0.2.100  # LI Ingress (Synapse LI)
+chat-li.example.com    A    10.0.2.100  # LI Ingress (Element Web LI)
+admin-li.example.com   A    10.0.2.100  # LI Ingress (Synapse Admin LI)
+keyvault.example.com   A    10.0.2.100  # LI Ingress (key_vault)
 ```
 
 ### LI Ingress Configuration
 
-The LI Ingress uses the **same hostnames** as main:
-
+**Synapse LI Ingress** (same hostname as main):
 ```yaml
-# Synapse LI Ingress
 spec:
   rules:
     - host: matrix.example.com  # Same as main
@@ -262,36 +384,54 @@ spec:
         paths:
           - backend:
               service:
-                name: synapse-li-client  # Routes to LI service
+                name: synapse-li-client
+```
 
-# Element Web LI Ingress
+**Element Web LI Ingress** (different hostname):
+```yaml
 spec:
   rules:
-    - host: element.example.com  # Same as main
+    - host: chat-li.example.com  # Different from main
       http:
         paths:
           - backend:
               service:
-                name: element-web-li  # Routes to LI service
+                name: element-web-li
 ```
 
-**The routing works because:**
-- Main Ingress runs on main network (main Ingress IP)
-- LI Ingress runs on LI network (LI Ingress IP)
-- DNS determines which Ingress receives traffic
+**key_vault Ingress** (LI-only):
+```yaml
+spec:
+  rules:
+    - host: keyvault.example.com
+      http:
+        paths:
+          - backend:
+              service:
+                name: key-vault
+```
 
 ### TLS Certificates
 
-Both main and LI need valid TLS certificates for the same hostnames.
+Each service needs valid TLS certificates for its domain:
 
-**Option 1: Shared Wildcard Certificate**
+**Main Instance:**
+- `matrix.example.com`
+- `chat.example.com`
+
+**LI Instance:**
+- `matrix.example.com` (same as main - for Synapse LI)
+- `chat-li.example.com`
+- `admin-li.example.com`
+- `keyvault.example.com`
+
+**Option 1: Wildcard Certificate**
 - Use `*.example.com` wildcard cert
 - Copy to both main and LI clusters
 
-**Option 2: Separate Certificates**
-- Use cert-manager with same hostnames
-- Each cluster generates its own cert
-- Requires DNS-01 challenge (recommended for LI)
+**Option 2: cert-manager with DNS-01**
+- Each cluster generates its own certs
+- DNS-01 challenge recommended for LI (no public access needed)
 
 **Important**: The org must provide TLS certificates or configure cert-manager appropriately.
 
@@ -303,9 +443,9 @@ Both main and LI need valid TLS certificates for the same hostnames.
 
 Three critical policies enforce LI isolation:
 
-**1. key-vault-isolation**:
-- **Ingress**: ONLY from Synapse main (`matrix.instance: main`)
-- **Effect**: LI instance **CANNOT** access E2EE recovery keys
+**1. key-vault-access**:
+- **Ingress**: From Synapse main (STORE keys) AND LI admin (RETRIEVE keys)
+- **Effect**: Synapse main can store keys, LI admin can retrieve keys for E2EE recovery
 - **File**: `infrastructure/04-networking/networkpolicies.yaml`
 
 **2. li-instance-isolation**:
@@ -366,10 +506,16 @@ kubectl get tenant -n matrix matrix-minio  # Contains synapse-media-li bucket
 # 2. Deploy sync system NetworkPolicy
 kubectl apply -f ../infrastructure/04-networking/sync-system-networkpolicy.yaml
 
-# 3. Deploy sync system
+# 3. Deploy Redis LI (required for Synapse LI cache)
+kubectl apply -f 00-redis-li/deployment.yaml
+
+# Wait for Redis LI to be ready
+kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=redis,app.kubernetes.io/instance=li -n matrix --timeout=120s
+
+# 4. Deploy sync system
 kubectl apply -f 04-sync-system/deployment.yaml
 
-# 4. Run replication setup job (CRITICAL - must run once)
+# 5. Run replication setup job (CRITICAL - must run once)
 # Store job name in variable to use consistently
 JOB_NAME="sync-setup-$(date +%s)"
 
@@ -383,21 +529,34 @@ kubectl wait --for=condition=complete job/$JOB_NAME -n matrix --timeout=300s
 # Check replication status (using same job name)
 kubectl logs job/$JOB_NAME -n matrix
 
-# 5. Deploy Synapse LI
+# 6. Deploy Synapse LI
 kubectl apply -f 01-synapse-li/deployment.yaml
 
 # Wait for Synapse LI to be ready
 kubectl wait --for=condition=ready pod/synapse-li-0 -n matrix --timeout=300s
 
-# 6. Deploy Element Web LI
+# 7. Deploy Element Web LI
 kubectl apply -f 02-element-web-li/deployment.yaml
 
-# 7. Deploy Synapse Admin LI
+# 8. Deploy Synapse Admin LI
 kubectl apply -f 03-synapse-admin-li/deployment.yaml
 
-# 8. Verify all components
+# 9. Deploy key_vault (E2EE recovery key storage)
+kubectl apply -f 05-key-vault/deployment.yaml
+
+# Wait for key_vault to be ready
+kubectl wait --for=condition=ready pod/key-vault-0 -n matrix --timeout=300s
+
+# 10. Create Django superuser for key_vault
+kubectl exec -it -n matrix key-vault-0 -- \
+  python manage.py createsuperuser \
+  --username keyvault-admin \
+  --email admin@example.com
+# (You will be prompted to enter a password interactively)
+
+# 11. Verify all components
 kubectl get pods -n matrix -l matrix.instance=li
-kubectl get ingress -n matrix | grep li
+kubectl get ingress -n matrix | grep -E "(li|keyvault)"
 ```
 
 ## Verification
@@ -454,14 +613,17 @@ kubectl create job --from=cronjob/sync-system-media sync-manual-$(date +%s) -n m
 curl https://matrix.example.com/_matrix/client/versions
 
 # Test Element Web LI (from LI network - should show watermark)
-# Open in browser: https://element.example.com
+# Open in browser: https://chat-li.example.com
 
 # Test Synapse Admin LI (from LI network - should require auth)
-curl -u admin:password https://admin.example.com
+curl -u admin:password https://admin-li.example.com
+
+# Test key_vault admin (from LI network)
+# Open in browser: https://keyvault.example.com/admin
 
 # Login to LI instance (users synced from main)
-# Use same credentials as main instance
-# DNS must resolve to LI Ingress for authentication to work
+# Use same Matrix credentials as main instance
+# Access Element Web LI at https://chat-li.example.com
 ```
 
 ## Data Flow
@@ -995,7 +1157,7 @@ All LI access is logged by:
 kubectl logs -n matrix -l matrix.instance=li,app.kubernetes.io/name=synapse --tail=100
 
 # View LI Ingress access logs (from LI network's Ingress controller)
-# Note: LI uses same hostnames as main, so filter by LI Ingress controller
+# Note: Synapse LI uses same hostname as main, filter by service name
 kubectl logs -n ingress-nginx -l app.kubernetes.io/name=ingress-nginx | grep "synapse-li-client"
 ```
 

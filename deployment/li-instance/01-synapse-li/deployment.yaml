@@ -331,6 +331,32 @@ spec:
               memory: "64Mi"
               cpu: "50m"
 
+        # CRITICAL: Install S3 storage provider for MinIO media storage
+        # Without this, Synapse will fail to load media_storage_providers config
+        - name: install-s3-provider
+          image: matrixdotorg/synapse:v1.119.0
+          command:
+            - sh
+            - -c
+            - |
+              # Install S3 storage provider module
+              pip install --user synapse-s3-storage-provider==1.4.0
+
+              # Copy installed module to shared volume
+              cp -r /home/synapse/.local/lib/python*/site-packages/* /mnt/python-packages/ || true
+
+              echo "S3 storage provider installed successfully"
+          volumeMounts:
+            - name: python-packages
+              mountPath: /mnt/python-packages
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "200m"
+
         - name: generate-config
           image: matrixdotorg/synapse:v1.119.0
           command:
@@ -431,6 +457,9 @@ spec:
               mountPath: /data
             - name: tmp
               mountPath: /tmp
+            - name: python-packages
+              mountPath: /usr/local/lib/python3.11/site-packages
+              readOnly: true
 
           resources:
             requests:
@@ -484,6 +513,8 @@ spec:
         - name: config
           emptyDir: {}
         - name: tmp
+          emptyDir: {}
+        - name: python-packages
           emptyDir: {}
         - name: signing-key
           secret:

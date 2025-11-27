@@ -271,10 +271,10 @@ spec:
 
 ---
 # Ingress for Element Web LI
-# CRITICAL: Uses SAME hostname as main Element Web (element.example.com)
-# Access control is handled via network isolation, NOT different hostnames
+# Uses DIFFERENT hostname from main Element Web (chat-li.example.com vs chat.example.com)
 # The org must ensure LI network is only accessible to authorized administrators
-# Administrators configure their DNS to resolve element.example.com to LI instance IP
+# NOTE: While Element Web LI uses a different hostname, the underlying Synapse LI
+# uses the SAME server_name as main (matrix.example.com) - required by Matrix protocol
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -296,10 +296,13 @@ spec:
   ingressClassName: nginx
   tls:
     - hosts:
-        - element.example.com
+        # CHANGEME: Replace with your LI Element domain
+        # Uses DIFFERENT hostname from main (chat-li.example.com vs chat.example.com)
+        - chat-li.example.com
       secretName: element-web-li-tls
   rules:
-    - host: element.example.com
+    # CHANGEME: Replace with your LI Element domain
+    - host: chat-li.example.com
       http:
         paths:
           - path: /

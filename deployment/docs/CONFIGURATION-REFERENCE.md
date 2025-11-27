@@ -45,47 +45,77 @@ This reference explains WHAT each parameter means, not HOW to configure it (that
 
 ## Domain Configuration
 
-### MATRIX_DOMAIN
+This deployment requires multiple domains for different services. The main instance and LI instance have different domain requirements.
 
-**Description:** Your Matrix server's public domain name
+### Complete Domain Reference
+
+| Instance | Service | Example Domain | Required | Notes |
+|----------|---------|----------------|----------|-------|
+| **Main** | Synapse homeserver | `matrix.example.com` | Yes | server_name - cannot change after first user |
+| **Main** | Element Web | `chat.example.com` | Yes | Web client interface |
+| **Main** | coturn | `turn.example.com` | Yes | TURN/STUN for calls |
+| **LI** | Synapse LI | `matrix.example.com` | Yes | **SAME** as main - required for user authentication |
+| **LI** | Element Web LI | `chat-li.example.com` | Yes | **DIFFERENT** - LI admin client |
+| **LI** | Synapse Admin LI | `admin-li.example.com` | Yes | **DIFFERENT** - LI forensics interface |
+| **LI** | key_vault | `keyvault.example.com` | Yes | **DIFFERENT** - Django admin for E2EE keys |
+
+**Note:** Main instance uses Synapse's built-in Admin API accessible at `/_synapse/admin/` through the homeserver URL. Synapse Admin web UI is only deployed for the LI instance.
+
+### Domain Rules
+
+**Synapse homeserver (server_name):**
+- MUST be **identical** for main and LI instances
+- User IDs are formatted as `@username:matrix.example.com`
+- LI instance authenticates users with same identity as main
+- **Cannot be changed** after the first user is created
+
+**Element Web, Synapse Admin, key_vault:**
+- Use **different** domains for LI instance
+- LI admin accesses these at separate URLs
+- Network isolation controls access to LI domains
+
+### MATRIX_SERVER_NAME
+
+**Description:** Matrix server name for user IDs (also called homeserver name)
 
 **Required:** Yes
 
 **Example:**
 ```bash
-MATRIX_DOMAIN="chat.example.com"
+MATRIX_SERVER_NAME="matrix.example.com"
 ```
 
 **Used By:**
-- Element Web configuration
+- Synapse homeserver.yaml (server_name)
+- User IDs format: `@username:matrix.example.com`
+- LI Synapse (must use same value)
+
+**Important:**
+- Must be identical for main AND LI instances
+- **Cannot be changed** after first user creation
+- Federation uses this name (if enabled)
+
+### MATRIX_DOMAIN (Public Base URL)
+
+**Description:** Your Matrix server's public URL
+
+**Required:** Yes
+
+**Example:**
+```bash
+MATRIX_DOMAIN="matrix.example.com"
+```
+
+**Used By:**
 - Synapse homeserver.yaml (public_baseurl)
+- Element Web configuration
 - Ingress routing
 - TLS certificate
 
 **Important:**
 - Must be a valid DNS name
 - DNS must point to your load balancer IP
-- Used for federation (if enabled)
-
-### MATRIX_SERVER_NAME
-
-**Description:** Matrix server name for user IDs
-
-**Required:** Yes
-
-**Example:**
-```bash
-MATRIX_SERVER_NAME="chat.example.com"
-```
-
-**Used By:**
-- Synapse homeserver.yaml (server_name)
-- User IDs format: `@username:chat.example.com`
-
-**Important:**
-- Usually same as MATRIX_DOMAIN
-- **Cannot be changed** after first user creation
-- Federation uses this name
+- Usually same as MATRIX_SERVER_NAME
 
 ---
 

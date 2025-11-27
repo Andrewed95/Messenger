@@ -1243,7 +1243,7 @@ ping -c 1 8.8.8.8
 
 #### Method 1: Using synapse-admin-li Decryption Tool (Web-based)
 
-**Access**: `https://admin.example.com/decryption` (from LI network)
+**Access**: `https://admin-li.example.com/decryption` (from LI network)
 
 **Prerequisites**:
 - Access to synapse-admin-li (LI instance)
@@ -1276,7 +1276,7 @@ exit()
 **Step 2: Access synapse-admin-li decryption tool**
 
 ```
-1. Open browser: https://admin.example.com/decryption (from LI network)
+1. Open browser: https://admin-li.example.com/decryption (from LI network)
 2. Log in with LI admin credentials
 3. Navigate to "Decryption Tool" page
 ```

@@ -33,32 +33,254 @@ The deployer has SSH access to servers and handles all configuration and deploym
 
 **The organization's DNS administrator MUST create:**
 
+**Main Instance DNS (Public):**
 | Record Type | Name | Points To | Purpose |
 |-------------|------|-----------|---------|
 | A | `matrix.example.com` | Main Ingress External IP | Synapse homeserver |
-| A | `element.example.com` | Main Ingress External IP | Element Web client |
-| A | `admin.example.com` | Main Ingress External IP | Synapse Admin (optional) |
+| A | `chat.example.com` | Main Ingress External IP | Element Web client |
 | A | `turn.example.com` | TURN Server External IP | TURN/STUN for WebRTC |
+
+**LI Instance DNS (Internal LI Network Only):**
+| Record Type | Name | Points To | Purpose |
+|-------------|------|-----------|---------|
+| A | `matrix.example.com` | LI Ingress IP | Synapse LI (SAME hostname) |
+| A | `chat-li.example.com` | LI Ingress IP | Element Web LI (DIFFERENT) |
+| A | `admin-li.example.com` | LI Ingress IP | Synapse Admin LI (DIFFERENT) |
+| A | `keyvault.example.com` | LI Ingress IP | key_vault Django admin (DIFFERENT) |
 
 **Notes:**
 - Replace `example.com` with your actual domain
 - External IP is provided AFTER Kubernetes cluster is deployed
 - Deployer will provide the IP addresses once cluster is ready
+- LI DNS records should only be resolvable from the LI network
 
-### 3. External Network/Firewall Configuration
+### 3. Network/Firewall Configuration
 
-**The organization's network team MUST configure:**
+**The organization's network team MUST configure the ports listed below.**
 
-| Port | Protocol | Direction | Purpose | Where |
-|------|----------|-----------|---------|-------|
-| **443** | TCP | Inbound | HTTPS (Ingress) | External firewall/router |
-| **80** | TCP | Inbound | HTTP (cert validation) | External firewall/router |
-| **3478** | TCP+UDP | Inbound | TURN signaling | External firewall/router |
-| **5349** | TCP | Inbound | TURN over TLS | External firewall/router |
-| **49152-65535** | UDP | Inbound | TURN media relay | External firewall/router |
-| **6443** | TCP | Inbound (optional) | Kubernetes API | If remote management needed |
+**IMPORTANT**:
+- EXTERNAL firewall rules are configured on the organization's network perimeter (routers, firewalls)
+- Host-level firewall rules (ufw) on individual servers are handled by the deployer via SSH
+- Internal ports are between servers within the cluster (typically already allowed on internal network)
 
-**IMPORTANT**: These are EXTERNAL firewall rules on the organization's network perimeter. Host-level firewall rules (ufw) on individual servers are handled by the deployer via SSH.
+---
+
+#### 3.1 External Ports (Internet-Facing)
+
+**These ports must be open on the organization's external firewall/router.**
+
+| Port | Protocol | Direction | Server Type | Purpose |
+|------|----------|-----------|-------------|---------|
+| **443** | TCP | Inbound | Ingress Node(s) | HTTPS - All web traffic (Synapse, Element, Admin) |
+| **80** | TCP | Inbound | Ingress Node(s) | HTTP - cert-manager ACME validation only |
+| **3478** | TCP | Inbound | TURN Server | TURN/STUN signaling (NAT traversal) |
+| **3478** | UDP | Inbound | TURN Server | TURN/STUN signaling (NAT traversal) |
+| **5349** | TCP | Inbound | TURN Server | TURN over TLS (secure NAT traversal) |
+| **49152-65535** | UDP | Inbound | TURN Server | TURN media relay (voice/video streams) |
+| **7881** | TCP | Inbound | LiveKit Server | WebRTC signaling (if LiveKit exposed externally) |
+| **7882** | UDP | Inbound | LiveKit Server | WebRTC UDP (if LiveKit exposed externally) |
+
+**NAT/Port Forwarding Required:**
+- Port 443/80 → Ingress Controller external IP
+- Ports 3478, 5349, 49152-65535 → TURN server external IP
+- Ports 7881-7882 → LiveKit server external IP (if external access required)
+
+---
+
+#### 3.2 Kubernetes Cluster Ports (Inter-Node)
+
+**These ports must be open between ALL Kubernetes nodes (Control Plane + Worker + Storage).**
+
+| Port | Protocol | Direction | From → To | Purpose |
+|------|----------|-----------|-----------|---------|
+| **6443** | TCP | Both | All nodes ↔ Control plane | Kubernetes API server |
+| **2379-2380** | TCP | Both | Control plane ↔ Control plane | etcd server/client |
+| **10250** | TCP | Both | All nodes ↔ All nodes | Kubelet API |
+| **10259** | TCP | Both | Control plane ↔ Control plane | kube-scheduler |
+| **10257** | TCP | Both | Control plane ↔ Control plane | kube-controller-manager |
+| **30000-32767** | TCP | Both | All nodes ↔ All nodes | NodePort Services |
+| **30000-32767** | UDP | Both | All nodes ↔ All nodes | NodePort Services (UDP) |
+| **179** | TCP | Both | All nodes ↔ All nodes | Calico BGP (if using Calico CNI) |
+| **4789** | UDP | Both | All nodes ↔ All nodes | VXLAN overlay (Flannel/Calico) |
+| **8472** | UDP | Both | All nodes ↔ All nodes | VXLAN (Flannel) |
+| **51820** | UDP | Both | All nodes ↔ All nodes | WireGuard (Calico encryption) |
+| **51821** | UDP | Both | All nodes ↔ All nodes | WireGuard (Calico encryption) |
+
+---
+
+#### 3.3 Application Service Ports (Internal Kubernetes)
+
+**These ports are used between services WITHIN the Kubernetes cluster. They typically do NOT need external firewall rules unless pods are scheduled across different network segments.**
+
+| Port | Protocol | Service | From → To | Purpose |
+|------|----------|---------|-----------|---------|
+| **5432** | TCP | PostgreSQL | Synapse, sync → PostgreSQL | Database connections |
+| **6379** | TCP | Redis | Synapse workers → Redis | Cache/session storage |
+| **26379** | TCP | Redis Sentinel | Synapse workers → Redis | Sentinel for HA failover |
+| **9000** | TCP | MinIO | Synapse, sync → MinIO | S3 API (media storage) |
+| **9001** | TCP | MinIO | Admin → MinIO | Console UI |
+| **8008** | TCP | Synapse | HAProxy → Synapse | Client API |
+| **8083** | TCP | Synapse | HAProxy → Workers | Replication endpoint |
+| **9093** | TCP | Synapse | Workers ↔ Workers | Worker internal communication |
+| **8080** | TCP | Content Scanner | Synapse → Scanner | Antivirus scanning |
+| **3310** | TCP | ClamAV | Scanner → ClamAV | ClamAV daemon |
+| **8000** | TCP | key_vault | Synapse Main (store), LI Admin (retrieve) → key_vault (LI network) | E2EE recovery key storage |
+| **7880** | TCP | LiveKit | Clients → LiveKit | HTTP API |
+| **7881** | TCP | LiveKit | Clients → LiveKit | WebRTC signaling |
+| **50000-60000** | UDP | LiveKit | Clients → LiveKit | WebRTC media |
+| **3000** | TCP | Grafana | Monitoring → Grafana | Dashboard UI |
+| **9090** | TCP | Prometheus | Monitoring → Prometheus | Metrics UI/API |
+| **9090** | TCP | Synapse metrics | Prometheus → Synapse | Scrape metrics |
+| **9121** | TCP | Redis exporter | Prometheus → Redis | Scrape Redis metrics |
+| **9187** | TCP | PostgreSQL exporter | Prometheus → PostgreSQL | Scrape DB metrics |
+| **3100** | TCP | Loki | Promtail → Loki | Log ingestion |
+
+---
+
+#### 3.4 Port Requirements by Server Type
+
+**Control Plane Nodes (3 servers):**
+| Port | Protocol | Direction | Purpose |
+|------|----------|-----------|---------|
+| 22 | TCP | Inbound | SSH (management) |
+| 6443 | TCP | Inbound | Kubernetes API |
+| 2379-2380 | TCP | Inbound | etcd cluster |
+| 10250 | TCP | Inbound | Kubelet |
+| 10259 | TCP | Inbound | kube-scheduler |
+| 10257 | TCP | Inbound | kube-controller-manager |
+
+**Application/Worker Nodes (3+ servers):**
+| Port | Protocol | Direction | Purpose |
+|------|----------|-----------|---------|
+| 22 | TCP | Inbound | SSH (management) |
+| 10250 | TCP | Inbound | Kubelet |
+| 30000-32767 | TCP/UDP | Both | NodePort services |
+| 4789/8472 | UDP | Both | CNI overlay network |
+
+**Database Nodes (3 servers):**
+| Port | Protocol | Direction | Purpose |
+|------|----------|-----------|---------|
+| 22 | TCP | Inbound | SSH (management) |
+| 10250 | TCP | Inbound | Kubelet |
+| 5432 | TCP | Inbound | PostgreSQL (from app nodes) |
+
+**Storage Nodes (4 servers):**
+| Port | Protocol | Direction | Purpose |
+|------|----------|-----------|---------|
+| 22 | TCP | Inbound | SSH (management) |
+| 10250 | TCP | Inbound | Kubelet |
+| 9000 | TCP | Inbound | MinIO S3 API |
+| 9001 | TCP | Inbound | MinIO Console |
+
+**Call Servers (2+ servers):**
+| Port | Protocol | Direction | Purpose |
+|------|----------|-----------|---------|
+| 22 | TCP | Inbound | SSH (management) |
+| 10250 | TCP | Inbound | Kubelet |
+| 3478 | TCP/UDP | Inbound (external) | TURN signaling |
+| 5349 | TCP | Inbound (external) | TURN TLS |
+| 49152-65535 | UDP | Inbound (external) | TURN media relay |
+| 7880-7882 | TCP/UDP | Inbound | LiveKit |
+| 50000-60000 | UDP | Inbound | LiveKit media |
+
+**LI Server (1 server):**
+| Port | Protocol | Direction | Purpose |
+|------|----------|-----------|---------|
+| 22 | TCP | Inbound | SSH (management) |
+| 10250 | TCP | Inbound | Kubelet |
+| 443 | TCP | Inbound (LI network only) | HTTPS to LI services |
+| 80 | TCP | Inbound (LI network only) | HTTP redirect |
+| 8000 | TCP | Inbound (from main Synapse) | key_vault API (cross-network) |
+
+**Monitoring Server (1 server):**
+| Port | Protocol | Direction | Purpose |
+|------|----------|-----------|---------|
+| 22 | TCP | Inbound | SSH (management) |
+| 10250 | TCP | Inbound | Kubelet |
+| 9090 | TCP | Inbound (internal) | Prometheus |
+| 3000 | TCP | Inbound (internal) | Grafana |
+| 3100 | TCP | Inbound (internal) | Loki |
+
+---
+
+#### 3.5 Outbound Requirements
+
+**From ALL servers (internet access during installation):**
+| Destination | Port | Protocol | Purpose |
+|-------------|------|----------|---------|
+| Registry (docker.io, quay.io, etc.) | 443 | TCP | Pull container images |
+| apt/package repos | 443, 80 | TCP | OS package installation |
+| Helm chart repos | 443 | TCP | Helm chart downloads |
+
+**After installation (air-gapped operation):**
+- No outbound internet required
+- All traffic is internal between servers
+
+---
+
+#### 3.6 Network Summary Diagram
+
+```
+INTERNET
+    │
+    ▼
+┌─────────────────────────────────────────────────────┐
+│  EXTERNAL FIREWALL                                   │
+│  Open: 443, 80 → Ingress                            │
+│  Open: 3478, 5349, 49152-65535 → TURN               │
+└─────────────────────────────────────────────────────┘
+    │
+    ▼
+┌─────────────────────────────────────────────────────┐
+│  MAIN NETWORK                                        │
+│                                                      │
+│  ┌─────────┐  ┌─────────┐  ┌─────────┐             │
+│  │Control  │  │Control  │  │Control  │             │
+│  │Plane 1  │──│Plane 2  │──│Plane 3  │             │
+│  │6443,2379│  │6443,2379│  │6443,2379│             │
+│  └────┬────┘  └────┬────┘  └────┬────┘             │
+│       │           │           │                     │
+│  ┌────┴───────────┴───────────┴────┐               │
+│  │        Kubernetes API            │               │
+│  └─────────────────────────────────┘               │
+│       │                                             │
+│       ▼                                             │
+│  ┌─────────┐  ┌─────────┐  ┌─────────┐             │
+│  │App Node │  │App Node │  │App Node │ (Synapse,   │
+│  │  8008   │──│  8008   │──│  8008   │  Element,   │
+│  │ Workers │  │ Workers │  │ Workers │  HAProxy)   │
+│  └────┬────┘  └────┬────┘  └────┬────┘             │
+│       │           │           │                     │
+│  ┌────┴───────────┴───────────┴────┐               │
+│  │                                  │               │
+│  ▼                                  ▼               │
+│  ┌─────────────────┐  ┌─────────────────┐          │
+│  │ Database Nodes  │  │  Storage Nodes  │          │
+│  │ PostgreSQL 5432 │  │  MinIO 9000     │          │
+│  └─────────────────┘  └─────────────────┘          │
+│                                                      │
+│  ┌─────────────────┐  ┌─────────────────┐          │
+│  │ Call Servers    │  │ Monitoring      │          │
+│  │ TURN 3478       │  │ Prometheus 9090 │          │
+│  │ LiveKit 7881    │  │ Grafana 3000    │          │
+│  └─────────────────┘  └─────────────────┘          │
+└─────────────────────────────────────────────────────┘
+                    │
+                    │ (Sync System only)
+                    ▼
+┌─────────────────────────────────────────────────────┐
+│  LI NETWORK (Isolated)                               │
+│                                                      │
+│  ┌─────────────────┐                                │
+│  │ LI Server       │                                │
+│  │ Synapse LI 8008 │                                │
+│  │ Element LI 80   │                                │
+│  │ Admin LI 80     │                                │
+│  └─────────────────┘                                │
+│                                                      │
+│  Access: LI network DNS → LI Ingress (443)          │
+└─────────────────────────────────────────────────────┘
+```
 
 ### 4. LI Network Isolation (Organization Responsibility)
 
@@ -67,23 +289,39 @@ The deployer has SSH access to servers and handles all configuration and deploym
 | Requirement | Description |
 |-------------|-------------|
 | **Separate LI Network** | Physically or logically isolated network segment |
-| **LI DNS Server** | DNS that resolves `matrix.example.com` → LI Ingress IP |
+| **LI DNS Server** | DNS that resolves LI domains to LI Ingress IP (see below) |
 | **Access Control** | VPN, firewall, or physical access restriction |
 | **LI Server(s)** | 1+ servers in the LI network segment |
 
-**How LI Access Works:**
-- LI uses **same hostnames** as main instance (`matrix.example.com`)
-- Access is controlled by **network isolation**, not different domains
-- LI admin connects to LI network → DNS resolves to LI → accesses LI instance
-- Regular users on main network → DNS resolves to main → cannot access LI
+**LI Domain Strategy:**
+- **Synapse LI** uses **SAME** hostname as main (`matrix.example.com`) - required for Matrix protocol
+- **Element Web LI, Synapse Admin LI, key_vault** use **DIFFERENT** hostnames from main
 
-**Example LI DNS Configuration:**
+| Service | Domain | Same as Main? |
+|---------|--------|---------------|
+| Synapse LI | `matrix.example.com` | YES (required) |
+| Element Web LI | `chat-li.example.com` | NO |
+| Synapse Admin LI | `admin-li.example.com` | NO |
+| key_vault | `keyvault.example.com` | NO |
+
+**How LI Access Works:**
+- LI admin connects to LI network → LI DNS resolves to LI Ingress
+- Access Element Web LI at `https://chat-li.example.com`
+- Access Synapse Admin LI at `https://admin-li.example.com`
+- Access key_vault admin at `https://keyvault.example.com/admin`
+
+**Required DNS Configuration:**
+
 ```
 # Main DNS (regular users)
-matrix.example.com  →  10.0.1.100  (Main Ingress)
+matrix.example.com    →  10.0.1.100  (Main Ingress)
+chat.example.com      →  10.0.1.100  (Main Ingress)
 
 # LI DNS (LI network only)
-matrix.example.com  →  10.0.2.100  (LI Ingress)
+matrix.example.com    →  10.0.2.100  (LI Ingress - Synapse LI)
+chat-li.example.com   →  10.0.2.100  (LI Ingress - Element Web LI)
+admin-li.example.com  →  10.0.2.100  (LI Ingress - Synapse Admin LI)
+keyvault.example.com  →  10.0.2.100  (LI Ingress - key_vault)
 ```
 
 ### 5. TLS Certificates
@@ -274,16 +512,21 @@ The deployer generates all secrets and credentials during deployment using the p
   - [ ] All worker types properly mapped
   - [ ] Health check endpoints configured
 
-### 3. key_vault Application
+### 3. key_vault Application (LI Network)
 - [ ] **Django application structure created:**
-  - [ ] Init container generates complete app structure
-  - [ ] manage.py, wsgi.py, urls.py created at runtime
+  - [ ] Init container runs migrations
   - [ ] Models and views properly defined
-- [ ] **Database initialization job:**
-  - [ ] Creates dedicated `key_vault` database
-  - [ ] Uses PostgreSQL superuser credentials
-- [ ] **Network isolation enforced:**
-  - [ ] Only accessible from Synapse main (not LI)
+- [ ] **SQLite database:**
+  - [ ] Uses local SQLite file (no external database)
+  - [ ] Data persisted on PVC (1Gi)
+  - [ ] Automatic migrations on startup
+- [ ] **Network access controlled (NetworkPolicy):**
+  - [ ] Synapse main can STORE keys (cross-network access)
+  - [ ] LI admin can RETRIEVE keys (within LI network)
+  - [ ] All other access blocked
+- [ ] **Deployed on LI Server:**
+  - [ ] key_vault runs on LI server nodes (nodeSelector)
+  - [ ] Located in `li-instance/05-key-vault/`
 
 ### 4. LiveKit SFU
 - [ ] **Configuration substitution implemented:**
@@ -307,9 +550,9 @@ The deployer generates all secrets and credentials during deployment using the p
   - [ ] Subscription properly configured
 - [ ] **Credentials properly set:**
   ```yaml
-  # Using synapse user for replication
-  MAIN_DB_USER: "synapse"
-  MAIN_DB_PASSWORD: <same-as-main-synapse>
+  # Using postgres superuser for replication (required for CREATE SUBSCRIPTION)
+  MAIN_DB_USER: "postgres"
+  MAIN_DB_PASSWORD: <postgres-superuser-password>
   ```
 
 ### 2. LI Synapse Instance
@@ -321,14 +564,15 @@ The deployer generates all secrets and credentials during deployment using the p
 ## ✅ Phase 4: Auxiliary Services
 
 ### 1. Antivirus (ClamAV)
-- [ ] **Content scanner fixed:**
+- [ ] **Content scanner configuration:**
   ```bash
-  # Using TCP connection instead of clamdscan
-  SCAN_RESULT=$(echo "SCAN $FILE" | nc -w 30 clamav.matrix.svc.cluster.local 3310)
+  # Uses Python socket with zINSTREAM command to scan files
+  # Configured in antivirus/02-scan-workers/deployment.yaml
+  # ClamAV endpoint: clamav.matrix.svc.cluster.local:3310
   ```
 - [ ] **Init container waits for ClamAV:**
-  - [ ] Checks port 3310 availability
-  - [ ] Properly handles connection
+  - [ ] Uses netcat to check port 3310 availability before starting
+  - [ ] Scanner uses Python socket for actual scanning (zINSTREAM protocol)
 
 ### 2. Element Web
 - [ ] **Configuration properly mounted:**
@@ -558,18 +802,18 @@ KEY_VAULT_API_KEY=$(openssl rand -hex 32)
 echo "key_vault API key: $KEY_VAULT_API_KEY"
 ```
 
-**Update in:** `main-instance/08-key-vault/secret.yaml`
+**Update in:** `li-instance/05-key-vault/deployment.yaml`
 ```yaml
 apiVersion: v1
 kind: Secret
 metadata:
-  name: key-vault-secret
+  name: key-vault-secrets
 stringData:
-  SECRET_KEY: "<paste-django-secret-key>"
+  DJANGO_SECRET_KEY: "<paste-django-secret-key>"
   RSA_PRIVATE_KEY: |
     <paste-entire-private-key-including-BEGIN-END-lines>
   API_KEY: "<paste-KEY_VAULT_API_KEY>"
-  DB_PASSWORD: ""  # Auto-populated from PostgreSQL secret at runtime
+  # NOTE: key_vault uses SQLite - no database credentials needed
 ```
 
 **Update Synapse configuration with API key:**
@@ -625,7 +869,7 @@ COTURN_SECRET=$(openssl rand -base64 32)
 echo "coturn shared secret: $COTURN_SECRET"
 ```
 
-**Update in:** `main-instance/05-coturn/secret.yaml`
+**Update in:** `main-instance/06-coturn/deployment.yaml` (in the Secret section)
 ```yaml
 apiVersion: v1
 kind: Secret
@@ -845,15 +1089,14 @@ kubectl apply -f infrastructure/04-networking/networkpolicies.yaml
 # 5. Main Synapse instance
 kubectl apply -f main-instance/01-synapse/
 
-# 6. HAProxy load balancer
-kubectl apply -f main-instance/02-haproxy/
+# 6. Synapse workers
+kubectl apply -f main-instance/02-workers/
 
-# 7. Synapse workers
-kubectl apply -f main-instance/03-workers/
+# 7. HAProxy load balancer
+kubectl apply -f main-instance/03-haproxy/
 
-# 8. key_vault (wait for DB init job)
-kubectl apply -f main-instance/08-key-vault/
-kubectl wait --for=condition=complete job/key-vault-init-db -n matrix
+# 8. Element Web
+kubectl apply -f main-instance/02-element-web/
 ```
 
 ### Phase 3: Auxiliary Services
@@ -867,24 +1110,29 @@ kubectl apply -f antivirus/02-scan-workers/
 # 11. LiveKit SFU
 kubectl apply -f main-instance/04-livekit/
 
-# 12. Element Web
-kubectl apply -f main-instance/07-element-web/
-
-# 13. TURN server
-kubectl apply -f main-instance/05-coturn/
+# 12. TURN server
+kubectl apply -f main-instance/06-coturn/
 ```
 
 ### Phase 4: LI Instance
 ```bash
-# 14. LI Synapse instance
-kubectl apply -f li-instance/01-synapse/
+# 13. LI Redis (isolated)
+kubectl apply -f li-instance/00-redis-li/
 
-# 15. Setup replication (run once)
+# 14. Sync system (replication)
 kubectl apply -f li-instance/04-sync-system/
-kubectl wait --for=condition=complete job/sync-system-setup-replication -n matrix
 
-# 16. LI workers
-kubectl apply -f li-instance/02-workers/
+# 15. LI Synapse instance
+kubectl apply -f li-instance/01-synapse-li/
+
+# 16. LI Element Web
+kubectl apply -f li-instance/02-element-web-li/
+
+# 17. LI Synapse Admin
+kubectl apply -f li-instance/03-synapse-admin-li/
+
+# 18. key_vault (E2EE recovery - in LI network)
+kubectl apply -f li-instance/05-key-vault/
 ```
 
 ### Phase 5: Monitoring

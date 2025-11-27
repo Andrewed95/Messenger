@@ -1,8 +1,20 @@
-# key_vault Django Application
+# key_vault Django Application - LI Network Component
 # ⭐ CRITICAL FOR LAWFUL INTERCEPT (LI) ⭐
 #
 # Stores encrypted E2EE recovery keys for Matrix end-to-end encryption
 # Enables lawful intercept to recover encrypted message history
+#
+# LOCATION: This service runs in the LI network (per CLAUDE.md requirements)
+#
+# ACCESS MODEL:
+# - Synapse main (main network): Can STORE recovery keys (when users set up E2EE)
+# - LI admin (LI network): Can RETRIEVE recovery keys (for lawful intercept workflow)
+# - All other access: BLOCKED by NetworkPolicy
+#
+# DATABASE: SQLite (local file storage)
+# - Low I/O requirements (only stores recovery keys)
+# - Simple deployment (no external database dependency)
+# - Data persisted on PVC
 #
 # IMPORTANT: You MUST provide a pre-built Django application image that includes:
 # - Django project structure with key_vault app
@@ -12,10 +24,11 @@
 # Replace CHANGEME_KEY_VAULT_IMAGE with your actual image URL
 #
 # SECURITY:
-# - ONLY accessible from Synapse main process (NetworkPolicy enforced)
-# - NOT accessible from LI instance (prevents unauthorized key access)
-# - Encryption keys stored separately in PostgreSQL
+# - Located in LI network (isolated from main users)
+# - Synapse main has specific NetworkPolicy access for storing keys
+# - LI admin can retrieve keys from within LI network
 # - RSA 2048-bit encryption for recovery keys
+# - Private key stored securely, needed to decrypt recovery keys
 
 ---
 # Secret for key_vault application
@@ -27,25 +40,25 @@ metadata:
   labels:
     app.kubernetes.io/name: key-vault
     app.kubernetes.io/component: recovery-key-storage
-    matrix.instance: main
+    matrix.instance: li
 type: Opaque
 stringData:
-  # Django secret key (generate using: python -c 'from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())')
+  # Django secret key
+  # Generate using: python -c 'from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())'
   DJANGO_SECRET_KEY: "CHANGEME_DJANGO_SECRET_KEY_GENERATE_SECURE_RANDOM_STRING"
 
-  # Database credentials (dedicated database for key_vault)
-  DB_NAME: "key_vault"
-  DB_USER: "key_vault"
-  DB_PASSWORD: "CHANGEME_SECURE_KEY_VAULT_DB_PASSWORD"
-  DB_HOST: "matrix-postgresql-rw.matrix.svc.cluster.local"
-  DB_PORT: "5432"
-
-  # API key for Synapse to access key_vault
-  # MUST match KEY_VAULT_API_KEY in Synapse secrets
+  # API key for Synapse main to access key_vault (for storing keys)
+  # MUST match KEY_VAULT_API_KEY in main-instance/01-synapse/secrets.yaml
   API_KEY: "CHANGEME_SECURE_KEY_VAULT_API_KEY"
 
-  # Encryption key for storing recovery keys (RSA 2048-bit)
+  # RSA 2048-bit private key for encrypting/decrypting recovery keys
   # Generate using: openssl genrsa -out private.pem 2048
+  # Extract public key: openssl rsa -in private.pem -pubout -out public.pem
+  #
+  # IMPORTANT:
+  # - Synapse main uses the PUBLIC key to encrypt recovery keys before storing
+  # - LI admin uses the PRIVATE key to decrypt recovery keys for intercept
+  # - Keep the private key secure - it enables access to all E2EE messages
   RSA_PRIVATE_KEY: |
     -----BEGIN RSA PRIVATE KEY-----
     CHANGEME_GENERATE_RSA_2048_BIT_PRIVATE_KEY
@@ -63,9 +76,9 @@ metadata:
   labels:
     app.kubernetes.io/name: key-vault
     app.kubernetes.io/component: recovery-key-storage
-    matrix.instance: main
+    matrix.instance: li
 data:
-  # Django settings (simplified)
+  # Django settings - configured for SQLite database
   settings.py: |
     import os
     from pathlib import Path
@@ -76,7 +89,7 @@ data:
     # Security
     SECRET_KEY = os.environ['DJANGO_SECRET_KEY']
     DEBUG = False
-    ALLOWED_HOSTS = ['*']  # Only accessible within cluster
+    ALLOWED_HOSTS = ['*']  # Only accessible within cluster via NetworkPolicy
 
     # Applications
     INSTALLED_APPS = [
@@ -87,7 +100,7 @@ data:
         'django.contrib.messages',
         'django.contrib.staticfiles',
         'rest_framework',
-        'recovery_keys',  # Custom app for key storage
+        'secret',  # Key storage app (matches key_vault repo structure: secret/views.py)
     ]
 
     MIDDLEWARE = [
@@ -102,16 +115,16 @@ data:
 
     ROOT_URLCONF = 'key_vault.urls'
 
-    # Database
+    # Database - SQLite (simple, low overhead, suitable for recovery key storage)
+    # Data volume is low (one key per user), no need for PostgreSQL
     DATABASES = {
         'default': {
-            'ENGINE': 'django.db.backends.postgresql',
-            'NAME': os.environ['DB_NAME'],
-            'USER': os.environ['DB_USER'],
-            'PASSWORD': os.environ['DB_PASSWORD'],
-            'HOST': os.environ['DB_HOST'],
-            'PORT': os.environ['DB_PORT'],
-            'CONN_MAX_AGE': 600,
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': '/data/key_vault.db',
+            # SQLite optimizations for concurrent access
+            'OPTIONS': {
+                'timeout': 20,  # Wait up to 20 seconds for locks
+            },
         }
     }
 
@@ -119,14 +132,28 @@ data:
     LOGGING = {
         'version': 1,
         'disable_existing_loggers': False,
+        'formatters': {
+            'verbose': {
+                'format': '{levelname} {asctime} {module} {message}',
+                'style': '{',
+            },
+        },
         'handlers': {
             'console': {
                 'class': 'logging.StreamHandler',
+                'formatter': 'verbose',
             },
         },
         'root': {
             'handlers': ['console'],
             'level': 'INFO',
+        },
+        'loggers': {
+            'recovery_keys': {
+                'handlers': ['console'],
+                'level': 'INFO',
+                'propagate': False,
+            },
         },
     }
 
@@ -143,10 +170,36 @@ data:
     # Encryption settings
     RSA_PRIVATE_KEY_PATH = '/secrets/rsa-private-key.pem'
 
+    # Static files (for admin interface if needed)
+    STATIC_URL = '/static/'
+    STATIC_ROOT = '/tmp/static'
+
 ---
-# key_vault Deployment
+# PersistentVolumeClaim for SQLite database
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: key-vault-data
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: key-vault
+    app.kubernetes.io/component: recovery-key-storage
+    matrix.instance: li
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: standard  # Adjust to your cluster's storage class
+  resources:
+    requests:
+      # Small storage - recovery keys are ~1KB each
+      # 1Gi supports millions of keys with room for growth
+      storage: 1Gi
+
+---
+# key_vault StatefulSet (for stable storage identity)
+# Using StatefulSet instead of Deployment for SQLite data persistence
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: key-vault
   namespace: matrix
@@ -154,20 +207,15 @@ metadata:
     app.kubernetes.io/name: key-vault
     app.kubernetes.io/component: recovery-key-storage
     app.kubernetes.io/version: "1.0.0"
-    matrix.instance: main
+    matrix.instance: li
 spec:
-  replicas: 2  # Run 2 replicas for HA
+  serviceName: key-vault
+  replicas: 1  # Single replica (LI doesn't need HA per CLAUDE.md)
 
   selector:
     matchLabels:
       app.kubernetes.io/name: key-vault
       app.kubernetes.io/component: recovery-key-storage
-
-  strategy:
-    type: RollingUpdate
-    rollingUpdate:
-      maxSurge: 1
-      maxUnavailable: 0
 
   template:
     metadata:
@@ -175,7 +223,7 @@ spec:
         app.kubernetes.io/name: key-vault
         app.kubernetes.io/component: recovery-key-storage
         app.kubernetes.io/version: "1.0.0"
-        matrix.instance: main
+        matrix.instance: li
       annotations:
         prometheus.io/scrape: "false"  # No Prometheus metrics (security consideration)
 
@@ -189,16 +237,17 @@ spec:
         seccompProfile:
           type: RuntimeDefault
 
-      # Distribute across nodes
-      affinity:
-        podAntiAffinity:
-          preferredDuringSchedulingIgnoredDuringExecution:
-            - weight: 100
-              podAffinityTerm:
-                labelSelector:
-                  matchLabels:
-                    app.kubernetes.io/name: key-vault
-                topologyKey: kubernetes.io/hostname
+      # Schedule on LI server nodes
+      # Adjust the label to match your LI node labels
+      nodeSelector:
+        node-role.kubernetes.io/li: "true"
+
+      # Tolerate LI node taints if any
+      tolerations:
+        - key: "dedicated"
+          operator: "Equal"
+          value: "li"
+          effect: "NoSchedule"
 
       # Init container for database migrations
       initContainers:
@@ -218,43 +267,20 @@ spec:
                 secretKeyRef:
                   name: key-vault-secrets
                   key: DJANGO_SECRET_KEY
-            - name: DB_NAME
-              valueFrom:
-                secretKeyRef:
-                  name: key-vault-secrets
-                  key: DB_NAME
-            - name: DB_USER
-              valueFrom:
-                secretKeyRef:
-                  name: key-vault-secrets
-                  key: DB_USER
-            - name: DB_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: key-vault-secrets
-                  key: DB_PASSWORD
-            - name: DB_HOST
-              valueFrom:
-                secretKeyRef:
-                  name: key-vault-secrets
-                  key: DB_HOST
-            - name: DB_PORT
-              valueFrom:
-                secretKeyRef:
-                  name: key-vault-secrets
-                  key: DB_PORT
           volumeMounts:
             - name: config
               mountPath: /app/key_vault/settings.py
               subPath: settings.py
               readOnly: true
+            - name: data
+              mountPath: /data
           resources:
             requests:
-              memory: "256Mi"
-              cpu: "200m"
+              memory: "128Mi"
+              cpu: "100m"
             limits:
-              memory: "512Mi"
-              cpu: "500m"
+              memory: "256Mi"
+              cpu: "250m"
           securityContext:
             allowPrivilegeEscalation: false
             runAsNonRoot: true
@@ -281,31 +307,6 @@ spec:
                 secretKeyRef:
                   name: key-vault-secrets
                   key: DJANGO_SECRET_KEY
-            - name: DB_NAME
-              valueFrom:
-                secretKeyRef:
-                  name: key-vault-secrets
-                  key: DB_NAME
-            - name: DB_USER
-              valueFrom:
-                secretKeyRef:
-                  name: key-vault-secrets
-                  key: DB_USER
-            - name: DB_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: key-vault-secrets
-                  key: DB_PASSWORD
-            - name: DB_HOST
-              valueFrom:
-                secretKeyRef:
-                  name: key-vault-secrets
-                  key: DB_HOST
-            - name: DB_PORT
-              valueFrom:
-                secretKeyRef:
-                  name: key-vault-secrets
-                  key: DB_PORT
             - name: API_KEY
               valueFrom:
                 secretKeyRef:
@@ -320,44 +321,44 @@ spec:
             - name: secrets
               mountPath: /secrets
               readOnly: true
+            - name: data
+              mountPath: /data
             - name: tmp
               mountPath: /tmp
 
-          # Resource limits
+          # Resource limits (reduced - SQLite is lightweight)
           resources:
             requests:
-              memory: "256Mi"
-              cpu: "200m"
+              memory: "128Mi"
+              cpu: "100m"
             limits:
-              memory: "512Mi"
-              cpu: "500m"
+              memory: "256Mi"
+              cpu: "250m"
 
-          # Liveness probe
+          # Liveness probe - TCP socket check (Django app responds on port 8000)
+          # NOTE: If your key_vault image has a /health endpoint, you can use httpGet instead
           livenessProbe:
-            httpGet:
-              path: /health
+            tcpSocket:
               port: 8000
             initialDelaySeconds: 30
             periodSeconds: 30
             timeoutSeconds: 5
             failureThreshold: 3
 
-          # Readiness probe
+          # Readiness probe - TCP socket check
           readinessProbe:
-            httpGet:
-              path: /health
+            tcpSocket:
               port: 8000
-            initialDelaySeconds: 15
+            initialDelaySeconds: 10
             periodSeconds: 10
             timeoutSeconds: 3
             failureThreshold: 2
 
-          # Startup probe
+          # Startup probe - TCP socket check
           startupProbe:
-            httpGet:
-              path: /health
+            tcpSocket:
               port: 8000
-            initialDelaySeconds: 10
+            initialDelaySeconds: 5
             periodSeconds: 5
             timeoutSeconds: 3
             failureThreshold: 20
@@ -383,6 +384,9 @@ spec:
               - key: RSA_PRIVATE_KEY
                 path: rsa-private-key.pem
                 mode: 0400
+        - name: data
+          persistentVolumeClaim:
+            claimName: key-vault-data
         - name: tmp
           emptyDir: {}
 
@@ -396,9 +400,13 @@ metadata:
   labels:
     app.kubernetes.io/name: key-vault
     app.kubernetes.io/component: recovery-key-storage
+    matrix.instance: li
   annotations:
-    # CRITICAL: This service should ONLY be accessible from Synapse main
-    # Enforced by NetworkPolicy: key-vault-isolation
+    description: |
+      key_vault service in LI network.
+      Access controlled by NetworkPolicy:
+      - Synapse main (main network): Can STORE keys
+      - LI admin (LI network): Can RETRIEVE keys
 spec:
   type: ClusterIP
   selector:
@@ -411,83 +419,41 @@ spec:
       protocol: TCP
 
 ---
-# PodDisruptionBudget for key_vault
-apiVersion: policy/v1
-kind: PodDisruptionBudget
+# key_vault Ingress - For LI admin access to Django admin panel
+# IMPORTANT: This Ingress is only accessible from the LI network
+# The keyvault domain should resolve to the LI Ingress IP
+apiVersion: networking.k8s.io/v1
+kind: Ingress
 metadata:
-  name: key-vault-pdb
+  name: key-vault-ingress
   namespace: matrix
   labels:
     app.kubernetes.io/name: key-vault
     app.kubernetes.io/component: recovery-key-storage
+    matrix.instance: li
+  annotations:
+    # TLS configuration - use your cert-manager issuer
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    # Security headers
+    nginx.ingress.kubernetes.io/proxy-body-size: "1m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "60"
 spec:
-  minAvailable: 1
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: key-vault
-      app.kubernetes.io/component: recovery-key-storage
-
----
-# Job to create initial database and user (run once)
-apiVersion: batch/v1
-kind: Job
-metadata:
-  name: key-vault-init-db
-  namespace: matrix
-  labels:
-    app.kubernetes.io/name: key-vault
-    app.kubernetes.io/component: database-init
-spec:
-  template:
-    spec:
-      restartPolicy: OnFailure
-      containers:
-        - name: create-db
-          image: postgres:16-alpine
-          command:
-            - sh
-            - -c
-            - |
-              # Create database and user for key_vault
-              PGPASSWORD="$POSTGRES_PASSWORD" psql -h "$DB_HOST" -U postgres -tc \
-                "SELECT 1 FROM pg_database WHERE datname = '$DB_NAME'" | grep -q 1 || \
-                PGPASSWORD="$POSTGRES_PASSWORD" psql -h "$DB_HOST" -U postgres -c \
-                "CREATE DATABASE $DB_NAME"
-
-              PGPASSWORD="$POSTGRES_PASSWORD" psql -h "$DB_HOST" -U postgres -tc \
-                "SELECT 1 FROM pg_user WHERE usename = '$DB_USER'" | grep -q 1 || \
-                PGPASSWORD="$POSTGRES_PASSWORD" psql -h "$DB_HOST" -U postgres -c \
-                "CREATE USER $DB_USER WITH PASSWORD '$DB_PASSWORD'"
-
-              PGPASSWORD="$POSTGRES_PASSWORD" psql -h "$DB_HOST" -U postgres -c \
-                "GRANT ALL PRIVILEGES ON DATABASE $DB_NAME TO $DB_USER"
-
-              echo "key_vault database initialized successfully"
-          env:
-            # PostgreSQL superuser credentials from CloudNativePG
-            # CloudNativePG creates app-level user, we need superuser for CREATE DATABASE
-            - name: POSTGRES_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: matrix-postgresql-superuser
-                  key: password
-            - name: DB_NAME
-              valueFrom:
-                secretKeyRef:
-                  name: key-vault-secrets
-                  key: DB_NAME
-            - name: DB_USER
-              valueFrom:
-                secretKeyRef:
-                  name: key-vault-secrets
-                  key: DB_USER
-            - name: DB_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: key-vault-secrets
-                  key: DB_PASSWORD
-            - name: DB_HOST
-              valueFrom:
-                secretKeyRef:
-                  name: key-vault-secrets
-                  key: DB_HOST
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        # CHANGEME: Replace with your key_vault domain
+        - keyvault.example.com
+      secretName: key-vault-tls
+  rules:
+    # CHANGEME: Replace with your key_vault domain
+    - host: keyvault.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: key-vault
+                port:
+                  number: 8000
