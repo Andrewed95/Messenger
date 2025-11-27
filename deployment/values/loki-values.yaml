@@ -131,16 +131,16 @@ promtail:
       filename: /run/promtail/positions.yaml
 
     scrapeConfigs:
-      # Kubernetes pods
+      # Kubernetes pods - Collect logs from ALL pods in matrix/monitoring namespaces
       - job_name: kubernetes-pods
         kubernetes_sd_configs:
           - role: pod
 
         relabel_configs:
-          # Only scrape pods with logging enabled
-          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+          # Only collect logs from matrix, monitoring, ingress-nginx namespaces
+          - source_labels: [__meta_kubernetes_namespace]
             action: keep
-            regex: true
+            regex: (matrix|monitoring|ingress-nginx)
 
           # Pod name
           - source_labels: [__meta_kubernetes_pod_name]
@@ -157,6 +157,14 @@ promtail:
           # Node name
           - source_labels: [__meta_kubernetes_pod_node_name]
             target_label: node
+
+          # App label for easier filtering
+          - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name]
+            target_label: app
+
+          # Component label
+          - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_component]
+            target_label: component
 
         pipeline_stages:
           # Extract log level if present

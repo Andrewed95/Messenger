@@ -77,7 +77,16 @@ Here's your path from zero to a running production Matrix homeserver:
         ↓
 💬 PHASE 4: MAIN INSTANCE DEPLOYMENT
    ├─ Synapse main process
-   ├─ Synapse workers (5 types for horizontal scaling)
+   ├─ Synapse workers (9 types for horizontal scaling)
+   │   ├─ synchrotron (sync requests)
+   │   ├─ generic-worker (client API)
+   │   ├─ media-repository (media handling)
+   │   ├─ event-persister (database writes)
+   │   ├─ federation-sender (outbound federation)
+   │   ├─ typing-writer (typing indicators)
+   │   ├─ todevice-writer (E2EE key exchange)
+   │   ├─ receipts-writer (read receipts)
+   │   └─ presence-writer (online status)
    ├─ HAProxy (load balancer)
    ├─ Element Web (chat interface)
    ├─ coturn (NAT traversal for calls)
@@ -227,29 +236,33 @@ Here's your path from zero to a running production Matrix homeserver:
 │              (Intelligent Request Router)                        │
 │  ┌────────────────────────────────────────────────────────┐     │
 │  │  Routes by URL pattern:                                │     │
-│  │  • /_matrix/client/*/sync      → Sync Workers         │     │
+│  │  • /_matrix/client/*/sync      → Synchrotron Workers  │     │
 │  │  • /_matrix/client/* (other)   → Generic Workers      │     │
-│  │  • /_matrix/federation/*       → Generic Workers      │     │
-│  │  • /_matrix/media/*            → Generic Workers      │     │
-│  │  • /_synapse/admin/*           → Generic Workers      │     │
+│  │  • /_matrix/media/download     → Content Scanner (AV) │     │
+│  │  • /_matrix/media/upload       → Media Workers        │     │
+│  │  • /_synapse/admin/*           → Synapse Main         │     │
 │  └────────────────────────────────────────────────────────┘     │
 │  Files: main-instance/03-haproxy/                               │
-└──┬────────────────────┬──────────────────┬──────────────────┬───┘
-   │                    │                  │                  │
-   ▼                    ▼                  ▼                  ▼
-┌──────────┐    ┌─────────────┐   ┌──────────────┐   ┌──────────┐
-│ Synapse  │    │   Sync      │   │   Generic    │   │  Event   │
-│  Main    │    │  Workers    │   │   Workers    │   │Persisters│
-│ Process  │    │  (2 pods)   │   │   (2 pods)   │   │ (2 pods) │
-│          │    │             │   │              │   │          │
-│ Handles: │    │ Handles:    │   │ Handles:     │   │ Handles: │
-│• Config  │    │• /sync      │   │• Client APIs │   │• Writes  │
-│  loading │    │  requests   │   │• Media       │   │  to DB   │
-│• Background│   │• Real-time  │   │• Federation  │   │• Batching│
-│  tasks   │    │  updates    │   │• Admin       │   │          │
-└────┬─────┘    └──────┬──────┘   └──────┬───────┘   └────┬─────┘
-     │                 │                  │                 │
-     └─────────────────┴──────────────────┴─────────────────┘
+└──┬─────────────────────────┬──────────────────────────────────┬───┘
+   │                         │                                  │
+   ▼                         ▼                                  ▼
+┌──────────────┐    ┌───────────────────────────────┐   ┌──────────────────┐
+│  Synapse     │    │      SCALABLE WORKERS          │   │  STREAM WRITERS  │
+│   Main       │    │  (HPA auto-scaling)            │   │  (Fixed replicas)│
+│  Process     │    ├───────────────────────────────┤   ├──────────────────┤
+│              │    │ Synchrotron    │ Generic      │   │ Event Persisters │
+│ Handles:     │    │ (4-16 pods)    │ (2-16 pods)  │   │ Federation Sender│
+│• Config      │    │ • /sync        │ • Client API │   │ Typing Writer    │
+│• Background  │    │ • /events      │ • Search     │   │ ToDevice Writer  │
+│• Replication │    │ • Real-time    │ • Profiles   │   │ Receipts Writer  │
+│              │    ├────────────────┼──────────────┤   │ Presence Writer  │
+│              │    │ Media Workers  │ Content      │   │                  │
+│              │    │ (2-8 pods)     │ Scanner      │   │ (StatefulSets -  │
+│              │    │ • Uploads      │ • AV scan    │   │  require config  │
+│              │    │ • Thumbnails   │ • Downloads  │   │  changes to scale│
+└──────┬───────┘    └───────────────┬───────────────┘   └────────┬─────────┘
+       │                            │                            │
+       └────────────────────────────┴────────────────────────────┘
                                │
                      ┌─────────▼──────────┐
                      │  Redis Sentinel    │
@@ -606,12 +619,17 @@ deployment/
 │   │   Configuration: Domain, homeserver URL
 │   │
 │   ├── 02-workers/
-│   │   ├── synchrotron-deployment.yaml    → /sync workers
-│   │   ├── generic-worker-deployment.yaml → General APIs
-│   │   ├── media-repository-deployment.yaml → (future expansion)
-│   │   ├── event-persister-deployment.yaml → DB writes
-│   │   └── federation-sender-deployment.yaml → Outbound federation
-│   │   Purpose: Horizontal scaling for Matrix APIs
+│   │   ├── synchrotron-deployment.yaml         → /sync workers (HPA)
+│   │   ├── generic-worker-deployment.yaml      → General APIs (HPA)
+│   │   ├── media-repository-statefulset.yaml   → Media handling
+│   │   ├── event-persister-deployment.yaml     → DB writes (StatefulSet)
+│   │   ├── federation-sender-deployment.yaml   → Outbound federation (StatefulSet)
+│   │   ├── typing-writer-deployment.yaml       → Typing indicators (StatefulSet)
+│   │   ├── todevice-writer-deployment.yaml     → E2EE key exchange (StatefulSet)
+│   │   ├── receipts-writer-deployment.yaml     → Read receipts (StatefulSet)
+│   │   └── presence-writer-deployment.yaml     → Online status (StatefulSet)
+│   │   Purpose: 9 worker types for horizontal scaling
+│   │   Note: synchrotron and generic-worker have HPA; others are StatefulSets
 │   │   Configuration: Inherits from main configmap
 │   │
 │   ├── 03-haproxy/
@@ -809,18 +827,27 @@ Based on your expected user load (see SCALING-GUIDE.md):
    └─ TLS termination, forward to HAProxy
         │
         ▼
-4. HAPROXY
-   └─ Check URL pattern
-      └─ /_matrix/client/* (not /sync) → Generic Worker
+4. HAPROXY (Intelligent Request Router)
+   └─ Check URL pattern and route to appropriate worker:
+      └─ /_matrix/client/*/sync → Synchrotron Workers
+      └─ /_matrix/client/* (other) → Generic Workers
+      └─ /_matrix/media/download → Content Scanner (AV)
+      └─ /_matrix/media/upload → Media Workers
+      └─ /_synapse/admin/* → Synapse Main Process
         │
         ▼
-5. GENERIC WORKER
-   └─ Validate request
+5. WORKER PROCESSES REQUEST
+   └─ Generic/Synchrotron validates request
    └─ Check permissions (Redis cache first)
-   └─ Send event to Event Persister via Redis
+   └─ Events routed to appropriate stream writer:
+      └─ Messages → Event Persister Workers
+      └─ Typing → Typing Writer Workers
+      └─ Read receipts → Receipts Writer Workers
+      └─ Presence → Presence Writer Workers
+      └─ E2EE keys → ToDevice Writer Workers
         │
         ▼
-6. EVENT PERSISTER WORKER
+6. STREAM WRITER WORKERS
    └─ Batch multiple events
    └─ Write to PostgreSQL (main cluster)
         │
