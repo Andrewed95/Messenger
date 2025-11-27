@@ -1243,7 +1243,7 @@ ping -c 1 8.8.8.8
 
 #### Method 1: Using synapse-admin-li Decryption Tool (Web-based)
 
-**Access**: `https://admin-li.matrix.example.com/decryption`
+**Access**: `https://admin.example.com/decryption` (from LI network)
 
 **Prerequisites**:
 - Access to synapse-admin-li (LI instance)
@@ -1276,7 +1276,7 @@ exit()
 **Step 2: Access synapse-admin-li decryption tool**
 
 ```
-1. Open browser: https://admin-li.matrix.example.com/decryption
+1. Open browser: https://admin.example.com/decryption (from LI network)
 2. Log in with LI admin credentials
 3. Navigate to "Decryption Tool" page
 ```
@@ -1300,7 +1300,7 @@ exit()
 **Step 4: Use recovery key in element-web-li**
 
 ```
-1. Access element-web-li: https://element-li.matrix.example.com
+1. Access element-web-li: https://element.example.com (from LI network)
 2. Log in as target user (admin changed password via synapse-admin-li)
 3. Element prompts: "Verify this device" → Click "Verify with Security Key"
 4. Paste decrypted recovery key (from clipboard)

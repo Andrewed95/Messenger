@@ -196,12 +196,17 @@ Replace `matrix.example.com` with your actual domains:
 
 **Domain mapping:**
 ```bash
-matrix.example.com        → your-domain.com          # Main homeserver
-matrix-li.example.com     → li.your-domain.com       # LI instance
-element.example.com       → chat.your-domain.com     # Element Web
-element-li.example.com    → li-chat.your-domain.com  # Element LI
-turn.matrix.example.com   → turn.your-domain.com     # TURN server
+matrix.example.com        → your-domain.com          # Synapse homeserver (main AND LI)
+element.example.com       → chat.your-domain.com     # Element Web (main AND LI)
+admin.example.com         → admin.your-domain.com    # Synapse Admin (main AND LI)
+turn.example.com          → turn.your-domain.com     # TURN server
 ```
+
+**IMPORTANT - LI Instance Uses Same Hostnames:**
+- LI does NOT use separate domains (no li.your-domain.com)
+- Access to LI is controlled via **network isolation**, not different hostnames
+- Organization configures separate DNS in LI network to point to LI Ingress
+- See `li-instance/README.md` and `docs/PRE-DEPLOYMENT-CHECKLIST.md` for details
 
 **Files to update (85 occurrences across multiple files):**
 
@@ -229,11 +234,12 @@ infrastructure/04-networking/cert-manager-install.yaml
 # Run from the deployment directory:
 # Replace all occurrences (replace YOUR-DOMAIN.COM with your actual domain):
 find . -name "*.yaml" -type f -exec sed -i 's/matrix\.example\.com/YOUR-DOMAIN.COM/g' {} +
-find . -name "*.yaml" -type f -exec sed -i 's/matrix-li\.example\.com/li.YOUR-DOMAIN.COM/g' {} +
 find . -name "*.yaml" -type f -exec sed -i 's/element\.example\.com/chat.YOUR-DOMAIN.COM/g' {} +
-find . -name "*.yaml" -type f -exec sed -i 's/element-li\.example\.com/li-chat.YOUR-DOMAIN.COM/g' {} +
-find . -name "*.yaml" -type f -exec sed -i 's/turn\.matrix\.example\.com/turn.YOUR-DOMAIN.COM/g' {} +
+find . -name "*.yaml" -type f -exec sed -i 's/admin\.example\.com/admin.YOUR-DOMAIN.COM/g' {} +
+find . -name "*.yaml" -type f -exec sed -i 's/turn\.example\.com/turn.YOUR-DOMAIN.COM/g' {} +
 ```
+
+**Note:** LI instance uses the SAME domain names as main (no separate LI domains needed).
 
 **HOW TO UPDATE - Option 2: Manual editing**
 Edit each file individually using nano and search/replace example.com with your domain.
@@ -342,15 +348,19 @@ ed25519 a_long ed25519_key_string_here
 **IMPORTANT: Configure DNS A records BEFORE deploying** (so cert-manager can get TLS certificates):
 
 ```bash
-# All point to your Kubernetes Ingress external IP
+# Main instance DNS records (point to main Kubernetes Ingress external IP)
 # (You'll get this IP after deploying Ingress in Phase 1)
 
-your-domain.com            → <ingress-external-ip>
-chat.your-domain.com       → <ingress-external-ip>
-li.your-domain.com         → <ingress-external-ip>
-li-chat.your-domain.com    → <ingress-external-ip>
-turn.your-domain.com       → <ingress-external-ip>
+your-domain.com            → <main-ingress-external-ip>  # Synapse homeserver
+chat.your-domain.com       → <main-ingress-external-ip>  # Element Web
+admin.your-domain.com      → <main-ingress-external-ip>  # Synapse Admin
+turn.your-domain.com       → <turn-external-ip>           # TURN server
 ```
+
+**LI Instance DNS Configuration:**
+LI uses the **SAME hostnames** as main instance - no separate DNS records needed.
+Access control is via network isolation (organization configures separate DNS in LI network).
+See `li-instance/README.md` and `docs/PRE-DEPLOYMENT-CHECKLIST.md` for LI network setup.
 
 **Note:** You can configure DNS after Phase 1 (Infrastructure) is complete.
 
@@ -935,8 +945,9 @@ open https://admin.matrix.example.com
 
 **4. LI Instance:**
 ```bash
-# Only accessible from whitelisted IPs
-curl https://matrix-li.example.com/_matrix/client/versions
+# Only accessible from LI network (organization's responsibility to isolate)
+# From LI network, DNS resolves matrix.example.com to LI Ingress IP
+curl https://matrix.example.com/_matrix/client/versions
 ```
 
 **5. Monitoring:**

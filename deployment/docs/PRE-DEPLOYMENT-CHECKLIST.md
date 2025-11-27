@@ -1,8 +1,198 @@
 # Pre-Deployment Checklist for Matrix/Synapse Production
-<!-- Generated after fixing all 17 critical issues -->
 
 ## Overview
-This checklist ensures all components are properly configured and ready for deployment after resolving critical technical issues.
+This checklist ensures all components are properly configured and ready for deployment.
+
+---
+
+## 🏢 Organization Prerequisites (MUST BE PROVIDED EXTERNALLY)
+
+**This section lists requirements the organization MUST fulfill BEFORE deployment can begin.**
+
+The deployer has SSH access to servers and handles all configuration and deployment. However, the following items **cannot be done via SSH** and must be provided/configured by the organization's IT infrastructure team.
+
+### 1. Server Provisioning
+
+**The organization MUST provide:**
+
+| Item | Minimum Requirement | Description |
+|------|---------------------|-------------|
+| **Servers** | See SCALING-GUIDE.md | Debian 11/12 servers (physical or VM) |
+| **Root/Sudo SSH Access** | All servers | Deployer needs root access via SSH |
+| **Internal Network** | 1 Gbps+ | All servers can communicate internally |
+| **Internet Access (initial)** | Temporary | For installing packages and pulling images |
+
+**Server Types Required:**
+- **Control Plane Nodes**: 3 servers minimum (Kubernetes masters)
+- **Worker Nodes**: Varies by scale (see SCALING-GUIDE.md)
+- **Storage Nodes**: For PostgreSQL, MinIO (can be worker nodes)
+- **LI Server(s)**: 1+ servers for LI instance (separate network)
+- **Monitoring Server**: 1 server for Prometheus/Grafana
+
+### 2. External DNS Records
+
+**The organization's DNS administrator MUST create:**
+
+| Record Type | Name | Points To | Purpose |
+|-------------|------|-----------|---------|
+| A | `matrix.example.com` | Main Ingress External IP | Synapse homeserver |
+| A | `element.example.com` | Main Ingress External IP | Element Web client |
+| A | `admin.example.com` | Main Ingress External IP | Synapse Admin (optional) |
+| A | `turn.example.com` | TURN Server External IP | TURN/STUN for WebRTC |
+
+**Notes:**
+- Replace `example.com` with your actual domain
+- External IP is provided AFTER Kubernetes cluster is deployed
+- Deployer will provide the IP addresses once cluster is ready
+
+### 3. External Network/Firewall Configuration
+
+**The organization's network team MUST configure:**
+
+| Port | Protocol | Direction | Purpose | Where |
+|------|----------|-----------|---------|-------|
+| **443** | TCP | Inbound | HTTPS (Ingress) | External firewall/router |
+| **80** | TCP | Inbound | HTTP (cert validation) | External firewall/router |
+| **3478** | TCP+UDP | Inbound | TURN signaling | External firewall/router |
+| **5349** | TCP | Inbound | TURN over TLS | External firewall/router |
+| **49152-65535** | UDP | Inbound | TURN media relay | External firewall/router |
+| **6443** | TCP | Inbound (optional) | Kubernetes API | If remote management needed |
+
+**IMPORTANT**: These are EXTERNAL firewall rules on the organization's network perimeter. Host-level firewall rules (ufw) on individual servers are handled by the deployer via SSH.
+
+### 4. LI Network Isolation (Organization Responsibility)
+
+**For Lawful Intercept functionality, the organization MUST provide:**
+
+| Requirement | Description |
+|-------------|-------------|
+| **Separate LI Network** | Physically or logically isolated network segment |
+| **LI DNS Server** | DNS that resolves `matrix.example.com` → LI Ingress IP |
+| **Access Control** | VPN, firewall, or physical access restriction |
+| **LI Server(s)** | 1+ servers in the LI network segment |
+
+**How LI Access Works:**
+- LI uses **same hostnames** as main instance (`matrix.example.com`)
+- Access is controlled by **network isolation**, not different domains
+- LI admin connects to LI network → DNS resolves to LI → accesses LI instance
+- Regular users on main network → DNS resolves to main → cannot access LI
+
+**Example LI DNS Configuration:**
+```
+# Main DNS (regular users)
+matrix.example.com  →  10.0.1.100  (Main Ingress)
+
+# LI DNS (LI network only)
+matrix.example.com  →  10.0.2.100  (LI Ingress)
+```
+
+### 5. TLS Certificates
+
+**The organization MUST provide ONE of:**
+
+| Option | Description | Best For |
+|--------|-------------|----------|
+| **Wildcard Certificate** | `*.example.com` cert + private key | Simplest, air-gapped |
+| **DNS Provider API Access** | API credentials for DNS-01 challenge | Automatic renewal |
+| **Manual Certificates** | Individual certs for each hostname | Full control |
+
+**If providing certificates manually:**
+- Certificate file (PEM format)
+- Private key file (PEM format)
+- CA chain if not publicly trusted
+
+**If using cert-manager with DNS-01:**
+- DNS provider API key/token
+- Access to create DNS TXT records
+
+### 6. Optional External Services
+
+**If the organization wants these features:**
+
+| Feature | External Requirement |
+|---------|---------------------|
+| **Push Notifications** | Apple/Google push credentials (requires internet) |
+| **Federation** | External DNS SRV records, open port 8448 |
+| **SMTP Notifications** | SMTP server credentials |
+
+**Note**: These are disabled by default for air-gapped deployments.
+
+---
+
+## 🔧 Deployer Responsibilities (Handled via SSH)
+
+**The deployer handles ALL of the following via SSH access:**
+
+| Category | Tasks |
+|----------|-------|
+| **OS Configuration** | Package installation, kernel tuning, service configuration |
+| **Host Firewall** | ufw rules on individual servers |
+| **Kubernetes** | Cluster installation, configuration, networking |
+| **Application Deployment** | All Kubernetes manifests, secrets, configurations |
+| **Internal DNS** | CoreDNS configuration within cluster |
+| **Storage** | Local storage provisioning, PV/PVC configuration |
+| **Monitoring** | Prometheus, Grafana, alerting setup |
+| **Backups** | Backup job configuration, scheduling |
+| **Security** | NetworkPolicies, RBAC, pod security |
+
+---
+
+## ✅ Pre-Deployment Information Gathering
+
+**Before starting deployment, collect this information from the organization:**
+
+### From Organization IT Team:
+
+```
+[ ] Primary domain name: _________________________ (e.g., example.com)
+[ ] Number of expected concurrent users (CCU): _____
+[ ] Air-gapped deployment? Yes / No
+[ ] Federation enabled? Yes / No
+
+Server Information:
+[ ] Control plane nodes: (list IPs)
+    1. _____________
+    2. _____________
+    3. _____________
+[ ] Worker nodes: (list IPs)
+    1. _____________
+    2. _____________
+    ... (continue as needed)
+[ ] LI network servers: (list IPs)
+    1. _____________
+
+Network Information:
+[ ] External IP for main Ingress: _____________
+[ ] External IP for TURN server: _____________
+[ ] External IP for LI Ingress (if separate): _____________
+[ ] Internal network CIDR: _____________ (e.g., 10.0.0.0/16)
+[ ] Pod network CIDR: _____________ (default: 10.244.0.0/16)
+[ ] Service network CIDR: _____________ (default: 10.96.0.0/12)
+
+TLS Certificates:
+[ ] Certificate provisioning method:
+    [ ] Organization provides wildcard cert
+    [ ] Organization provides individual certs
+    [ ] cert-manager with DNS-01 (provide API credentials)
+    [ ] cert-manager with HTTP-01 (requires port 80 open)
+    [ ] Self-signed (for testing only)
+
+LI Network:
+[ ] LI DNS server IP: _____________
+[ ] LI network CIDR: _____________ (e.g., 10.0.2.0/24)
+[ ] How LI admins access LI network: VPN / Physical / Other: _______
+```
+
+### Deployer Generates:
+
+The deployer generates all secrets and credentials during deployment using the provided scripts. The organization does NOT need to provide:
+- Database passwords
+- API keys
+- Encryption keys
+- Redis passwords
+- MinIO credentials
+
+---
 
 ## ✅ Phase 1: Infrastructure Components
 

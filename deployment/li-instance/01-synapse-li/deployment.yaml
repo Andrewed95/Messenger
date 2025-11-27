@@ -25,8 +25,12 @@ data:
     # Content from homeserver.yaml with environment variable substitution
     # See: li-instance/01-synapse-li/homeserver.yaml
 
+    # CRITICAL: server_name and public_baseurl MUST be SAME as main instance
+    # LI uses replicated data from main - different URLs break Matrix protocol
+    # (signatures, tokens, user IDs all reference the same server_name)
+    # Access to LI is controlled via DNS/network isolation, NOT different URLs
     server_name: "matrix.example.com"
-    public_baseurl: "https://matrix-li.example.com"
+    public_baseurl: "https://matrix.example.com"
     pid_file: /data/homeserver.pid
 
     listeners:
@@ -540,7 +544,11 @@ spec:
       protocol: TCP
 
 ---
-# Ingress for Synapse LI (separate domain)
+# Ingress for Synapse LI
+# CRITICAL: Uses SAME hostname as main instance (matrix.example.com)
+# Access control is handled via network isolation, NOT different hostnames
+# The org must ensure LI network is only accessible to authorized administrators
+# Administrators configure their DNS to resolve matrix.example.com to LI instance IP
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -555,16 +563,14 @@ metadata:
     nginx.ingress.kubernetes.io/ssl-redirect: "true"
     nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
     nginx.ingress.kubernetes.io/proxy-body-size: "100m"
-    # IP whitelisting for LI access (uncomment and configure)
-    # nginx.ingress.kubernetes.io/whitelist-source-range: "10.0.0.0/8,192.168.0.0/16"
 spec:
   ingressClassName: nginx
   tls:
     - hosts:
-        - matrix-li.example.com
+        - matrix.example.com
       secretName: synapse-li-tls
   rules:
-    - host: matrix-li.example.com
+    - host: matrix.example.com
       http:
         paths:
           - path: /

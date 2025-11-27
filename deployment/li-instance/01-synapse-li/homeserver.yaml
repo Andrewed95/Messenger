@@ -11,8 +11,12 @@
 # - NO access to key_vault (enforced by NetworkPolicy)
 # - Displays ALL messages including soft-deleted (redaction_retention_period: null synced from main)
 
-server_name: "matrix.example.com"  # MUST match main instance
-public_baseurl: "https://matrix-li.example.com"  # Different URL for LI access
+# CRITICAL: Both server_name and public_baseurl MUST match main instance
+# LI uses replicated data from main - different URLs break Matrix protocol
+# (signatures, tokens, user IDs all reference the same server_name)
+# Access to LI is controlled via network isolation, NOT different URLs
+server_name: "matrix.example.com"
+public_baseurl: "https://matrix.example.com"
 pid_file: /data/homeserver.pid
 
 # ==================== LISTENERS ====================
@@ -50,9 +54,10 @@ database:
 # ==================== REDIS ====================
 
 # Redis for caching only (no workers, so no replication needed)
+# IMPORTANT: LI uses separate Redis instance (redis-li), NOT main Redis
 redis:
   enabled: true
-  host: redis.matrix.svc.cluster.local
+  host: redis-li.matrix.svc.cluster.local
   port: 6379
   password: ${REDIS_PASSWORD}
 

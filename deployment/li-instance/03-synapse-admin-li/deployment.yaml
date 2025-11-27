@@ -21,9 +21,12 @@ metadata:
     app.kubernetes.io/component: admin-interface
     matrix.instance: li
 data:
+  # CRITICAL: restrictBaseUrl uses SAME hostname as main instance
+  # Access control is via network isolation, NOT different hostnames
+  # See li-instance/README.md for DNS and network configuration
   config.json: |
     {
-      "restrictBaseUrl": "https://matrix-li.example.com",
+      "restrictBaseUrl": "https://matrix.example.com",
       "asManagedUsers": false,
       "supportedLanguages": ["en", "de", "fr", "es", "it"],
       "defaultLanguage": "en"
@@ -184,6 +187,10 @@ spec:
 
 ---
 # Ingress for Synapse Admin LI
+# CRITICAL: Uses SAME hostname as main Synapse Admin (admin.example.com)
+# Access control is handled via network isolation, NOT different hostnames
+# The org must ensure LI network is only accessible to authorized administrators
+# Administrators configure their DNS to resolve admin.example.com to LI Ingress IP
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -197,9 +204,7 @@ metadata:
     cert-manager.io/cluster-issuer: "letsencrypt-prod"
     nginx.ingress.kubernetes.io/ssl-redirect: "true"
     nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
-    # CRITICAL: IP whitelisting for law enforcement access only
-    # nginx.ingress.kubernetes.io/whitelist-source-range: "10.0.0.0/8,192.168.0.0/16"
-    # Authentication (basic auth or OAuth)
+    # Authentication (basic auth or OAuth) - optional, network isolation is primary control
     # nginx.ingress.kubernetes.io/auth-type: basic
     # nginx.ingress.kubernetes.io/auth-secret: synapse-admin-auth
     # nginx.ingress.kubernetes.io/auth-realm: "Synapse Admin LI - Authentication Required"
@@ -207,10 +212,10 @@ spec:
   ingressClassName: nginx
   tls:
     - hosts:
-        - admin-li.matrix.example.com
+        - admin.example.com
       secretName: synapse-admin-li-tls
   rules:
-    - host: admin-li.matrix.example.com
+    - host: admin.example.com
       http:
         paths:
           - path: /

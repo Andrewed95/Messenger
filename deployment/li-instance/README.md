@@ -79,7 +79,7 @@ The LI instance is a **separate, isolated Matrix homeserver** that receives data
 kubectl apply -f 01-synapse-li/deployment.yaml
 ```
 
-**Access**: https://matrix-li.example.com
+**Access**: https://matrix.example.com (from LI network)
 
 ### 2. Element Web LI (02-element-web-li/)
 
@@ -100,7 +100,7 @@ kubectl apply -f 01-synapse-li/deployment.yaml
 kubectl apply -f 02-element-web-li/deployment.yaml
 ```
 
-**Access**: https://element-li.matrix.example.com
+**Access**: https://element.example.com (from LI network)
 
 ### 3. Synapse Admin LI (03-synapse-admin-li/)
 
@@ -121,7 +121,7 @@ kubectl apply -f 02-element-web-li/deployment.yaml
 kubectl apply -f 03-synapse-admin-li/deployment.yaml
 ```
 
-**Access**: https://admin-li.matrix.example.com
+**Access**: https://admin.example.com (from LI network)
 
 ### 4. Sync System (04-sync-system/)
 
@@ -150,71 +150,150 @@ kubectl create job --from=job/sync-system-setup-replication sync-setup-$(date +%
 
 ---
 
-## DNS Configuration
+## DNS Configuration & Network Isolation
 
-**CRITICAL**: The LI instance and main instance share the SAME `server_name` but use DIFFERENT domains for access.
+**CRITICAL**: The LI instance uses the **SAME hostnames** as the main instance. Access control is via **network isolation**, NOT different domains.
 
-### Domain Configuration
+### Why Same Hostnames?
 
-**Main Instance:**
-- `server_name`: `matrix.example.com` (in homeserver.yaml)
-- `public_baseurl`: `https://matrix.example.com`
-- DNS: `matrix.example.com` → Points to main Synapse Ingress IP
-- Users see: `@username:matrix.example.com`
+Matrix protocol requires that:
+1. `server_name` MUST be identical (`matrix.example.com`)
+2. `public_baseurl` MUST be identical (`https://matrix.example.com`)
 
-**LI Instance:**
-- `server_name`: `matrix.example.com` (**MUST match main**)
-- `public_baseurl`: `https://matrix-li.example.com` (different URL)
-- DNS: `matrix-li.example.com` → Points to LI Synapse Ingress IP
-- Users see: Same `@username:matrix.example.com` (database compatibility)
+**Reasons:**
+- LI uses replicated data from main instance
+- User IDs, event signatures, tokens all reference `matrix.example.com`
+- Different URLs would break authentication and event verification
+- Matrix clients validate server signatures against the `server_name`
 
-### Why This Configuration?
+### Configuration
 
-1. **Same `server_name`**: Ensures users, rooms, and events in the LI database are compatible with the main instance
-2. **Different `public_baseurl`**: Allows separate access points for main vs LI interfaces
-3. **Separate DNS entries**: Route traffic to different Kubernetes Ingress endpoints
-
-### DNS Setup
-
-Configure these DNS A records:
-
-```bash
-# Main instance (production users)
-matrix.example.com          → <main-ingress-external-ip>
-element.example.com         → <main-ingress-external-ip>
-
-# LI instance (law enforcement only)
-matrix-li.example.com       → <main-ingress-external-ip>  # Same Ingress, different routing
-element-li.example.com      → <main-ingress-external-ip>
-admin-li.example.com        → <main-ingress-external-ip>
+**Both Main and LI instances use:**
+```yaml
+server_name: "matrix.example.com"
+public_baseurl: "https://matrix.example.com"
 ```
 
-### How Traffic Routing Works
+**Element Web (both main and LI):**
+```json
+"m.homeserver": {
+    "base_url": "https://matrix.example.com",
+    "server_name": "matrix.example.com"
+}
+```
 
-All domains point to the **same Kubernetes Ingress**, but NGINX routes based on `Host` header:
+### How LI Access Works
+
+Access to LI is controlled via **network isolation and DNS**, NOT different hostnames:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    ORGANIZATION NETWORK                          │
+│                                                                  │
+│  ┌──────────────────────┐      ┌───────────────────────────┐   │
+│  │    MAIN NETWORK      │      │      LI NETWORK           │   │
+│  │                      │      │    (Restricted Access)     │   │
+│  │  DNS:                │      │                            │   │
+│  │  matrix.example.com  │      │  DNS:                      │   │
+│  │    → Main Ingress IP │      │  matrix.example.com        │   │
+│  │                      │      │    → LI Ingress IP         │   │
+│  │  element.example.com │      │                            │   │
+│  │    → Main Ingress IP │      │  element.example.com       │   │
+│  │                      │      │    → LI Ingress IP         │   │
+│  │  Regular users       │      │                            │   │
+│  │  access main         │      │  LI admins only            │   │
+│  └──────────────────────┘      └───────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### LI Admin Access Procedure
+
+**For LI administrators to access the LI instance:**
+
+1. **Network Access**: Admin must be on the LI network (org responsibility)
+2. **DNS Resolution**: LI network DNS resolves hostnames to LI Ingress IP
+3. **Browser Access**: Admin opens `https://element.example.com`
+4. **Traffic Flow**: DNS resolves to LI Ingress → routes to Element Web LI → connects to Synapse LI
+
+**To switch back to main instance:**
+- Admin switches to main network (or changes DNS)
+- Same hostname now resolves to main Ingress IP
+
+### Organization Requirements for LI Network
+
+**The organization MUST configure:**
+
+1. **Separate LI Network**:
+   - Physically or logically isolated network segment
+   - Only authorized LI administrators can access
+   - Contains LI Kubernetes nodes or has routes to LI services
+
+2. **LI DNS Server**:
+   - Resolves `matrix.example.com` → LI Ingress IP
+   - Resolves `element.example.com` → LI Ingress IP
+   - Can be internal DNS server, hosts file, or split-horizon DNS
+
+3. **Access Control**:
+   - VPN, firewall rules, or physical access control
+   - Only authorized personnel can reach LI network
+   - Audit trail for network access
+
+**Example Split-Horizon DNS:**
+```
+# Main DNS server (used by regular users)
+matrix.example.com     A    10.0.1.100  # Main Ingress
+element.example.com    A    10.0.1.100  # Main Ingress
+
+# LI DNS server (used by LI network only)
+matrix.example.com     A    10.0.2.100  # LI Ingress
+element.example.com    A    10.0.2.100  # LI Ingress
+```
+
+### LI Ingress Configuration
+
+The LI Ingress uses the **same hostnames** as main:
 
 ```yaml
-# Ingress rules automatically route:
-Host: matrix.example.com     → synapse-main service
-Host: matrix-li.example.com  → synapse-li service
-Host: element.example.com    → element-web service
-Host: element-li.example.com → element-web-li service
+# Synapse LI Ingress
+spec:
+  rules:
+    - host: matrix.example.com  # Same as main
+      http:
+        paths:
+          - backend:
+              service:
+                name: synapse-li-client  # Routes to LI service
+
+# Element Web LI Ingress
+spec:
+  rules:
+    - host: element.example.com  # Same as main
+      http:
+        paths:
+          - backend:
+              service:
+                name: element-web-li  # Routes to LI service
 ```
 
-**No special DNS tricks needed** - just standard A records pointing to your Ingress external IP.
+**The routing works because:**
+- Main Ingress runs on main network (main Ingress IP)
+- LI Ingress runs on LI network (LI Ingress IP)
+- DNS determines which Ingress receives traffic
 
-### Getting Your Ingress IP
+### TLS Certificates
 
-```bash
-# Find your Ingress external IP
-kubectl get svc -n ingress-nginx ingress-nginx-controller
+Both main and LI need valid TLS certificates for the same hostnames.
 
-# Output example:
-# NAME                       TYPE           EXTERNAL-IP      PORT(S)
-# ingress-nginx-controller   LoadBalancer   203.0.113.10     80:30080/TCP,443:30443/TCP
-```
+**Option 1: Shared Wildcard Certificate**
+- Use `*.example.com` wildcard cert
+- Copy to both main and LI clusters
 
-Use `203.0.113.10` (example) as your DNS target for ALL domains above.
+**Option 2: Separate Certificates**
+- Use cert-manager with same hostnames
+- Each cluster generates its own cert
+- Requires DNS-01 challenge (recommended for LI)
+
+**Important**: The org must provide TLS certificates or configure cert-manager appropriately.
 
 ---
 
@@ -368,18 +447,21 @@ kubectl create job --from=cronjob/sync-system-media sync-manual-$(date +%s) -n m
 
 ### Test LI Access
 
+**Note**: All tests must be run from the LI network where DNS resolves to LI Ingress IP.
+
 ```bash
-# Test Synapse LI API
-curl https://matrix-li.example.com/_matrix/client/versions
+# Test Synapse LI API (from LI network)
+curl https://matrix.example.com/_matrix/client/versions
 
-# Test Element Web LI (should show watermark)
-open https://element-li.matrix.example.com
+# Test Element Web LI (from LI network - should show watermark)
+# Open in browser: https://element.example.com
 
-# Test Synapse Admin LI (should require auth)
-curl -u admin:password https://admin-li.matrix.example.com
+# Test Synapse Admin LI (from LI network - should require auth)
+curl -u admin:password https://admin.example.com
 
 # Login to LI instance (users synced from main)
 # Use same credentials as main instance
+# DNS must resolve to LI Ingress for authentication to work
 ```
 
 ## Data Flow
@@ -904,13 +986,17 @@ Total: ~384 GB backup storage required
 ### Access Logs
 
 All LI access is logged by:
-1. **NGINX Ingress**: Request logs with source IPs
+1. **NGINX Ingress (LI network)**: Request logs with source IPs
 2. **Synapse LI**: API access logs
 3. **Synapse Admin**: Admin action logs
 
 ```bash
-# View access logs
-kubectl logs -n ingress-nginx -l app.kubernetes.io/name=ingress-nginx | grep matrix-li
+# View LI Synapse access logs (LI pods have label matrix.instance=li)
+kubectl logs -n matrix -l matrix.instance=li,app.kubernetes.io/name=synapse --tail=100
+
+# View LI Ingress access logs (from LI network's Ingress controller)
+# Note: LI uses same hostnames as main, so filter by LI Ingress controller
+kubectl logs -n ingress-nginx -l app.kubernetes.io/name=ingress-nginx | grep "synapse-li-client"
 ```
 
 ### Data Retention
