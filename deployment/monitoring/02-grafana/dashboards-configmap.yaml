@@ -533,7 +533,7 @@ data:
           "pluginVersion": "9.0.0",
           "targets": [
             {
-              "expr": "up{job=\"synapse\", matrix_instance=\"li\"}",
+              "expr": "up{job=\"synapse\", app_kubernetes_io_instance=\"li\"}",
               "refId": "A"
             }
           ],

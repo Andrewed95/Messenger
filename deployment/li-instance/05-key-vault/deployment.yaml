@@ -89,7 +89,15 @@ data:
     # Security
     SECRET_KEY = os.environ['DJANGO_SECRET_KEY']
     DEBUG = False
-    ALLOWED_HOSTS = ['*']  # Only accessible within cluster via NetworkPolicy
+    # Restrict to Kubernetes service names used by Synapse to access key_vault
+    # NetworkPolicy provides additional layer of protection (only Synapse main can access)
+    ALLOWED_HOSTS = [
+        'key-vault',                                    # Short service name
+        'key-vault.matrix',                             # Namespace-qualified
+        'key-vault.matrix.svc',                         # Fully qualified (short)
+        'key-vault.matrix.svc.cluster.local',           # Fully qualified
+        'localhost',                                    # Health checks
+    ]
 
     # Applications
     INSTALLED_APPS = [

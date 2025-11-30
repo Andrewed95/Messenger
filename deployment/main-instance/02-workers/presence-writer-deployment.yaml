@@ -198,22 +198,25 @@ spec:
               memory: "512Mi"
               cpu: "250m"
 
+          # Health probes use metrics endpoint (replication port doesn't serve HTTP health)
           livenessProbe:
             httpGet:
-              path: /health
-              port: 9093
+              path: /_synapse/metrics
+              port: 9090
             initialDelaySeconds: 30
             periodSeconds: 30
-            timeoutSeconds: 5
-            failureThreshold: 3
+            timeoutSeconds: 10
+            failureThreshold: 5
 
           readinessProbe:
             httpGet:
-              path: /health
-              port: 9093
+              path: /_synapse/metrics
+              port: 9090
             initialDelaySeconds: 10
             periodSeconds: 10
             timeoutSeconds: 5
+            successThreshold: 1
+            failureThreshold: 3
 
       volumes:
         - name: config

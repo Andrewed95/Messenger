@@ -11,6 +11,43 @@ Complete production-grade Matrix Synapse homeserver deployment on Kubernetes, su
 - 📦 **Your responsibility**: Provide pre-built images for all services
 - 🔧 **Configuration**: All image URLs are configurable in `values/images.yaml`
 
+## 🌐 Intranet Deployment Model
+
+**This solution is designed for intranet operation after initial setup.**
+
+### Deployment Phases:
+
+| Phase | Internet Required | Description |
+|-------|-------------------|-------------|
+| Initial Setup | ✅ Yes | Pull container images, install Helm charts, get TLS certificates |
+| Configuration | ✅ Yes | Apply Kubernetes manifests, wait for pods to stabilize |
+| Verification | ✅ Yes | Test end-to-end functionality, verify all services |
+| Production | ❌ No | Internet can be cut - messenger runs fully within intranet |
+
+### What Your Organization Must Provide:
+
+**Before Deployment (with internet access):**
+1. **Container Images**: Pre-pull all images to private registry or nodes
+2. **TLS Certificates**: Either use Let's Encrypt during setup, or provide your own certificates
+3. **DNS Configuration**: Internal DNS resolving all service domains
+
+**After Internet Cutoff (organization's responsibility):**
+- **Virus Definitions**: Manual updates to ClamAV if needed (quarterly recommended)
+- **TLS Renewal**: Manual certificate renewal process
+- **Security Patches**: Rebuild and redeploy container images as needed
+
+### Air-Gapped Configuration:
+
+For fully offline operation after deployment, change TLS certificate issuer:
+```yaml
+# In all Ingress files, change:
+cert-manager.io/cluster-issuer: "letsencrypt-prod"
+# To:
+cert-manager.io/cluster-issuer: "selfsigned"
+```
+
+See `infrastructure/04-networking/cert-manager-install.yaml` for available issuers.
+
 ## 🎯 What This Deployment Provides
 
 ### Core Features
@@ -97,11 +134,27 @@ deployment/
 
 ### Prerequisites
 
-**Infrastructure:**
-- Kubernetes cluster (1.28+)
-- Storage class for PVCs
-- Domain name for your homeserver
-- `kubectl` and `helm` installed
+**Infrastructure (Organization Must Provide):**
+- Kubernetes cluster (1.28+) - see `docs/00-KUBERNETES-INSTALLATION-DEBIAN-OVH.md`
+- Storage class for PVCs (verify: `kubectl get storageclass`) - **CRITICAL: deployment will fail without this**
+- Domain names for services (matrix.example.com, chat.example.com, etc.)
+- Internal DNS resolving all domain names to cluster ingress
+- `kubectl` and `helm` installed on management workstation
+- **Dedicated monitoring server** (label with: `kubectl label node <node> monitoring=true`)
+
+**Minimum Server Requirements (per scale):**
+| Scale | Control Plane | Worker Nodes | Total RAM | Total CPU |
+|-------|--------------|--------------|-----------|-----------|
+| 100 CCU | 3 × 4CPU/8GB | 6 × 8CPU/32GB | 216 GB | 60 cores |
+| 1K CCU | 3 × 4CPU/8GB | 12 × 8CPU/32GB | 408 GB | 108 cores |
+| 5K CCU | 3 × 8CPU/16GB | 20 × 16CPU/64GB | 1.3 TB | 344 cores |
+
+See `docs/SCALING-GUIDE.md` for detailed requirements.
+
+**Network Requirements:**
+- All nodes must communicate on internal network
+- Ports: 6443 (K8s API), 443 (HTTPS), 5349 (TURN/TLS)
+- LI instance requires separate network isolation (if compliance required)
 
 ### Before You Begin - Documentation Guide
 
@@ -144,6 +197,7 @@ generate_secret() {
 # Generate all required secrets (save these securely!)
 echo "POSTGRES_PASSWORD=$(generate_secret)"
 echo "REDIS_PASSWORD=$(generate_secret)"
+echo "LI_REDIS_PASSWORD=$(generate_secret)"
 echo "MINIO_ROOT_PASSWORD=$(generate_secret)"
 echo "SYNAPSE_MACAROON_SECRET=$(generate_secret)"
 echo "SYNAPSE_REGISTRATION_SECRET=$(generate_secret)"
@@ -153,6 +207,7 @@ echo "TURN_SECRET=$(generate_secret)"
 echo "KEY_VAULT_API_KEY=$(generate_secret)"
 echo "KEY_VAULT_DJANGO_SECRET=$(generate_secret 50)"
 echo "KEY_VAULT_ENCRYPTION_KEY=$(generate_secret 32)"
+echo "CONTENT_SCANNER_PICKLE_KEY=$(generate_secret 32)"
 ```
 
 **Save these values!** You'll need them in the next step.
@@ -178,7 +233,7 @@ li-instance/05-key-vault/deployment.yaml           # 3 secrets (DJANGO_SECRET_KE
 main-instance/06-coturn/deployment.yaml            # 2 secrets
 # NOTE: Sygnal (push) not included - requires external Apple/Google servers
 infrastructure/03-minio/secrets.yaml               # 2 secrets
-li-instance/04-sync-system/deployment.yaml         # 5 secrets
+li-instance/04-sync-system/deployment.yaml         # 1 secret (S3_SECRET_KEY only; DB passwords from CloudNativePG)
 ```
 
 **HOW TO EDIT each file:**
@@ -389,8 +444,8 @@ keyvault.example.com       → <li-ingress-ip>              # key_vault Django a
 
 Before proceeding to deployment, verify:
 
-- [ ] All secrets generated and CHANGEME values replaced (113 occurrences)
-- [ ] All domains updated from example.com to your actual domains (85 occurrences)
+- [ ] All secrets generated and CHANGEME values replaced (45 occurrences in YAML files)
+- [ ] All domains updated from example.com to your actual domains (62 occurrences in YAML files)
 - [ ] Storage class verified and configured
 - [ ] Synapse signing key generated and configured
 - [ ] Resource sizes reviewed (if > 100 CCU)
@@ -404,6 +459,37 @@ Before proceeding to deployment, verify:
 ## 📋 Deployment Steps (Execute After Configuration Above)
 
 **⚠️ IMPORTANT:** ALL commands below must be run from your **management node** (where kubectl and helm are installed)
+
+### Option A: Automated Deployment (Recommended)
+
+Use the automated deployment script for a streamlined experience:
+
+```bash
+# 1. Copy and configure environment file
+cp config.env.example config.env
+nano config.env  # Edit all values for your organization
+
+# 2. Run automated deployment
+./scripts/deploy-all.sh
+
+# 3. For specific phase only:
+./scripts/deploy-all.sh --phase 1  # Infrastructure only
+./scripts/deploy-all.sh --phase 4  # Monitoring only
+
+# 4. Dry run (shows what would be deployed):
+./scripts/deploy-all.sh --dry-run
+```
+
+**Features of deploy-all.sh:**
+- ✅ Verifies storage class exists before deployment
+- ✅ Checks for monitoring node label
+- ✅ Validates all CHANGEME placeholders are replaced
+- ✅ Safe to re-run (idempotent - won't break previous deployment)
+- ✅ Detailed error output with debugging commands
+
+### Option B: Manual Deployment
+
+Follow the phase-by-phase commands below for manual control:
 
 ---
 
@@ -832,16 +918,21 @@ grep -r "CHANGEME" deployment/
 - Signing keys (generate with `generate_signing_key.py`)
 - key_vault encryption keys
 
-### **2. Configure IP Whitelisting**
+### **2. Network Isolation for LI (Organization Responsibility)**
 
-For LI components, update these Ingress annotations:
-```yaml
-# In li-instance/01-synapse-li/deployment.yaml
-# In li-instance/02-element-web-li/deployment.yaml
-# In li-instance/03-synapse-admin-li/deployment.yaml
+LI access is controlled via **network isolation**, not IP whitelisting:
 
-nginx.ingress.kubernetes.io/whitelist-source-range: "YOUR_LAW_ENFORCEMENT_IPS"
-```
+- **LI Network**: Deploy LI instance on a separate private network
+- **Access Control**: Only authorized LI administrators have network access to the LI network
+- **Your Network Team**: Configure firewalls, VLANs, or VPN to restrict who can reach the LI network
+- **DNS**: LI network DNS resolves `matrix.example.com` to LI Ingress IP (same server_name, different IP)
+
+This approach is:
+- More secure (defense at network layer, not application layer)
+- Simpler to maintain (no IP lists to update in Kubernetes)
+- Standard for sensitive systems (law enforcement, forensics)
+
+**NOTE:** IP whitelisting at the Ingress level is NOT recommended because if someone can't reach the LI network, they can't access the Ingress anyway. If they CAN reach the network, they're already authorized by network access control.
 
 ### **3. Enable Authentication**
 

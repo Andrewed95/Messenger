@@ -1,6 +1,5 @@
 # CloudNativePG Operator Helm Values
 # Matrix/Synapse Production Deployment (Scalable 100 CCU - 20K+ CCU)
-# Version: 2.0
 
 # CloudNativePG Operator Configuration
 # Manages PostgreSQL clusters with automatic HA and failover

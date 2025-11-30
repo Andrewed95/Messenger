@@ -3,6 +3,29 @@
 # Required for P2P calls when clients are behind NAT/firewalls
 #
 # Runs as DaemonSet with hostNetwork for optimal connectivity
+#
+# ============================================================================
+# AIR-GAPPED / INTRANET DEPLOYMENT
+# ============================================================================
+# For intranet deployments where users access the messenger from within the
+# organization's network (not via internet):
+#
+# - EXTERNAL_IP is automatically set to the Kubernetes node IP (status.hostIP)
+# - This is CORRECT for intranet deployments - clients reach the server via
+#   the same internal network, so node IP is the reachable IP
+# - No internet access is required for coturn to function
+# - NAT traversal works between clients on the intranet
+#
+# When to manually set EXTERNAL_IP:
+# - If nodes have multiple network interfaces and coturn should advertise a
+#   specific one (e.g., dedicated VLAN for voice/video traffic)
+# - If there's a NAT between coturn nodes and clients (unusual for intranet)
+#
+# To manually set EXTERNAL_IP (if needed):
+# Change the EXTERNAL_IP env var in init container from fieldRef to:
+#   - name: EXTERNAL_IP
+#     value: "YOUR_IP_ADDRESS"
+# ============================================================================
 
 ---
 # Secret for coturn configuration
@@ -159,11 +182,21 @@ spec:
             - sh
             - -c
             - |
-              # Try to detect external IP (fallback to node IP if not available)
-              # NOTE: ifconfig.me requires internet access; in air-gapped deployments,
-              # set EXTERNAL_IP environment variable or use node IP
-              EXTERNAL_IP=$(wget -qO- ifconfig.me 2>/dev/null || hostname -i | awk '{print $1}')
-              echo "Detected external IP: $EXTERNAL_IP"
+              # Determine external IP address
+              # For INTRANET/AIR-GAPPED deployments:
+              # - The node IP (status.hostIP) is the correct value
+              # - Clients reach coturn via internal network, so node IP is correct
+              # - No internet access needed
+
+              if [ -n "$EXTERNAL_IP" ]; then
+                echo "Using EXTERNAL_IP: $EXTERNAL_IP"
+                echo "INFO: This is the IP address coturn will advertise to clients"
+                echo "INFO: Clients must be able to reach this IP for TURN to work"
+              else
+                # Fall back to hostname IP (unlikely to be reached for DaemonSet)
+                EXTERNAL_IP=$(hostname -i | awk '{print $1}')
+                echo "EXTERNAL_IP not set via env - using hostname IP: $EXTERNAL_IP"
+              fi
 
               # Copy base config and append runtime values
               cp /config-template/turnserver.conf /tmp/turnserver.conf
@@ -184,6 +217,15 @@ spec:
                 secretKeyRef:
                   name: coturn-secrets
                   key: TURN_SHARED_SECRET
+            # CRITICAL: Set EXTERNAL_IP for NAT traversal
+            # Options:
+            # 1. Static IP: Use 'value: "YOUR_EXTERNAL_IP"'
+            # 2. Node IP: Use fieldRef to get node's external IP (see below)
+            # 3. Leave empty: Falls back to pod IP (not recommended for production)
+            - name: EXTERNAL_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP  # Uses Kubernetes node IP
           volumeMounts:
             - name: config-template
               mountPath: /config-template

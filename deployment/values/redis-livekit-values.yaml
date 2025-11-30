@@ -1,6 +1,6 @@
 # Redis Sentinel for LiveKit - Helm Values
 # Matrix/Synapse Production Deployment (Scalable 100 CCU - 20K+ CCU)
-# Version: 2.0 - CORRECTED: Separate Redis for LiveKit
+# Note: Separate Redis instance for LiveKit (not shared with Synapse)
 
 # ============================================================================
 # CRITICAL: LiveKit has dedicated Redis instance (NOT shared with Synapse)

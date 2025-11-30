@@ -103,7 +103,7 @@ spec:
       localeCType: C
       postInitSQL:
         - CREATE DATABASE matrix_authentication_service OWNER synapse;
-        - CREATE DATABASE key_vault OWNER synapse;
+        # NOTE: key_vault uses SQLite (not PostgreSQL) - see li-instance/05-key-vault/
 
   # Monitoring configuration
   monitoring:

@@ -187,6 +187,11 @@ data:
     worker_replication_host: synapse-main-0.synapse-main.matrix.svc.cluster.local
     worker_replication_http_port: 9093
 
+    # Background tasks configuration
+    # CRITICAL: Specifies which instance runs background database maintenance tasks
+    # Must be an instance listed in instance_map - using main process for stability
+    run_background_tasks_on: synapse-main-0
+
     # ==================== MEDIA STORAGE ====================
 
     # Media repository disabled on main process (handled by media workers)
@@ -375,11 +380,18 @@ data:
 
     # ==================== PERFORMANCE ====================
 
-    event_cache_size: "50K"
+    # Event cache size (integer, not string)
+    # Approximately 50,000 events cached in memory for fast access
+    # Scale formula: 10K per 1K CCU (50K = ~5K CCU baseline)
+    event_cache_size: 50000
     caches:
-      global_factor: 2.0
+      # Global cache multiplier - 1.0 is baseline, 2.0 doubles all caches
+      # Higher values use more memory but improve performance
+      # Formula: 256MB RAM per 1.0 global_factor increment
+      global_factor: 1.5
       per_cache_factors:
-        get_users_in_room: 5.0
+        # Room membership cache - critical for large rooms
+        get_users_in_room: 3.0
 
     # Background update performance
     background_updates:

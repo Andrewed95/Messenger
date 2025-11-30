@@ -1,6 +1,5 @@
 # Prometheus Stack (kube-prometheus-stack) Helm Values
 # Matrix/Synapse Production Deployment (Scalable 100 CCU - 20K+ CCU)
-# Version: 2.0
 
 # ============================================================================
 # CRITICAL: Complete monitoring stack
@@ -23,11 +22,28 @@
 # ============================================================================
 # PROMETHEUS CONFIGURATION
 # ============================================================================
+# IMPORTANT: Per CLAUDE.md Section 6.2, monitoring must run on a DEDICATED SERVER
+# Label your monitoring node(s): kubectl label node <node-name> monitoring=true
+# Optionally add taint: kubectl taint nodes <node-name> monitoring=true:NoSchedule
 
 prometheus:
   enabled: true
 
   prometheusSpec:
+    # ========================================================================
+    # DEDICATED MONITORING SERVER PLACEMENT
+    # ========================================================================
+    # Ensures Prometheus runs on dedicated monitoring server(s)
+    nodeSelector:
+      monitoring: "true"
+
+    # Tolerate the monitoring taint (if applied to dedicated monitoring nodes)
+    tolerations:
+      - key: "monitoring"
+        operator: "Equal"
+        value: "true"
+        effect: "NoSchedule"
+
     # Retention period
     retention: 30d
     retentionSize: "100GB"
@@ -117,8 +133,22 @@ alertmanager:
 grafana:
   enabled: true
 
+  # ========================================================================
+  # DEDICATED MONITORING SERVER PLACEMENT
+  # ========================================================================
+  # Ensures Grafana runs on dedicated monitoring server(s)
+  nodeSelector:
+    monitoring: "true"
+
+  # Tolerate the monitoring taint (if applied to dedicated monitoring nodes)
+  tolerations:
+    - key: "monitoring"
+      operator: "Equal"
+      value: "true"
+      effect: "NoSchedule"
+
   # Admin credentials
-  adminPassword: "CHANGE_TO_SECURE_PASSWORD"  # CRITICAL: Change this!
+  adminPassword: "CHANGEME_GRAFANA_ADMIN_PASSWORD"  # CRITICAL: Change this!
 
   # Resources
   resources:
@@ -135,8 +165,8 @@ grafana:
     storageClassName: ""  # CHANGE_TO_YOUR_STORAGE_CLASS
     size: 10Gi
 
-  # Replica count
-  replicas: 2
+  # Replica count (single replica since on dedicated monitoring server)
+  replicas: 1
 
   # Ingress for Grafana
   ingress:

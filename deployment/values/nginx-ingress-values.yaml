@@ -1,6 +1,6 @@
 # NGINX Ingress Controller Helm Values
 # Matrix/Synapse Production Deployment (Scalable 100 CCU - 20K+ CCU)
-# Version: 2.0 - CORRECTED: externalTrafficPolicy: Local for IP preservation
+# Note: Uses externalTrafficPolicy: Local for IP preservation
 
 # ============================================================================
 # CRITICAL: NGINX Ingress handles HTTP/HTTPS traffic

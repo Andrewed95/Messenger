@@ -13,6 +13,41 @@
 # NOTE: Sygnal (push) not included - requires external Apple/Google servers
 
 ---
+# ServiceMonitor for Synapse Main Process
+# Monitors the main Synapse homeserver process (not workers)
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: synapse-main
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: synapse
+    app.kubernetes.io/component: homeserver
+    app.kubernetes.io/instance: main
+    prometheus: kube-prometheus
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: synapse
+      app.kubernetes.io/component: homeserver
+  endpoints:
+    - port: metrics
+      path: /_synapse/metrics
+      interval: 30s
+      scrapeTimeout: 15s
+      relabelings:
+        # Add instance label for dashboard queries
+        - sourceLabels: [__meta_kubernetes_pod_label_app_kubernetes_io_instance]
+          targetLabel: app_kubernetes_io_instance
+        - sourceLabels: [__meta_kubernetes_pod_name]
+          targetLabel: pod
+        - sourceLabels: [__meta_kubernetes_namespace]
+          targetLabel: namespace
+  namespaceSelector:
+    matchNames:
+      - matrix
+
+---
 # ServiceMonitor for Synapse Workers
 # Monitors all worker types: synchrotron, generic, media, event-persister, federation-sender
 apiVersion: monitoring.coreos.com/v1
@@ -28,15 +63,17 @@ spec:
   selector:
     matchLabels:
       app.kubernetes.io/name: synapse
-      # Note: Workers have specific components (synchrotron, generic-worker, etc.)
-      # This ServiceMonitor discovers all Synapse worker services
+      app.kubernetes.io/type: worker
   endpoints:
     - port: metrics
       path: /_synapse/metrics
       interval: 30s
-      scrapeTimeout: 10s
+      scrapeTimeout: 15s
       relabelings:
-        - sourceLabels: [__meta_kubernetes_pod_label_worker_type]
+        # Add instance and component labels for dashboard queries
+        - sourceLabels: [__meta_kubernetes_pod_label_app_kubernetes_io_instance]
+          targetLabel: app_kubernetes_io_instance
+        - sourceLabels: [__meta_kubernetes_pod_label_app_kubernetes_io_component]
           targetLabel: worker_type
         - sourceLabels: [__meta_kubernetes_pod_name]
           targetLabel: pod
@@ -67,7 +104,15 @@ spec:
     - port: metrics
       path: /_synapse/metrics
       interval: 30s
-      scrapeTimeout: 10s
+      scrapeTimeout: 15s
+      relabelings:
+        # Add instance label for dashboard queries (matches main instance pattern)
+        - sourceLabels: [__meta_kubernetes_pod_label_app_kubernetes_io_instance]
+          targetLabel: app_kubernetes_io_instance
+        - sourceLabels: [__meta_kubernetes_pod_name]
+          targetLabel: pod
+        - sourceLabels: [__meta_kubernetes_namespace]
+          targetLabel: namespace
   namespaceSelector:
     matchNames:
       - matrix
@@ -189,8 +234,9 @@ spec:
       - matrix
 
 ---
-# ServiceMonitor for HAProxy
-# Monitors HAProxy routing and health
+# ServiceMonitor for HAProxy Load Balancer
+# HAProxy 2.0+ has built-in Prometheus exporter enabled via:
+#   frontend prometheus bind *:8405 http-request use-service prometheus-exporter
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
@@ -205,11 +251,15 @@ spec:
       app.kubernetes.io/name: haproxy
       app.kubernetes.io/component: load-balancer
   endpoints:
-    # HAProxy exposes stats at /stats;csv for Prometheus scraping
-    - port: stats
-      path: /stats;csv
+    - port: metrics
+      path: /metrics
       interval: 30s
       scrapeTimeout: 10s
+      relabelings:
+        - sourceLabels: [__meta_kubernetes_pod_name]
+          targetLabel: pod
+        - sourceLabels: [__meta_kubernetes_namespace]
+          targetLabel: namespace
   namespaceSelector:
     matchNames:
       - matrix

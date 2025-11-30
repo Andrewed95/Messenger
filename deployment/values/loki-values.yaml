@@ -1,6 +1,5 @@
 # Loki Stack Helm Values (Loki + Promtail)
 # Matrix/Synapse Production Deployment (Scalable 100 CCU - 20K+ CCU)
-# Version: 2.0
 
 # ============================================================================
 # CRITICAL: Log aggregation for debugging and monitoring
@@ -20,9 +19,26 @@
 # ============================================================================
 # LOKI CONFIGURATION
 # ============================================================================
+# IMPORTANT: Per CLAUDE.md Section 6.2, monitoring must run on a DEDICATED SERVER
+# Label your monitoring node(s): kubectl label node <node-name> monitoring=true
+# Optionally add taint: kubectl taint nodes <node-name> monitoring=true:NoSchedule
 
 loki:
   enabled: true
+
+  # ========================================================================
+  # DEDICATED MONITORING SERVER PLACEMENT
+  # ========================================================================
+  # Ensures Loki runs on dedicated monitoring server(s)
+  nodeSelector:
+    monitoring: "true"
+
+  # Tolerate the monitoring taint (if applied to dedicated monitoring nodes)
+  tolerations:
+    - key: "monitoring"
+      operator: "Equal"
+      value: "true"
+      effect: "NoSchedule"
 
   # Persistence
   persistence:

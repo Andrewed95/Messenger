@@ -36,7 +36,7 @@
 **After change:**
 1. Validate service health
 2. Test functionality
-3. Monitor for 
+3. Monitor for 15-30 minutes before considering change complete
 4. Document what changed
 
 ### 1.2 Safety Levels
@@ -1278,7 +1278,7 @@ curl https://your-domain.com/_matrix/client/versions
 
 **After Operation:**
 - Compare to baseline
-- Monitor for 
+- Monitor for 15-30 minutes for stability
 - Check for memory leaks (gradually increasing memory)
 - Verify no elevated error rates
 
@@ -1589,7 +1589,7 @@ When you scale these workers, the instance names change, requiring all Synapse p
 ### 9.2 Scaling Event-Persisters
 
 **Risk Level:** High
-**Downtime:** 2-5 minutes
+**Downtime:** Brief (requires coordinated restart)
 **Backup Required:** Yes
 
 **Pre-Scaling:**

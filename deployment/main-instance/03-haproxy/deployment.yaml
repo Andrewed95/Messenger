@@ -167,12 +167,20 @@ data:
         hold obsolete 10s    # Keep old IPs briefly for connection draining
         hold other 30s       # Cache other responses (errors, etc.)
 
-    # HAProxy Statistics
+    # HAProxy Statistics (HTML dashboard)
     listen stats
         bind *:8404
         stats enable
         stats uri /stats
         stats refresh 30s
+
+    # HAProxy Prometheus Metrics Endpoint
+    # Provides Prometheus-format metrics for monitoring
+    frontend prometheus
+        bind *:8405
+        mode http
+        http-request use-service prometheus-exporter if { path /metrics }
+        no log
 
 ---
 # HAProxy Deployment
@@ -210,8 +218,8 @@ spec:
         ingress-accessible: "true"
       annotations:
         prometheus.io/scrape: "true"
-        prometheus.io/port: "8404"
-        prometheus.io/path: "/stats;csv"
+        prometheus.io/port: "8405"
+        prometheus.io/path: "/metrics"
 
     spec:
       # Security context
@@ -248,6 +256,9 @@ spec:
               protocol: TCP
             - name: stats
               containerPort: 8404
+              protocol: TCP
+            - name: metrics
+              containerPort: 8405
               protocol: TCP
 
           volumeMounts:
@@ -353,7 +364,7 @@ spec:
       protocol: TCP
 
 ---
-# HAProxy Service - Statistics
+# HAProxy Service - Statistics (HTML dashboard)
 apiVersion: v1
 kind: Service
 metadata:
@@ -371,6 +382,10 @@ spec:
     - name: stats
       port: 8404
       targetPort: 8404
+      protocol: TCP
+    - name: metrics
+      port: 8405
+      targetPort: 8405
       protocol: TCP
 
 ---

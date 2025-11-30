@@ -129,6 +129,11 @@ data:
 
 ---
 # Secret for sync system
+# NOTE: PostgreSQL superuser passwords are NOT stored here.
+# The setup Job uses CloudNativePG-managed secrets:
+# - matrix-postgresql-superuser (main cluster)
+# - matrix-postgresql-li-superuser (LI cluster)
+# This is more secure and follows CloudNativePG best practices.
 apiVersion: v1
 kind: Secret
 metadata:
@@ -139,28 +144,41 @@ metadata:
     app.kubernetes.io/component: replication
 type: Opaque
 stringData:
-  # Main PostgreSQL (for replication - using postgres superuser)
-  # NOTE: For logical replication setup only, not for regular queries
+  # Main PostgreSQL connection info (for replication setup)
+  # Passwords come from CloudNativePG-managed secrets, not here
   MAIN_DB_HOST: "matrix-postgresql-rw.matrix.svc.cluster.local"
   MAIN_DB_PORT: "5432"
   MAIN_DB_NAME: "matrix"
-  MAIN_DB_USER: "postgres"  # Must use postgres for replication privileges
-  MAIN_DB_PASSWORD: "CHANGEME_POSTGRES_SUPERUSER_PASSWORD"  # From matrix-postgresql-superuser secret
 
-  # LI PostgreSQL (for subscription setup - using postgres superuser)
-  # NOTE: For logical replication setup only, not for regular queries
+  # LI PostgreSQL connection info (for subscription setup)
+  # Passwords come from CloudNativePG-managed secrets, not here
   LI_DB_HOST: "matrix-postgresql-li-rw.matrix.svc.cluster.local"
   LI_DB_PORT: "5432"
   LI_DB_NAME: "matrix_li"
-  LI_DB_USER: "postgres"  # Must use postgres for creating subscription
-  LI_DB_PASSWORD: "CHANGEME_LI_POSTGRES_SUPERUSER_PASSWORD"  # From matrix-postgresql-li-superuser secret
 
-  # S3/MinIO credentials
+  # S3/MinIO credentials (for media sync)
   S3_ACCESS_KEY: "synapse-s3-user"
   S3_SECRET_KEY: "CHANGEME_SECURE_S3_PASSWORD"
 
 ---
-# Job to set up PostgreSQL replication (run once)
+# Job to set up PostgreSQL logical replication (run once)
+#
+# WHY SUPERUSER IS REQUIRED:
+# PostgreSQL logical replication requires superuser privileges because:
+# 1. CREATE SUBSCRIPTION creates background workers (walsender on publisher)
+# 2. CREATE SUBSCRIPTION creates replication slots (privileged operation)
+# 3. The subscription needs to connect with REPLICATION privilege
+#
+# While PostgreSQL 15+ allows non-superuser subscriptions, it requires
+# complex permission setup (REPLICATION privilege, SET ROLE to table owners).
+# Using CloudNativePG-managed superuser secrets is simpler and more reliable.
+#
+# The superuser passwords are managed securely by CloudNativePG:
+# - matrix-postgresql-superuser (main cluster)
+# - matrix-postgresql-li-superuser (LI cluster)
+#
+# This Job runs ONCE during initial deployment to configure replication.
+# After setup, PostgreSQL handles replication automatically.
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -223,61 +241,49 @@ spec:
                 -d "$LI_DB_NAME" \
                 -c "SELECT subname, subenabled, subslotname FROM pg_subscription;"
           env:
+            # PostgreSQL superuser passwords from CloudNativePG-managed secrets
+            # These are the ONLY database passwords we use - no duplicates elsewhere
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: matrix-postgresql-superuser
-                  key: password  # CloudNativePG creates this secret automatically
+                  key: password
             - name: LI_POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: matrix-postgresql-li-superuser
-                  key: password  # CloudNativePG creates this secret automatically
+                  key: password
+            # Connection info from sync-system-secrets (passwords NOT stored there)
             - name: MAIN_DB_HOST
               valueFrom:
                 secretKeyRef:
                   name: sync-system-secrets
                   key: MAIN_DB_HOST
-            - name: MAIN_DB_USER
-              valueFrom:
-                secretKeyRef:
-                  name: sync-system-secrets
-                  key: MAIN_DB_USER
-            - name: MAIN_DB_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: sync-system-secrets
-                  key: MAIN_DB_PASSWORD
             - name: MAIN_DB_NAME
               valueFrom:
                 secretKeyRef:
                   name: sync-system-secrets
                   key: MAIN_DB_NAME
-            - name: LI_DB_HOST
-              valueFrom:
-                secretKeyRef:
-                  name: sync-system-secrets
-                  key: LI_DB_HOST
-            - name: LI_DB_USER
-              valueFrom:
-                secretKeyRef:
-                  name: sync-system-secrets
-                  key: LI_DB_USER
-            - name: LI_DB_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: sync-system-secrets
-                  key: LI_DB_PASSWORD
-            - name: LI_DB_NAME
-              valueFrom:
-                secretKeyRef:
-                  name: sync-system-secrets
-                  key: LI_DB_NAME
             - name: MAIN_DB_PORT
               valueFrom:
                 secretKeyRef:
                   name: sync-system-secrets
                   key: MAIN_DB_PORT
+            - name: LI_DB_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: sync-system-secrets
+                  key: LI_DB_HOST
+            - name: LI_DB_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: sync-system-secrets
+                  key: LI_DB_NAME
+            - name: LI_DB_PORT
+              valueFrom:
+                secretKeyRef:
+                  name: sync-system-secrets
+                  key: LI_DB_PORT
           volumeMounts:
             - name: config
               mountPath: /config
@@ -320,14 +326,18 @@ spec:
           containers:
             - name: rclone-sync
               # rclone for media synchronization
+              # NOTE: This container only syncs media via rclone (S3/MinIO)
+              # Database replication is handled automatically by PostgreSQL
               image: rclone/rclone:1.65-alpine
               command:
                 - sh
                 - -c
                 - |
-                  # Run sync script (media sync only, replication lag check removed)
+                  # Run sync script (media sync only)
+                  # Database sync is handled by PostgreSQL logical replication
                   sh /config/sync.sh
               env:
+                # Only S3 credentials needed for media sync
                 - name: S3_ACCESS_KEY
                   valueFrom:
                     secretKeyRef:
@@ -338,26 +348,6 @@ spec:
                     secretKeyRef:
                       name: sync-system-secrets
                       key: S3_SECRET_KEY
-                - name: LI_DB_HOST
-                  valueFrom:
-                    secretKeyRef:
-                      name: sync-system-secrets
-                      key: LI_DB_HOST
-                - name: LI_DB_USER
-                  valueFrom:
-                    secretKeyRef:
-                      name: sync-system-secrets
-                      key: LI_DB_USER
-                - name: LI_DB_PASSWORD
-                  valueFrom:
-                    secretKeyRef:
-                      name: sync-system-secrets
-                      key: LI_DB_PASSWORD
-                - name: LI_DB_NAME
-                  valueFrom:
-                    secretKeyRef:
-                      name: sync-system-secrets
-                      key: LI_DB_NAME
               volumeMounts:
                 - name: config
                   mountPath: /config

@@ -1,6 +1,5 @@
 # LiveKit SFU Helm Values
 # Matrix/Synapse Production Deployment (Scalable 100 CCU - 20K+ CCU)
-# Version: 2.1 - Scale-aware configuration
 
 # ============================================================================
 # CRITICAL: LiveKit provides Selective Forwarding Unit for group video
@@ -25,7 +24,7 @@
 
 image:
   repository: livekit/livekit-server
-  tag: v1.7.2  # CHANGE_TO_LATEST_STABLE
+  tag: v1.8.1
   pullPolicy: IfNotPresent
 
 # ============================================================================
@@ -78,8 +77,8 @@ resources:
 
 livekit:
   # Domain configuration
-  # CHANGE_TO_YOUR_DOMAIN
-  domain: chat.z3r0d3v.com
+  # CRITICAL: Change this to your actual LiveKit domain
+  domain: CHANGE_TO_YOUR_LIVEKIT_DOMAIN
 
   # API keys and secrets
   # Generate with: livekit-server generate-keys
@@ -309,7 +308,7 @@ tolerations: []
 # kubectl exec -n livekit <livekit-pod> -- redis-cli -h redis-livekit-master ping
 #
 # Test API endpoint:
-# curl http://livekit.chat.z3r0d3v.com/
+# curl http://livekit.YOUR_DOMAIN/
 #
 # View active rooms:
 # livekit-cli room list --url ws://livekit:7880 --api-key <key> --api-secret <secret>

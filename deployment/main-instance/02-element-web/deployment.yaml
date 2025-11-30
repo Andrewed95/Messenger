@@ -1,6 +1,28 @@
 # Element Web Deployment
 # The official Matrix web client
 # Provides browser-based access to the Matrix homeserver
+#
+# ============================================================================
+# LIVEKIT / ELEMENT CALL CONFIGURATION
+# ============================================================================
+# Element Call requires LiveKit for group video/voice calls.
+# To enable LiveKit integration:
+#
+# 1. Deploy LiveKit SFU (see values/livekit-values.yaml)
+#    - Run: helm install livekit livekit/livekit-server --values livekit-values.yaml
+#    - Or: See main-instance/04-livekit/deployment.yaml
+#
+# 2. Deploy lk-jwt-service (JWT token service for Matrix<->LiveKit auth)
+#    - Generates LiveKit JWTs from Matrix access tokens
+#    - See main-instance/04-livekit/ for deployment manifests
+#
+# 3. Update Element Web config.json (this file):
+#    - Set element_call.url to your lk-jwt-service URL
+#    - See "element_call" section in config.json below
+#
+# If LiveKit is NOT deployed, Element Web will fall back to Jitsi (if configured)
+# or disable group video calls entirely. 1-on-1 calls still work via WebRTC P2P.
+# ============================================================================
 
 ---
 # ConfigMap containing Element Web configuration
@@ -55,6 +77,21 @@ data:
             "UIFeature.advancedSettings": true,
             "UIFeature.shareQrCode": true,
             "UIFeature.shareSocial": false
+        },
+
+        "element_call": {
+            "url": "https://call.example.com",
+            "use_exclusively": true,
+            "participant_limit": 8,
+            "brand": "Element Call"
+        },
+
+        "jitsi": {
+            "preferred_domain": null
+        },
+
+        "voip": {
+            "obey_asserted_identity": true
         }
     }
 

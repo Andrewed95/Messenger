@@ -934,8 +934,8 @@ git status
 ```
 
 **Rotate secrets regularly:**
-- PostgreSQL password: Every 
-- MinIO passwords: Every 
+- PostgreSQL password: Every 90 days
+- MinIO passwords: Every 90 days
 - Synapse secrets: Annually (invalidates sessions)
 - Grafana password: After first login
 
@@ -1030,7 +1030,7 @@ Server failed
    chat.example.com. → <LOAD_BALANCER_IP>
    ```
 
-2. Wait for DNS propagation (up to )
+2. Wait for DNS propagation (typically 5 minutes, up to 48 hours for external DNS)
 
 3. Test with:
    ```bash

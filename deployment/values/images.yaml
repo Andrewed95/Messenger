@@ -113,7 +113,7 @@ alertmanager:
 # Ingress Controller
 nginx_ingress:
   controller:
-    image: registry.k8s.io/ingress-nginx/controller:v1.9.5
+    image: registry.k8s.io/ingress-nginx/controller:v1.9.6
     imagePullPolicy: IfNotPresent
 
   webhook:

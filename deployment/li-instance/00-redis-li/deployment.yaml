@@ -82,9 +82,11 @@ data:
     client-output-buffer-limit pubsub 32mb 8mb 60
 
 ---
-# Redis LI Deployment (single replica)
+# Redis LI StatefulSet (single replica with persistent storage)
+# NOTE: Using StatefulSet (not Deployment) for stable hostname and PVC
+# This ensures cache survives pod restarts, improving LI admin experience
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: redis-li
   namespace: matrix
@@ -93,7 +95,8 @@ metadata:
     app.kubernetes.io/instance: li
     matrix.instance: li
 spec:
-  replicas: 1  # Single replica for LI (no HA required)
+  serviceName: redis-li
+  replicas: 1  # Single replica for LI (no HA required per CLAUDE.md section 3.4)
   selector:
     matchLabels:
       app.kubernetes.io/name: redis
@@ -188,8 +191,21 @@ spec:
         - name: config
           configMap:
             name: redis-li-config
-        - name: data
-          emptyDir: {}  # LI Redis data can be ephemeral (synced from main)
+
+  # PersistentVolumeClaim for Redis data
+  # Ensures cache survives pod restarts (Redis data is NOT synced from main)
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          app.kubernetes.io/name: redis
+          app.kubernetes.io/instance: li
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: standard  # CHANGEME: Match your cluster's storage class
+        resources:
+          requests:
+            storage: 2Gi  # Small storage for LI cache (single admin user)
 
 ---
 # Service for Redis LI

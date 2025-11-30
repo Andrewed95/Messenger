@@ -1,6 +1,5 @@
 # MetalLB Helm Values
 # Matrix/Synapse Production Deployment (Scalable 100 CCU - 20K+ CCU)
-# Version: 2.0
 
 # ============================================================================
 # CRITICAL: MetalLB provides LoadBalancer service type in bare-metal K8s

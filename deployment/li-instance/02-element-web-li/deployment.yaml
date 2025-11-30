@@ -6,7 +6,16 @@
 # - Displays redacted/deleted messages with strikethrough or special formatting
 # - Read-only interface (no message sending from LI)
 # - Connects to Synapse LI instance
-# - Restricted access via IP whitelisting
+#
+# Access Control:
+# Access is controlled via NETWORK ISOLATION, not IP whitelisting.
+# The LI instance runs on a separate private network that only authorized
+# LI administrators can access. The organization's network infrastructure
+# team is responsible for controlling physical and network-level access
+# to the LI network. This approach is:
+# - More secure (defense at network layer, not application layer)
+# - Simpler to maintain (no IP lists to update)
+# - Standard for sensitive systems (law enforcement, forensics)
 
 ---
 # ConfigMap for Element Web LI

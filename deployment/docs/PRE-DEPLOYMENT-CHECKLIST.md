@@ -545,14 +545,20 @@ The deployer generates all secrets and credentials during deployment using the p
 
 ### 1. Sync System
 - [ ] **PostgreSQL replication fixed:**
-  - [ ] Uses existing `synapse` user (not creating new)
-  - [ ] Publication created with superuser privileges
-  - [ ] Subscription properly configured
-- [ ] **Credentials properly set:**
+  - [ ] Publication created with superuser privileges on main
+  - [ ] Subscription properly configured on LI
+  - [ ] Uses CloudNativePG-managed superuser secrets
+- [ ] **Credentials properly configured:**
   ```yaml
-  # Using postgres superuser for replication (required for CREATE SUBSCRIPTION)
-  MAIN_DB_USER: "postgres"
-  MAIN_DB_PASSWORD: <postgres-superuser-password>
+  # Sync system uses CloudNativePG-managed superuser secrets:
+  # - matrix-postgresql-superuser (main cluster)
+  # - matrix-postgresql-li-superuser (LI cluster)
+  # These are auto-created by CloudNativePG with enableSuperuserAccess: true
+
+  # sync-system-secrets only contains connection info (not passwords):
+  # MAIN_DB_HOST, MAIN_DB_PORT, MAIN_DB_NAME
+  # LI_DB_HOST, LI_DB_PORT, LI_DB_NAME
+  # S3_ACCESS_KEY, S3_SECRET_KEY
   ```
 
 ### 2. LI Synapse Instance
@@ -1065,6 +1071,128 @@ Replace `matrix.example.com` with your actual domain in:
 - [ ] Prometheus Operator installed (if using monitoring)
 - [ ] MinIO Operator installed
 
+### 5. Storage Class Configuration (CRITICAL)
+**The deployment requires a storage class to exist in your cluster.**
+
+```bash
+# Check available storage classes
+kubectl get storageclass
+
+# Expected output example:
+# NAME                 PROVISIONER             RECLAIMPOLICY   VOLUMEBINDINGMODE
+# standard (default)   kubernetes.io/gce-pd    Delete          Immediate
+# local-storage        kubernetes.io/no-prov   Delete          WaitForFirstConsumer
+```
+
+**IMPORTANT:**
+- Set `STORAGE_CLASS` in `config.env` to match an existing storage class
+- If no storage class exists, create one before deployment
+- The deploy-all.sh script will FAIL if the storage class doesn't exist
+
+**For bare-metal clusters (no cloud provisioner):**
+```bash
+# Option 1: Use local-path-provisioner (simplest)
+kubectl apply -f https://raw.githubusercontent.com/rancher/local-path-provisioner/master/deploy/local-path-storage.yaml
+
+# Option 2: Create manual local storage class
+cat <<EOF | kubectl apply -f -
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: local-storage
+provisioner: kubernetes.io/no-provisioner
+volumeBindingMode: WaitForFirstConsumer
+EOF
+```
+
+### 6. Node Labeling Requirements (CRITICAL)
+
+**Monitoring Server Node:**
+Per CLAUDE.md Section 6.2, monitoring must run on a DEDICATED server.
+```bash
+# Label the monitoring server node
+kubectl label node <monitoring-node-name> monitoring=true
+
+# Optional: Add taint to prevent other workloads
+kubectl taint nodes <monitoring-node-name> monitoring=true:NoSchedule
+
+# Verify labeling
+kubectl get nodes -l monitoring=true
+```
+
+**LiveKit Nodes (if using group video calls):**
+```bash
+# Label nodes designated for LiveKit (4 recommended for 20K CCU)
+kubectl label node <livekit-node-1> livekit=true
+kubectl label node <livekit-node-2> livekit=true
+kubectl label node <livekit-node-3> livekit=true
+kubectl label node <livekit-node-4> livekit=true
+
+# Verify labeling
+kubectl get nodes -l livekit=true
+```
+
+**Summary of Required Node Labels:**
+| Label | Purpose | Minimum Nodes |
+|-------|---------|---------------|
+| `monitoring=true` | Prometheus, Grafana, Loki | 1 |
+| `livekit=true` | LiveKit SFU instances | 2-4 (if using LiveKit) |
+
+### 7. Air-Gapped / Intranet Deployment Requirements
+
+**For deployments without internet access after setup:**
+
+- [ ] **Pre-pull all container images** before cutting internet access
+  ```bash
+  # List all images used in deployment
+  grep -r "image:" deployment/ --include="*.yaml" | grep -v "#" | awk '{print $NF}' | sort -u
+
+  # Pull images on all nodes (while internet is available)
+  # Or use a private registry with pre-loaded images
+  ```
+
+- [ ] **Self-signed or organization CA certificates**
+  - cert-manager ClusterIssuer configured for `selfsigned` or organization CA
+  - Or pre-generated TLS certificates loaded into secrets
+
+- [ ] **ClamAV virus definitions**
+  - ClamAV needs initial virus definitions download
+  - After initial download, definitions are cached
+  - For fully air-gapped: pre-load definitions or use private mirror
+
+- [ ] **Coturn EXTERNAL_IP configured**
+  - Uses Kubernetes node IP automatically (correct for intranet)
+  - No internet access needed for TURN/STUN functionality
+
+- [ ] **LiveKit configured for internal use only**
+  - WebRTC works on intranet without internet
+  - Ensure firewall allows UDP traffic between clients and LiveKit nodes
+
+### 8. LiveKit / Element Call Setup (For Group Video Calls)
+
+**If you want group video/voice calls, you MUST deploy LiveKit:**
+
+1. **Deploy LiveKit SFU:**
+   ```bash
+   helm repo add livekit https://helm.livekit.io
+   helm install livekit livekit/livekit-server \
+     --namespace livekit --create-namespace \
+     --values values/livekit-values.yaml
+   ```
+
+2. **Update Element Web config:**
+   - Element Web config.json includes `element_call` section
+   - Set `element_call.url` to your LiveKit JWT service URL
+   - See `main-instance/02-element-web/deployment.yaml` for configuration
+
+3. **Configure Synapse for LiveKit:**
+   - Update homeserver.yaml with LiveKit API credentials
+   - See CONFIGURATION-REFERENCE.md for details
+
+**Without LiveKit:**
+- 1-on-1 voice/video calls still work (direct WebRTC via coturn)
+- Group calls will be disabled
+
 ## 🚀 Deployment Order
 
 Execute deployment in this specific order:
@@ -1242,34 +1370,36 @@ kubectl get secret matrix-postgresql-app -n matrix -o jsonpath='{.data.password}
 echo ""
 ```
 
-**Verify Replication Connection String:**
+**Verify Replication Connection Credentials:**
 ```bash
-# Check sync-system job uses correct credentials
+# Check sync-system job uses correct CloudNativePG superuser secrets
 kubectl get job sync-system-setup-replication -n matrix -o yaml | \
-  grep -A 5 "MAIN_DB"
+  grep -A 3 "POSTGRES_PASSWORD\|LI_POSTGRES_PASSWORD"
 
-# Should see:
-# MAIN_DB_USER: synapse
-# MAIN_DB_PASSWORD: <from-matrix-postgresql-app-secret>
-# MAIN_DB_HOST: matrix-postgresql-rw.matrix.svc.cluster.local
-# MAIN_DB_NAME: synapse
+# Should see references to CloudNativePG-managed secrets:
+# - name: matrix-postgresql-superuser (for main cluster)
+# - name: matrix-postgresql-li-superuser (for LI cluster)
+
+# Verify connection info from sync-system-secrets:
+kubectl get secret sync-system-secrets -n matrix -o yaml | \
+  grep -E "MAIN_DB_HOST|MAIN_DB_NAME|LI_DB_HOST|LI_DB_NAME"
 ```
 
 **Test Replication Connection from LI to Main:**
 ```bash
-# Get synapse user password
-MAIN_PG_PASSWORD=$(kubectl get secret matrix-postgresql-app -n matrix \
+# Get postgres superuser password (required for replication)
+POSTGRES_PASSWORD=$(kubectl get secret matrix-postgresql-superuser -n matrix \
   -o jsonpath='{.data.password}' | base64 -d)
 
-# Test connection from LI cluster to main cluster
+# Test connection from LI cluster to main cluster using postgres user
 kubectl exec -it matrix-postgresql-li-1 -n matrix -- \
-  psql "postgresql://synapse:${MAIN_PG_PASSWORD}@matrix-postgresql-rw.matrix.svc.cluster.local:5432/synapse" \
+  psql "postgresql://postgres:${POSTGRES_PASSWORD}@matrix-postgresql-rw.matrix.svc.cluster.local:5432/matrix" \
   -c "SELECT current_user, current_database();"
 
 # Expected output:
 #  current_user | current_database
 # --------------+------------------
-#  synapse      | synapse
+#  postgres     | matrix
 ```
 
 #### 4.3 Check Replication Lag
@@ -1358,16 +1488,20 @@ kubectl logs matrix-postgresql-li-1 -n matrix | grep -i "subscription\|replicati
 
 **Common Error: "password authentication failed for user"**
 ```
-Solution: Verify sync-system uses matrix-postgresql-app secret:
+Solution: Verify sync-system uses CloudNativePG superuser secrets:
 
 kubectl get job sync-system-setup-replication -n matrix -o yaml | \
-  grep -A 2 "MAIN_DB_PASSWORD"
+  grep -A 3 "POSTGRES_PASSWORD"
 
 Should reference:
   valueFrom:
     secretKeyRef:
-      name: matrix-postgresql-app
+      name: matrix-postgresql-superuser
       key: password
+
+Note: Logical replication requires superuser (postgres) credentials,
+not the application user (synapse). CloudNativePG auto-creates these
+secrets when enableSuperuserAccess: true is set in the Cluster spec.
 ```
 
 **Common Error: "publication does not exist"**
@@ -1375,8 +1509,8 @@ Should reference:
 Solution: Create publication manually:
 
 kubectl exec -it matrix-postgresql-1 -n matrix -- \
-  psql -U postgres -d synapse -c \
-  "CREATE PUBLICATION synapse_publication FOR ALL TABLES;"
+  psql -U postgres -d matrix -c \
+  "CREATE PUBLICATION matrix_li_publication FOR ALL TABLES;"
 ```
 
 **Common Error: "could not create replication slot"**

@@ -1,6 +1,5 @@
 # cert-manager Helm Values
 # Matrix/Synapse Production Deployment (Scalable 100 CCU - 20K+ CCU)
-# Version: 2.0
 
 # ============================================================================
 # CRITICAL: cert-manager automates TLS certificate management

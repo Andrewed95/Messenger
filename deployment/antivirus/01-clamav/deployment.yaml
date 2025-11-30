@@ -293,6 +293,57 @@ spec:
               drop:
                 - ALL
 
+        # ClamAV Prometheus Exporter (optional - exposes metrics)
+        # Based on: https://github.com/r3kzi/clamav-prometheus-exporter
+        - name: clamav-exporter
+          image: r3kzi/clamav-prometheus-exporter:latest
+          imagePullPolicy: IfNotPresent
+
+          env:
+            - name: CLAMAV_HOST
+              value: "localhost"
+            - name: CLAMAV_PORT
+              value: "3310"
+
+          ports:
+            - name: metrics
+              containerPort: 9810
+              protocol: TCP
+
+          resources:
+            requests:
+              cpu: 25m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+
+          livenessProbe:
+            httpGet:
+              path: /metrics
+              port: 9810
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 5
+
+          readinessProbe:
+            httpGet:
+              path: /metrics
+              port: 9810
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            capabilities:
+              drop:
+                - ALL
+
       volumes:
         - name: config
           configMap:
@@ -327,30 +378,37 @@ spec:
       port: 3310
       targetPort: 3310
       protocol: TCP
+    - name: metrics
+      port: 9810
+      targetPort: 9810
+      protocol: TCP
 
-# ServiceMonitor for ClamAV (DISABLED - ClamAV doesn't expose Prometheus metrics natively)
-# To enable metrics, deploy clamav-exporter sidecar:
-#   https://github.com/kumina/clamav_exporter
-# Then uncomment this ServiceMonitor
-#
-# ---
-# apiVersion: monitoring.coreos.com/v1
-# kind: ServiceMonitor
-# metadata:
-#   name: clamav
-#   namespace: matrix
-#   labels:
-#     app.kubernetes.io/name: clamav
-#     prometheus: kube-prometheus
-# spec:
-#   selector:
-#     matchLabels:
-#       app.kubernetes.io/name: clamav
-#   endpoints:
-#     - port: metrics
-#       path: /metrics
-#       interval: 60s
-#       scrapeTimeout: 10s
-#   namespaceSelector:
-#     matchNames:
-#       - matrix
+---
+# ServiceMonitor for ClamAV
+# Uses clamav-prometheus-exporter sidecar for metrics
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: clamav
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: clamav
+    prometheus: kube-prometheus
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: clamav
+      app.kubernetes.io/component: antivirus
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 60s
+      scrapeTimeout: 10s
+      relabelings:
+        - sourceLabels: [__meta_kubernetes_pod_name]
+          targetLabel: pod
+        - sourceLabels: [__meta_kubernetes_pod_node_name]
+          targetLabel: node
+  namespaceSelector:
+    matchNames:
+      - matrix
