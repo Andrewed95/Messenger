@@ -73,7 +73,10 @@ data:
         store_remote: true
         store_synchronous: true
         config:
-          bucket: synapse-media-li
+          # LI uses MAIN MinIO directly (same bucket as main Synapse)
+          # This provides real-time media access without sync lag
+          # WARNING: LI admins must NOT modify/delete files - changes affect main!
+          bucket: synapse-media
           endpoint_url: http://minio.matrix.svc.cluster.local:9000
           access_key_id: ${S3_ACCESS_KEY}
           secret_access_key: ${S3_SECRET_KEY}
@@ -196,7 +199,9 @@ stringData:
   # Redis password is now in dedicated secret: redis-li-secret
   # See: li-instance/00-redis-li/deployment.yaml
 
-  # S3/MinIO credentials for LI bucket
+  # S3/MinIO credentials (for MAIN MinIO - shared with main Synapse)
+  # These should match synapse-s3-user in infrastructure/03-minio/secrets.yaml
+  # LI uses the same bucket and credentials as main instance
   S3_ACCESS_KEY: "synapse-s3-user"
   S3_SECRET_KEY: "CHANGEME_SECURE_S3_PASSWORD"
 
@@ -253,8 +258,7 @@ spec:
         app.kubernetes.io/name: synapse
         app.kubernetes.io/component: homeserver
         app.kubernetes.io/instance: li
-        matrix.instance: li  # CRITICAL label for NetworkPolicy
-        ingress-accessible: "true"  # Allow ingress controller access
+        matrix.instance: li  # CRITICAL label for NetworkPolicy (allow-from-nginx-li)
       annotations:
         prometheus.io/scrape: "true"
         prometheus.io/port: "9090"
@@ -567,6 +571,7 @@ spec:
   type: ClusterIP
   selector:
     app.kubernetes.io/name: synapse
+    app.kubernetes.io/component: homeserver
     app.kubernetes.io/instance: li
   ports:
     - name: http
@@ -574,40 +579,5 @@ spec:
       targetPort: 8008
       protocol: TCP
 
----
-# Ingress for Synapse LI
-# CRITICAL: Uses SAME hostname as main instance (matrix.example.com)
-# Access control is handled via network isolation, NOT different hostnames
-# The org must ensure LI network is only accessible to authorized administrators
-# Administrators configure their DNS to resolve matrix.example.com to LI instance IP
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: synapse-li
-  namespace: matrix
-  labels:
-    app.kubernetes.io/name: synapse
-    app.kubernetes.io/component: ingress
-    matrix.instance: li
-  annotations:
-    cert-manager.io/cluster-issuer: "letsencrypt-prod"
-    nginx.ingress.kubernetes.io/ssl-redirect: "true"
-    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
-    nginx.ingress.kubernetes.io/proxy-body-size: "100m"
-spec:
-  ingressClassName: nginx
-  tls:
-    - hosts:
-        - matrix.example.com
-      secretName: synapse-li-tls
-  rules:
-    - host: matrix.example.com
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: synapse-li-client
-                port:
-                  number: 8008
+# Access: Via nginx-li reverse proxy
+# See: li-instance/06-nginx-li/deployment.yaml

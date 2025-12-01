@@ -213,7 +213,7 @@ kubectl port-forward -n monitoring svc/prometheus-kube-prometheus-prometheus 909
 |-----------|---------|------------|
 | **Node Exporter** | System metrics | CPU, memory, disk, network |
 | **kube-state-metrics** | K8s object metrics | Pods, deployments, PVCs |
-| **Prometheus Operator** | CRD management | ServiceMonitor, PrometheusRule |
+| **Prometheus Operator** | CRD management | ServiceMonitor |
 
 ## Key Metrics
 
@@ -249,11 +249,11 @@ cnpg_pg_stat_database_blks_hit / (cnpg_pg_stat_database_blks_hit + cnpg_pg_stat_
 ### LI Sync System
 
 ```promql
-# Replication lag (CRITICAL)
+# Replication lag (CRITICAL - PostgreSQL logical replication)
 cnpg_pg_replication_lag{cnpg_io_cluster="matrix-postgresql-li"}
 
-# Last media sync
-time() - kube_job_status_completion_time{job_name=~"sync-system-media.*"}
+# MinIO health (LI uses main MinIO directly)
+up{job="minio"}
 ```
 
 ## Log Queries (LogQL)
@@ -404,31 +404,33 @@ kubectl logs -n monitoring loki-0
 - **Optimize LogQL**: Filter before parsing
 - **Shard Prometheus**: Use federation for large deployments
 
-## Cost Optimization
+## Scaling Monitoring Resources
 
-### Storage Costs
+### Storage Sizing by Deployment Scale
 
-**Current Configuration**:
-- Prometheus: 100Gi ×  = 100Gi
-- Loki: 50Gi ×  = 50Gi
-- **Total**: ~150Gi
+| CCU Range | Prometheus Storage | Loki Storage | Total Storage |
+|-----------|-------------------|--------------|---------------|
+| 100       | 50Gi              | 20Gi         | ~70Gi         |
+| 1,000     | 100Gi             | 50Gi         | ~150Gi        |
+| 5,000     | 150Gi             | 75Gi         | ~225Gi        |
+| 10,000    | 200Gi             | 100Gi        | ~300Gi        |
+| 20,000    | 300Gi             | 150Gi        | ~450Gi        |
 
-**Optimization**:
-1. **Reduce retention**:  instead of  = 50% savings
-2. **Use cheaper storage class**: Cloud cold storage
-3. **Enable compression**: Prometheus TSDB compression
-4. **Archive to S3**: Long-term storage via Thanos
+### Resource Sizing by Deployment Scale
 
-### Resource Costs
+| CCU Range | Prometheus CPU/Memory | Grafana CPU/Memory | Loki CPU/Memory |
+|-----------|----------------------|-------------------|-----------------|
+| 100       | 250m / 2Gi           | 100m / 256Mi      | 100m / 256Mi    |
+| 1,000     | 500m / 4Gi           | 200m / 512Mi      | 200m / 512Mi    |
+| 5,000     | 1000m / 6Gi          | 300m / 1Gi        | 500m / 1Gi      |
+| 10,000    | 1500m / 8Gi          | 400m / 1Gi        | 750m / 1.5Gi    |
+| 20,000    | 2000m / 12Gi         | 500m / 2Gi        | 1000m / 2Gi     |
 
-**Current Request**:
-- Prometheus: 500m CPU, 4Gi memory
-- Grafana: 200m CPU, 512Mi memory × 2 = 400m CPU, 1Gi memory
-- Loki: 200m CPU, 512Mi memory
-- Promtail: 100m CPU × nodes
-- **Total**: ~1.2 CPU cores, 6Gi memory
+### Storage Optimization Techniques
 
-**For 20K CCU**: Increase to 3 CPU cores, 12Gi memory
+1. **Reduce retention period**: Lower retention from 30d to 15d if historical data not needed
+2. **Enable compression**: Prometheus TSDB compression reduces disk usage
+3. **Archive to object storage**: Use Thanos to move old data to MinIO/S3
 
 ## References
 

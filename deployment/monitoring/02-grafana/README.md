@@ -39,8 +39,7 @@ Grafana is deployed as part of the kube-prometheus-stack Helm chart and provides
 - **Features**:
   - Synapse LI status
   - **CRITICAL**: Database replication lag monitoring
-  - Last media sync job completion time
-  - Sync job success/failure rate
+  - MinIO health (LI uses main MinIO for media)
 
 ### 4. Community Dashboards (Auto-imported)
 
@@ -267,15 +266,11 @@ rate(minio_s3_requests_errors_total[5m])
 cnpg_pg_replication_lag{cnpg_io_cluster="matrix-postgresql-li"}
 ```
 
-**Last Media Sync Time (seconds ago)**:
+**MinIO Health (LI uses main MinIO)**:
 ```promql
-time() - kube_job_status_completion_time{job_name=~"sync-system-media.*"}
+up{job="minio"}
 ```
 
-**Media Sync Success Rate (last hour)**:
-```promql
-rate(kube_job_status_succeeded{job_name=~"sync-system-media.*"}[1h])
-```
 
 ## Dashboard Best Practices
 
@@ -295,8 +290,8 @@ rate(kube_job_status_succeeded{job_name=~"sync-system-media.*"}[1h])
 - **Infrastructure**: 30s (MinIO, HAProxy)
 - **Compliance (LI)**: 30s-1min
 
-### 4. Alerting
-- Configure alerts directly in Grafana panels (alternative to PrometheusRules)
+### 4. Alerting (Optional)
+- Configure alerts directly in Grafana panels
 - Use notification channels (email, Slack, PagerDuty)
 - Group related alerts to reduce noise
 

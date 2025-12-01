@@ -40,7 +40,8 @@ helm install livekit livekit/livekit-server \
 The LiveKit configuration is defined in `values/livekit-values.yaml` (relative to deployment directory):
 
 **Key Settings**:
-- **Redis**: Uses Phase 1 Redis Sentinel cluster
+- **Redis**: Uses Phase 1 Redis Sentinel cluster (shared with Synapse, db 1)
+  - For large deployments (20K+ CCU), can deploy separate Redis - see `values/redis-livekit-values.yaml`
 - **TURN**: Integrates with coturn (Phase 2.4)
 - **JWT**: Shared secret for Synapse integration
 - **Resources**: Scaled based on concurrent call capacity
@@ -144,8 +145,8 @@ curl http://localhost:7880/
 # Check events
 kubectl describe pod -n matrix <livekit-pod>
 
-# Verify Redis connection
-kubectl exec -n matrix <livekit-pod> -- redis-cli -h redis ping
+# Verify Redis connection (Sentinel addresses)
+kubectl exec -n matrix <livekit-pod> -- redis-cli -h redis.matrix.svc.cluster.local -a "$REDIS_PASSWORD" ping
 ```
 
 ### WebRTC media not flowing

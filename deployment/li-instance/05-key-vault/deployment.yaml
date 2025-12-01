@@ -426,42 +426,5 @@ spec:
       targetPort: 8000
       protocol: TCP
 
----
-# key_vault Ingress - For LI admin access to Django admin panel
-# IMPORTANT: This Ingress is only accessible from the LI network
-# The keyvault domain should resolve to the LI Ingress IP
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: key-vault-ingress
-  namespace: matrix
-  labels:
-    app.kubernetes.io/name: key-vault
-    app.kubernetes.io/component: recovery-key-storage
-    matrix.instance: li
-  annotations:
-    # TLS configuration - use your cert-manager issuer
-    cert-manager.io/cluster-issuer: "letsencrypt-prod"
-    # Security headers
-    nginx.ingress.kubernetes.io/proxy-body-size: "1m"
-    nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
-    nginx.ingress.kubernetes.io/proxy-send-timeout: "60"
-spec:
-  ingressClassName: nginx
-  tls:
-    - hosts:
-        # CHANGEME: Replace with your key_vault domain
-        - keyvault.example.com
-      secretName: key-vault-tls
-  rules:
-    # CHANGEME: Replace with your key_vault domain
-    - host: keyvault.example.com
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: key-vault
-                port:
-                  number: 8000
+# Access: Via nginx-li reverse proxy at https://keyvault.example.com
+# See: li-instance/06-nginx-li/deployment.yaml

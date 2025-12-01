@@ -66,9 +66,7 @@ This directory contains:
 ### Supporting Services
 
 10. **Sync System (LI)**
-    - Monitors CronJob execution
     - Tracks replication lag via PostgreSQL metrics
-    - Media sync job success/failure
 
 11. **NGINX Ingress Controller**
     - Port: 10254 (default metrics port)
@@ -222,14 +220,11 @@ minio_cluster_disk_offline_total
 ### LI Sync System
 
 ```promql
-# Replication lag
+# Replication lag (PostgreSQL logical replication)
 cnpg_pg_replication_lag{cnpg_io_cluster="matrix-postgresql-li"}
 
-# Last media sync job completion time
-time() - kube_job_status_completion_time{job_name=~"sync-system-media.*"}
-
-# Media sync job success rate
-rate(kube_job_status_succeeded{job_name=~"sync-system-media.*"}[1h])
+# MinIO health (LI uses main MinIO directly)
+up{job="minio"}
 ```
 
 ## Troubleshooting

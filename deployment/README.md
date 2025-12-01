@@ -90,14 +90,16 @@ deployment/
 │   # NOTE: Sygnal (push notifications) not included - requires external Apple/Google servers
 │
 ├── li-instance/                 ← Phase 3: Lawful Intercept
+│   ├── 00-redis-li/             # Isolated Redis for LI (no HA required)
 │   ├── 01-synapse-li/           # Read-only Synapse instance
 │   ├── 02-element-web-li/       # LI web client (shows deleted messages)
 │   ├── 03-synapse-admin-li/     # Admin interface for forensics
-│   ├── 04-sync-system/          # DB replication + media sync
-│   └── 05-key-vault/            # E2EE recovery key storage (SQLite)
+│   ├── 04-sync-system/          # PostgreSQL logical replication
+│   ├── 05-key-vault/            # E2EE recovery key storage (SQLite)
+│   └── 06-nginx-li/             # ⭐ Independent reverse proxy (works when main is down)
 │
 ├── monitoring/                  ← Phase 4: Observability Stack
-│   ├── 01-prometheus/           # ServiceMonitors + AlertRules
+│   ├── 01-prometheus/           # ServiceMonitors
 │   ├── 02-grafana/              # Dashboards (Synapse, PostgreSQL, LI)
 │   └── 03-loki/                 # Log aggregation (30-day retention)
 │
@@ -655,6 +657,12 @@ kubectl exec -n matrix synapse-main-0 -- curl http://localhost:8008/health
 
 **WORKING DIRECTORY:** `deployment/` (root of this repository)
 
+**⭐ LI Instance Independence:**
+- LI operates **completely independently** from main instance
+- Uses dedicated **nginx-li** reverse proxy (not shared ingress controller)
+- Works even if main instance is down (only sync stops)
+- See `li-instance/README.md` for complete LI architecture details
+
 **1. Deploy Sync System (PostgreSQL Replication):**
 ```bash
 # Run from your management node in the deployment directory:
@@ -705,14 +713,67 @@ kubectl apply -f li-instance/05-key-vault/deployment.yaml
 kubectl wait --for=condition=Ready pod/key-vault-0 -n matrix --timeout=300s
 ```
 
+**6. Create TLS Certificates for nginx-li:**
+```bash
+# nginx-li needs TLS certs for all LI domains
+# Example using self-signed certificates (recommended for isolated LI):
+cd /tmp
+
+# Synapse LI (homeserver - SAME domain as main)
+openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+  -keyout synapse-li.key -out synapse-li.crt \
+  -subj "/CN=matrix.example.com"
+kubectl create secret tls nginx-li-synapse-tls \
+  --cert=synapse-li.crt --key=synapse-li.key -n matrix
+
+# Element Web LI (DIFFERENT domain)
+openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+  -keyout element-li.key -out element-li.crt \
+  -subj "/CN=chat-li.example.com"
+kubectl create secret tls nginx-li-element-tls \
+  --cert=element-li.crt --key=element-li.key -n matrix
+
+# Synapse Admin LI (DIFFERENT domain)
+openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+  -keyout admin-li.key -out admin-li.crt \
+  -subj "/CN=admin-li.example.com"
+kubectl create secret tls nginx-li-admin-tls \
+  --cert=admin-li.crt --key=admin-li.key -n matrix
+
+# key_vault (DIFFERENT domain)
+openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+  -keyout keyvault.key -out keyvault.crt \
+  -subj "/CN=keyvault.example.com"
+kubectl create secret tls nginx-li-keyvault-tls \
+  --cert=keyvault.crt --key=keyvault.key -n matrix
+
+# Cleanup temp files
+rm -f *.key *.crt
+```
+
+**7. Deploy nginx-li (LI Reverse Proxy - CRITICAL for independence):**
+```bash
+# nginx-li handles all LI traffic independently
+kubectl apply -f li-instance/06-nginx-li/deployment.yaml
+
+# Wait for nginx-li to be ready
+kubectl wait --for=condition=available deployment/nginx-li -n matrix --timeout=120s
+
+# Get the LoadBalancer IP (use for LI admin DNS configuration)
+kubectl get svc nginx-li -n matrix
+# Note the EXTERNAL-IP - LI admins must configure DNS to point to this IP
+```
+
 **✅ Verification:**
 ```bash
-# Check LI components (including key_vault)
+# Check all LI components
 kubectl get pods -n matrix -l matrix.instance=li
 kubectl get pods -n matrix -l app.kubernetes.io/name=key-vault
-kubectl get ingress -n matrix | grep li
 
-# Check key_vault is responding (TCP socket check - Django app doesn't expose /health)
+# Check nginx-li LoadBalancer service
+kubectl get svc nginx-li -n matrix
+
+# Check key_vault is responding
 kubectl exec -n matrix key-vault-0 -- python -c "import socket; s=socket.socket(); s.settimeout(3); s.connect(('localhost', 8000)); print('OK'); s.close()"
 
 # Check replication lag (CRITICAL - should be < 5 seconds)
@@ -725,11 +786,16 @@ kubectl exec -n matrix matrix-postgresql-li-1-0 -- \
     pg_wal_lsn_diff(latest_end_lsn, received_lsn) AS lag_bytes
   FROM pg_subscription_rel
   JOIN pg_subscription ON subrelid = srrelid;"
-
-# Check media sync job
-kubectl get cronjob sync-system-media -n matrix
-kubectl get jobs -n matrix | grep sync-system-media
 ```
+
+**📝 LI Admin DNS Configuration:**
+After deployment, LI admins must configure their DNS to resolve domains to the nginx-li LoadBalancer IP:
+- `matrix.example.com` → nginx-li IP (same homeserver URL as main)
+- `chat-li.example.com` → nginx-li IP
+- `admin-li.example.com` → nginx-li IP
+- `keyvault.example.com` → nginx-li IP
+
+See `li-instance/README.md` for detailed DNS configuration options.
 
 ---
 
@@ -764,13 +830,10 @@ helm install loki grafana/loki-stack \
   --version 2.10.0
 ```
 
-**3. Deploy ServiceMonitors and AlertRules:**
+**3. Deploy ServiceMonitors:**
 ```bash
 # ServiceMonitors (auto-discovery of metrics)
 kubectl apply -f monitoring/01-prometheus/servicemonitors.yaml
-
-# PrometheusRules (60+ alerting rules)
-kubectl apply -f monitoring/01-prometheus/prometheusrules.yaml
 
 # Grafana Dashboards
 kubectl apply -f monitoring/02-grafana/dashboards-configmap.yaml

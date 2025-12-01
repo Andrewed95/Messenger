@@ -90,17 +90,23 @@ data:
       pickle_key: "CHANGEME_CONTENT_SCANNER_PICKLE_KEY"
 
     # Result cache (avoid re-scanning)
-    # IMPORTANT: Infected files are blocked until cache expires
-    # Long TTL ensures infected files stay blocked
+    # CRITICAL: Uses Redis for SHARED cache across all scanner pods
+    # This ensures each file is scanned ONLY ONCE regardless of which pod
+    # handles the request. Without shared cache, each pod would scan the
+    # same file on first request, wasting resources.
     result_cache:
+      # Redis backend for shared caching across all content-scanner pods
+      # This is ESSENTIAL for scan-once behavior
+      backend: redis
+      redis:
+        host: redis.matrix.svc.cluster.local
+        port: 6379
+        db: 3  # Separate DB from Synapse (0) and LiveKit (1) and key_vault (2)
+        password: ${REDIS_PASSWORD}
       # TTL in seconds (24 hours = 86400 seconds)
       # Clean files: cached to avoid re-scanning same files
       # Infected files: stay blocked for 24 hours before re-scan
       ttl: 86400
-      # Maximum cache size (entries)
-      max_size: 10000
-      # Maximum file size to cache (100MB)
-      max_file_size: 104857600
 
     # Logging
     logging:
@@ -293,6 +299,13 @@ spec:
             # Synapse media repository URL
             - name: SYNAPSE_MEDIA_URL
               value: "http://synapse-media-repository.matrix.svc.cluster.local:8008"
+
+            # Redis password for shared cache
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: redis-password
+                  key: password
 
           volumeMounts:
             - name: config

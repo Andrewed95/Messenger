@@ -561,17 +561,12 @@ done
 **Grafana Dashboard:**
 - Import dashboard ID: 9614 (NGINX Ingress Controller)
 
-### Certificate Expiration
+### Certificate Expiration Monitoring
 
-**Prometheus Alert:**
-```yaml
-- alert: CertificateExpiringSoon
-  expr: certmanager_certificate_expiration_timestamp_seconds - time() < (7 * 24 * 3600)
-  for: 1h
-  labels:
-    severity: warning
-  annotations:
-    summary: "Certificate {{ $labels.name }} expiring in < "
+**PromQL Query** (monitor in Grafana):
+```promql
+# Days until certificate expiration
+(certmanager_certificate_expiration_timestamp_seconds - time()) / 86400
 ```
 
 ## Scaling Considerations

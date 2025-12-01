@@ -13,8 +13,9 @@ metadata:
     app.kubernetes.io/part-of: matrix-stack
     matrix.instance: li
 spec:
-  # HA for LI instance
-  instances: 2  # 1 primary + 1 replica (smaller than main)
+  # CLAUDE.md Section 3.4 & 7.1: LI does NOT require HA - single instance
+  # LI is used by 1-2 admin users only, not production traffic
+  instances: 1
 
   # Enable superuser access (creates matrix-postgresql-li-superuser secret)
   enableSuperuserAccess: true
@@ -22,9 +23,8 @@ spec:
   # Primary update strategy
   primaryUpdateStrategy: unsupervised
 
-  # Single sync replica for LI
-  minSyncReplicas: 1
-  maxSyncReplicas: 1
+  # No sync replicas for single-instance LI
+  # minSyncReplicas/maxSyncReplicas not needed with 1 instance
 
   # PostgreSQL version (must match main cluster)
   imageName: ghcr.io/cloudnative-pg/postgresql:16.1

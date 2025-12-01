@@ -11,6 +11,7 @@ metadata:
     app.kubernetes.io/name: minio
     app.kubernetes.io/component: storage
     app.kubernetes.io/part-of: matrix-stack
+    matrix.instance: main
   annotations:
     prometheus.io/path: /minio/v2/metrics/cluster
     prometheus.io/port: "9000"
@@ -31,10 +32,10 @@ spec:
     - name: minio-credentials
 
   ## Auto-create buckets on deployment
+  ## NOTE: LI instance uses synapse-media bucket directly (no separate LI bucket)
+  ## This provides real-time media access without sync lag
   buckets:
     - name: synapse-media
-      objectLock: false
-    - name: synapse-media-li
       objectLock: false
     - name: postgresql-backups
       objectLock: false

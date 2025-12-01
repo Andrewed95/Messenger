@@ -266,16 +266,81 @@ When you provide a command, file, or step:
 
 ## 7. LI environment deployment specifics
 
-- All LI services (`synapse-li`, `synapse-admin-li`, `element-web-li`, `key_vault`) should be runnable on **one logical server** from the perspective of the solution (even if technically you choose separate pods/nodes inside Kubernetes).
+7.1 **Single-server deployment**
+
+- All LI services (`synapse-li`, `synapse-admin-li`, `element-web-li`, `key_vault`) must run on **one server**.
 - The LI environment:
   - Is used only by one or a few administrators.
   - Does **not** need HA or scaling features.
-- You may choose whether `key_vault` runs:
-  - On the same server as the other LI services.
-  - Or on a separate dedicated server.
-- Whatever you choose, you must:
-  - Explain why this choice is appropriate.
-  - Keep the design consistent with the isolation and access requirements described earlier.
+- `key_vault` runs on the same server as other LI services for simplicity.
+
+7.2 **Independence from main instance**
+
+- The LI instance must be **operationally independent** for core functionality:
+  - LI has its **own PostgreSQL database** (replicated from main).
+  - LI has its **own Redis cache**.
+  - LI has its **own reverse proxy** (nginx-li).
+- LI shares **main MinIO** for media storage (see section 7.5):
+  - This is acceptable because media is read-only for LI.
+  - If main MinIO is down, LI can still access cached/local media.
+  - New media will not be accessible until main MinIO recovers.
+- If the main instance fails:
+  - LI admins can still browse LI URLs, log in, and perform lawful intercept.
+  - Message history and user data remain accessible (in LI database).
+  - Media may be temporarily unavailable if main MinIO is also down.
+  - New data will not sync until main recovers.
+- The LI instance must have its **own reverse proxy** (such as NGINX) that:
+  - Operates independently of the main instance's ingress/proxy.
+  - Handles TLS termination for all LI services.
+  - Routes requests to `synapse-li`, `element-web-li`, `synapse-admin-li`, and `key_vault`.
+
+7.3 **LI domains and DNS configuration**
+
+- LI services require their own domains or subdomains:
+  - `element-web-li`: Different domain (e.g., `chat-li.example.com`)
+  - `synapse-admin-li`: Different domain (e.g., `admin-li.example.com`)
+  - `key_vault`: Different domain (e.g., `keyvault.example.com`)
+  - `synapse-li` homeserver: **Same homeserver URL** as main instance (e.g., `matrix.example.com`)
+- The homeserver URL must be **identical** to the main instance because:
+  - User IDs reference this server name (`@user:matrix.example.com`).
+  - Event signatures and tokens are bound to this server name.
+  - LI uses replicated data from main; different server names would break authentication.
+- **DNS configuration for LI admins**:
+  - LI admins must configure DNS on their computer or the LI network to resolve the homeserver URL (`matrix.example.com`) to the **LI server IP**, not the main instance IP.
+  - This can be done via:
+    - Local `/etc/hosts` file on the admin's workstation.
+    - A dedicated DNS server in the LI network.
+    - Organization-managed DNS split-horizon configuration.
+  - Without this DNS configuration, Element Web LI and Synapse Admin LI would try to connect to the main Synapse instead of Synapse LI.
+
+7.4 **Network isolation is organization's responsibility**
+
+- The organization must provide a **private network** or appropriate access controls to isolate the LI instance.
+- This solution does **not** implement network-level isolation; it is outside the scope of the deployment.
+- The organization must ensure:
+  - Only authorized LI administrators can reach the LI server/network.
+  - LI server IPs or network segments are not accessible to regular users.
+- The only cross-network connections (main ↔ LI) are:
+  - **Data sync**: Background replication from main PostgreSQL to LI PostgreSQL.
+  - **Media access**: LI Synapse reads directly from main MinIO (shared S3 bucket).
+  - **key_vault writes**: Synapse main stores recovery keys in key_vault (LI network).
+
+7.5 **Shared MinIO for media storage**
+
+- LI instance uses the **main MinIO** directly for media access (no separate LI MinIO).
+- Rationale:
+  - Simplifies architecture (no media sync needed).
+  - Reduces storage requirements on LI server.
+  - Provides real-time media access without sync lag.
+- Requirements:
+  - LI Synapse connects to main MinIO using S3 credentials.
+  - LI Synapse uses the **same bucket** (`synapse-media`) as main Synapse.
+  - NetworkPolicy allows LI pods to access main MinIO.
+- **CRITICAL WARNING for LI administrators**:
+  - LI admin access to media is **read-only in practice**.
+  - LI admins **must NOT delete or modify media files**.
+  - Any file changes in MinIO affect the main instance.
+  - Media quarantine or deletion must be done through main Synapse Admin, not LI.
 
 ---
 
@@ -286,11 +351,17 @@ When you provide a command, file, or step:
   - Use **ClamAV** as the antivirus scanning service.
   - The ClamAV deployment must be **scalable**:
     - Able to scale up based on organization size and usage.
+  - **Each file must be scanned only once**:
+    - Use a shared cache (e.g., Redis) across all scanner instances.
+    - Scanning the same file multiple times wastes resources and must be avoided.
+  - **Files in encrypted rooms (E2EE) must also be scanned**:
+    - The scanner must be able to decrypt encrypted media for scanning.
+    - Decryption happens in memory only; decrypted content must never be persisted to disk.
   - If a file is detected as malicious:
     - It must be **quarantined**.
     - Other room members must **not** be able to download it.
 - Your design:
-  - Must integrate ClamAV cleanly with Synapse’s media handling.
+  - Must integrate ClamAV cleanly with Synapse's media handling.
   - Must provide configuration options for tuning ClamAV capacity and behaviour.
 
 ---

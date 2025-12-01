@@ -209,7 +209,6 @@ kubectl exec -n matrix synapse-main-0 -- \
 
 - **Main Deployment Guide:** `../README.md`
 - **Pre-Deployment Checklist:** `../docs/PRE-DEPLOYMENT-CHECKLIST.md`
-- **Detailed Deployment Walkthrough:** `../docs/DEPLOYMENT-GUIDE.md`
 - **Scaling Guide:** `../docs/SCALING-GUIDE.md`
 - **Operations Guide:** `../docs/OPERATIONS-UPDATE-GUIDE.md`
 

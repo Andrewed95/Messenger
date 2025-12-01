@@ -1,11 +1,12 @@
 # Sync System for LI Instance
 # ⭐ CRITICAL: Bridge between main and LI instances ⭐
 #
-# Handles two types of synchronization:
-# 1. PostgreSQL Logical Replication: Real-time database sync from main to LI
-# 2. MinIO/rclone Media Sync: Periodic media file sync between buckets
+# Handles database synchronization:
+# - PostgreSQL Logical Replication: Real-time database sync from main to LI
 #
-# IMPORTANT: This is the ONLY component with access to BOTH main and LI resources
+# NOTE: Media sync is NOT needed - LI uses main MinIO directly via S3 API
+#
+# IMPORTANT: This is the ONLY component with access to BOTH main and LI PostgreSQL
 # Enforced by sync-system-access NetworkPolicy
 
 ---
@@ -81,51 +82,13 @@ data:
     FROM pg_subscription_rel
     JOIN pg_subscription ON subrelid = srrelid;
 
-  # rclone configuration for MinIO sync
-  rclone.conf: |
-    [minio-main]
-    type = s3
-    provider = Minio
-    env_auth = false
-    access_key_id = ${S3_ACCESS_KEY}
-    secret_access_key = ${S3_SECRET_KEY}
-    endpoint = http://minio.matrix.svc.cluster.local:9000
-
-    [minio-li]
-    type = s3
-    provider = Minio
-    env_auth = false
-    access_key_id = ${S3_ACCESS_KEY}
-    secret_access_key = ${S3_SECRET_KEY}
-    endpoint = http://minio.matrix.svc.cluster.local:9000
-
-  # Sync script
-  sync.sh: |
-    #!/bin/bash
-    set -e
-
-    echo "Starting sync at $(date)"
-
-    # Sync media from main bucket to LI bucket
-    echo "Syncing media files..."
-    rclone sync \
-      minio-main:synapse-media \
-      minio-li:synapse-media-li \
-      --config /config/rclone.conf \
-      --progress \
-      --stats 10s \
-      --transfers 10 \
-      --checkers 20 \
-      --fast-list \
-      --no-update-modtime \
-      --checksum
-
-    echo "Media sync completed at $(date)"
-
-    # Note: PostgreSQL replication lag monitoring is handled separately
-    # The database replication is managed by CloudNativePG logical replication
-
-    echo "Sync completed successfully at $(date)"
+  # ARCHITECTURE NOTE:
+  # - LI instance uses MAIN MinIO directly (no separate LI MinIO)
+  # - Media sync is NOT needed - LI reads from main MinIO via S3 API
+  # - Only PostgreSQL logical replication is used for database sync
+  # - This simplifies architecture and reduces storage requirements
+  #
+  # rclone configuration removed - media sync no longer needed
 
 ---
 # Secret for sync system
@@ -156,9 +119,8 @@ stringData:
   LI_DB_PORT: "5432"
   LI_DB_NAME: "matrix_li"
 
-  # S3/MinIO credentials (for media sync)
-  S3_ACCESS_KEY: "synapse-s3-user"
-  S3_SECRET_KEY: "CHANGEME_SECURE_S3_PASSWORD"
+  # Sync system handles PostgreSQL replication only
+  # LI Synapse accesses main MinIO directly (credentials in synapse-li-secrets)
 
 ---
 # Job to set up PostgreSQL logical replication (run once)
@@ -291,83 +253,6 @@ spec:
         - name: config
           configMap:
             name: sync-system-config
-
----
-# CronJob for periodic media sync
-apiVersion: batch/v1
-kind: CronJob
-metadata:
-  name: sync-system-media
-  namespace: matrix
-  labels:
-    app.kubernetes.io/name: sync-system
-    app.kubernetes.io/component: media-sync
-spec:
-  schedule: "*/15 * * * *"  # Every 15 minutes
-  successfulJobsHistoryLimit: 3
-  failedJobsHistoryLimit: 3
-  concurrencyPolicy: Forbid  # Don't run multiple sync jobs simultaneously
-
-  jobTemplate:
-    spec:
-      template:
-        metadata:
-          labels:
-            app.kubernetes.io/name: sync-system
-            app.kubernetes.io/component: media-sync
-        spec:
-          restartPolicy: OnFailure
-          securityContext:
-            runAsUser: 1000
-            runAsGroup: 1000
-            fsGroup: 1000
-            runAsNonRoot: true
-
-          containers:
-            - name: rclone-sync
-              # rclone for media synchronization
-              # NOTE: This container only syncs media via rclone (S3/MinIO)
-              # Database replication is handled automatically by PostgreSQL
-              image: rclone/rclone:1.65-alpine
-              command:
-                - sh
-                - -c
-                - |
-                  # Run sync script (media sync only)
-                  # Database sync is handled by PostgreSQL logical replication
-                  sh /config/sync.sh
-              env:
-                # Only S3 credentials needed for media sync
-                - name: S3_ACCESS_KEY
-                  valueFrom:
-                    secretKeyRef:
-                      name: sync-system-secrets
-                      key: S3_ACCESS_KEY
-                - name: S3_SECRET_KEY
-                  valueFrom:
-                    secretKeyRef:
-                      name: sync-system-secrets
-                      key: S3_SECRET_KEY
-              volumeMounts:
-                - name: config
-                  mountPath: /config
-                - name: tmp
-                  mountPath: /tmp
-              resources:
-                requests:
-                  memory: "256Mi"
-                  cpu: "250m"
-                limits:
-                  memory: "512Mi"
-                  cpu: "500m"
-
-          volumes:
-            - name: config
-              configMap:
-                name: sync-system-config
-                defaultMode: 0755
-            - name: tmp
-              emptyDir: {}
 
 ---
 # Service for monitoring sync system (optional)

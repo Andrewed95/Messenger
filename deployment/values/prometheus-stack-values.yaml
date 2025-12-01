@@ -5,7 +5,7 @@
 # CRITICAL: Complete monitoring stack
 # - Prometheus for metrics collection
 # - Grafana for visualization
-# - AlertManager DISABLED per requirements
+# - AlertManager disabled (not used)
 # - Node exporters for system metrics
 # - Operator for CRD management
 # ============================================================================
@@ -360,7 +360,7 @@ prometheusOperator:
 # 2. Login with admin / CHANGE_TO_SECURE_PASSWORD
 # 3. Import Synapse dashboard from: https://github.com/element-hq/synapse/tree/develop/contrib/grafana
 # 4. Configure additional data sources if needed
-# 5. Set up notification channels (email, Slack, etc.) if not using AlertManager
+# 5. Configure Grafana alerting if desired (optional)
 #
 # Synapse metrics endpoints:
 # - Main process: http://synapse:9000/_synapse/metrics

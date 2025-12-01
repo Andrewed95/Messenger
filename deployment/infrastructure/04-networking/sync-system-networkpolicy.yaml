@@ -1,8 +1,8 @@
 # Sync System NetworkPolicy
-# Allows sync system to access BOTH main and LI resources
-# Required for PostgreSQL logical replication and rclone media sync
+# Allows sync system to access BOTH main and LI PostgreSQL clusters
+# Required for PostgreSQL logical replication setup
 #
-# CRITICAL: This is the ONLY component that can access both main and LI resources
+# CRITICAL: This is the ONLY component that can access both main and LI PostgreSQL
 # All other components are strictly isolated by li-instance-isolation policy
 
 ---
@@ -58,7 +58,7 @@ spec:
         - protocol: TCP
           port: 5432
 
-    # Allow MinIO (for syncing media between buckets)
+    # Allow MAIN MinIO (for PostgreSQL backups)
     - to:
         - podSelector:
             matchLabels:

@@ -243,7 +243,11 @@ check_pod_status() {
 
     log_warn "Only $ready_count/$expected_count pods ready after waiting"
     log_detail "Check pod status: kubectl get pods -n $namespace -l $label"
-    return 0  # Don't fail, just warn
+    # Return 1 if no pods are ready (critical failure), 0 if at least some pods are ready
+    if [[ "$ready_count" -eq 0 ]]; then
+        return 1
+    fi
+    return 0  # Don't fail if some pods are ready
 }
 
 apply_manifest() {
@@ -543,7 +547,10 @@ deploy_phase2() {
     apply_manifest "$DEPLOYMENT_DIR/main-instance/02-workers/receipts-writer-deployment.yaml"
     apply_manifest "$DEPLOYMENT_DIR/main-instance/02-workers/presence-writer-deployment.yaml"
 
-    check_pod_status "app.kubernetes.io/type=worker" "matrix" 5
+    # Check for minimum workers ready (total: 24 workers expected at default replicas)
+    # synchrotron:4 + generic:4 + media:2 + event-persister:4 + fed-sender:2 + stream-writers:8 = 24
+    # Use 10 as minimum threshold to allow for startup delays
+    check_pod_status "app.kubernetes.io/type=worker" "matrix" 10
 
     # Deploy HAProxy
     log_info "Deploying HAProxy..."
@@ -586,29 +593,39 @@ deploy_phase3() {
     # Run replication setup job (idempotent - only run if subscription doesn't exist)
     log_info "Checking replication setup..."
     if [[ "$DRY_RUN" == "false" ]]; then
-        # Check if subscription already exists
-        local subscription_exists
-        subscription_exists=$(kubectl exec -n matrix matrix-postgresql-li-1-0 -- \
-            psql -U postgres -d synapse_li -tAc \
-            "SELECT COUNT(*) FROM pg_subscription WHERE subname='synapse_subscription';" 2>/dev/null || echo "0")
-
-        if [[ "$subscription_exists" == "0" ]]; then
-            log_info "Running replication setup job..."
-            local job_name="sync-setup-$(date +%s)"
-            kubectl create job --from=job/sync-system-setup-replication \
-                "$job_name" -n matrix 2>/dev/null || true
-
-            # Wait for job with timeout
-            local job_timeout=300
-            if kubectl wait --for=condition=complete "job/$job_name" \
-                -n matrix --timeout="${job_timeout}s" 2>/dev/null; then
-                log_success "Replication setup completed"
-            else
-                log_warn "Replication setup job timed out - may need manual verification"
-                log_detail "Check job status: kubectl logs job/$job_name -n matrix"
-            fi
+        # Verify PostgreSQL LI pod exists before checking subscription
+        if ! kubectl get pod -n matrix matrix-postgresql-li-1 &>/dev/null; then
+            log_warn "PostgreSQL LI pod not ready yet - skipping replication check"
+            log_detail "Replication will be set up when sync-system-setup-replication job runs"
         else
-            log_info "Replication subscription already exists - skipping setup"
+            # Check if subscription already exists
+            local subscription_exists
+            subscription_exists=$(kubectl exec -n matrix matrix-postgresql-li-1 -- \
+                psql -U postgres -d synapse_li -tAc \
+                "SELECT COUNT(*) FROM pg_subscription WHERE subname='synapse_subscription';" 2>/dev/null || echo "0")
+
+            if [[ "$subscription_exists" == "0" ]]; then
+                log_info "Running replication setup job..."
+                local job_name="sync-setup-$(date +%s)"
+                if ! kubectl create job --from=job/sync-system-setup-replication \
+                    "$job_name" -n matrix 2>/dev/null; then
+                    log_warn "Could not create replication setup job"
+                    log_detail "The sync-system-setup-replication job template may not exist yet"
+                    log_detail "Replication will be set up when sync-system pods start"
+                else
+                    # Wait for job with timeout
+                    local job_timeout=300
+                    if kubectl wait --for=condition=complete "job/$job_name" \
+                        -n matrix --timeout="${job_timeout}s" 2>/dev/null; then
+                        log_success "Replication setup completed"
+                    else
+                        log_warn "Replication setup job timed out - may need manual verification"
+                        log_detail "Check job status: kubectl logs job/$job_name -n matrix"
+                    fi
+                fi
+            else
+                log_info "Replication subscription already exists - skipping setup"
+            fi
         fi
     fi
 
@@ -629,6 +646,48 @@ deploy_phase3() {
     log_info "Deploying key_vault..."
     apply_manifest "$DEPLOYMENT_DIR/li-instance/05-key-vault/deployment.yaml"
     check_pod_status "app.kubernetes.io/name=key-vault" "matrix" 1
+
+    # Deploy nginx-li (LI's independent reverse proxy)
+    # CRITICAL: nginx-li operates independently of main instance's ingress
+    # This ensures LI continues to work even if main instance is down
+    log_info "Deploying nginx-li reverse proxy..."
+
+    # Check for required TLS certificate secrets
+    local tls_secrets_missing=false
+    for secret in nginx-li-synapse-tls nginx-li-element-tls nginx-li-admin-tls nginx-li-keyvault-tls; do
+        if ! kubectl get secret "$secret" -n matrix &>/dev/null; then
+            log_warn "TLS secret '$secret' not found"
+            tls_secrets_missing=true
+        fi
+    done
+
+    if [[ "$tls_secrets_missing" == "true" ]]; then
+        log_warn "One or more TLS secrets are missing for nginx-li"
+        log_detail "nginx-li requires TLS certificates for all LI domains."
+        log_detail ""
+        log_detail "Create TLS secrets before deploying nginx-li:"
+        log_detail "  # Generate self-signed certificates (for testing):"
+        log_detail "  openssl req -x509 -nodes -days 365 -newkey rsa:2048 \\"
+        log_detail "    -keyout synapse-li.key -out synapse-li.crt -subj '/CN=matrix.example.com'"
+        log_detail "  kubectl create secret tls nginx-li-synapse-tls --cert=synapse-li.crt --key=synapse-li.key -n matrix"
+        log_detail ""
+        log_detail "  # Repeat for: nginx-li-element-tls, nginx-li-admin-tls, nginx-li-keyvault-tls"
+        log_detail ""
+        log_detail "See: li-instance/06-nginx-li/deployment.yaml for detailed instructions"
+        log_detail ""
+        log_detail "Skipping nginx-li deployment - create TLS secrets and re-run Phase 3"
+    else
+        apply_manifest "$DEPLOYMENT_DIR/li-instance/06-nginx-li/deployment.yaml"
+        check_pod_status "app.kubernetes.io/name=nginx,app.kubernetes.io/instance=li" "matrix" 1
+
+        # Show nginx-li LoadBalancer IP
+        log_info "nginx-li LoadBalancer status:"
+        kubectl get svc nginx-li -n matrix -o wide 2>/dev/null || true
+        log_detail ""
+        log_detail "IMPORTANT: LI administrators must configure DNS to resolve"
+        log_detail "the homeserver domain to the nginx-li LoadBalancer IP."
+        log_detail "See: li-instance/06-nginx-li/deployment.yaml for DNS instructions"
+    fi
 
     log_success "Phase 3 deployment complete!"
 }
@@ -763,13 +822,16 @@ validate_deployment() {
     log_info "Checking all services in matrix namespace..."
     kubectl get svc -n matrix
 
-    log_info "Checking all ingresses in matrix namespace..."
+    log_info "Checking main instance Ingresses..."
     kubectl get ingress -n matrix
+
+    log_info "Checking nginx-li (LI reverse proxy) LoadBalancer..."
+    kubectl get svc nginx-li -n matrix -o wide 2>/dev/null || log_warn "nginx-li service not found (LI may not be deployed)"
 
     log_info "Checking monitoring pods..."
     kubectl get pods -n monitoring 2>/dev/null || log_warn "Monitoring namespace not found"
 
-    log_info "Checking NGINX Ingress..."
+    log_info "Checking main NGINX Ingress Controller..."
     kubectl get pods -n ingress-nginx
 
     log_success "Deployment validation complete!"
@@ -785,6 +847,11 @@ validate_deployment() {
     echo "3. Access Grafana: kubectl port-forward -n monitoring svc/prometheus-grafana 3000:80"
     echo "4. Test Synapse health: curl https://${MATRIX_DOMAIN:-matrix.example.com}/_matrix/client/versions"
     echo "5. Create first user (see README.md 'Creating Admin Users' section)"
+    echo ""
+    echo "LI Instance:"
+    echo "- nginx-li LoadBalancer IP: kubectl get svc nginx-li -n matrix -o jsonpath='{.status.loadBalancer.ingress[0].ip}'"
+    echo "- LI admins must configure DNS to point to nginx-li LoadBalancer IP"
+    echo "- See li-instance/README.md for detailed LI admin instructions"
     echo ""
 }
 

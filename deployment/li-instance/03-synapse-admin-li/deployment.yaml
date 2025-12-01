@@ -45,7 +45,8 @@ metadata:
     app.kubernetes.io/version: "0.10.3"
     matrix.instance: li
 spec:
-  replicas: 2
+  # CLAUDE.md Section 3.4 & 7.1: LI does NOT require HA - single replica
+  replicas: 1
 
   selector:
     matchLabels:
@@ -65,8 +66,7 @@ spec:
         app.kubernetes.io/name: synapse-admin
         app.kubernetes.io/component: admin-interface
         app.kubernetes.io/version: "0.10.3"
-        matrix.instance: li
-        ingress-accessible: "true"  # Allow ingress controller access
+        matrix.instance: li  # CRITICAL label for NetworkPolicy (allow-from-nginx-li)
 
     spec:
       securityContext:
@@ -77,16 +77,7 @@ spec:
         seccompProfile:
           type: RuntimeDefault
 
-      affinity:
-        podAntiAffinity:
-          preferredDuringSchedulingIgnoredDuringExecution:
-            - weight: 100
-              podAffinityTerm:
-                labelSelector:
-                  matchLabels:
-                    app.kubernetes.io/name: synapse-admin
-                    matrix.instance: li
-                topologyKey: kubernetes.io/hostname
+      # NOTE: No pod anti-affinity needed - LI runs on single server (CLAUDE.md 7.1)
 
       containers:
         - name: synapse-admin
@@ -185,66 +176,5 @@ spec:
       targetPort: 80
       protocol: TCP
 
----
-# Ingress for Synapse Admin LI
-# Uses DIFFERENT hostname from main (admin-li.example.com vs admin.example.com)
-# Access control is handled via network isolation
-# The org must ensure LI network is only accessible to authorized administrators
-# CHANGEME: Replace admin-li.example.com with your LI admin domain
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: synapse-admin-li
-  namespace: matrix
-  labels:
-    app.kubernetes.io/name: synapse-admin
-    app.kubernetes.io/component: ingress
-    matrix.instance: li
-  annotations:
-    cert-manager.io/cluster-issuer: "letsencrypt-prod"
-    nginx.ingress.kubernetes.io/ssl-redirect: "true"
-    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
-    # Authentication (basic auth or OAuth) - optional, network isolation is primary control
-    # nginx.ingress.kubernetes.io/auth-type: basic
-    # nginx.ingress.kubernetes.io/auth-secret: synapse-admin-auth
-    # nginx.ingress.kubernetes.io/auth-realm: "Synapse Admin LI - Authentication Required"
-spec:
-  ingressClassName: nginx
-  tls:
-    - hosts:
-        # CHANGEME: Replace with your LI admin domain
-        - admin-li.example.com
-      secretName: synapse-admin-li-tls
-  rules:
-    # CHANGEME: Replace with your LI admin domain
-    - host: admin-li.example.com
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: synapse-admin-li
-                port:
-                  number: 80
-
----
-# Secret for basic authentication (create htpasswd file)
-# Generate using: htpasswd -c auth admin
-# kubectl create secret generic synapse-admin-auth --from-file=auth -n matrix
-apiVersion: v1
-kind: Secret
-metadata:
-  name: synapse-admin-auth
-  namespace: matrix
-  labels:
-    app.kubernetes.io/name: synapse-admin
-    app.kubernetes.io/component: authentication
-    matrix.instance: li
-type: Opaque
-stringData:
-  auth: |
-    # Generate using: htpasswd -c auth admin
-    # Then paste the output here
-    # Example: admin:$apr1$xyz123$abc...
-    admin:CHANGEME_GENERATE_HTPASSWD
+# Access: Via nginx-li reverse proxy at https://admin-li.example.com
+# See: li-instance/06-nginx-li/deployment.yaml

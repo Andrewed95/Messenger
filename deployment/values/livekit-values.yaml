@@ -45,13 +45,14 @@ replicaCount: 2  # Adjust based on your scale
 # ============================================================================
 # CRITICAL: Use DaemonSet with hostNetwork for UDP performance
 # This bypasses kube-proxy and provides direct kernel-level UDP handling
-
-# Use DaemonSet instead of Deployment
-kind: DaemonSet  # Set via --set kind=DaemonSet during install
-
+#
+# NOTE: The 'kind' field cannot be set in values.yaml
+# Use helm install command: --set kind=DaemonSet
+#
 # Host network mode (required for WebRTC UDP)
-hostNetwork: true
-dnsPolicy: ClusterFirstWithHostNet
+# The livekit-server chart uses 'podHostNetwork' not 'hostNetwork'
+podHostNetwork: true
+podDnsPolicy: ClusterFirstWithHostNet
 
 # Node selector to control which nodes run LiveKit
 # IMPORTANT: Label 4 nodes as livekit nodes:
@@ -93,22 +94,37 @@ livekit:
     port_range_end: 50200
     use_external_ip: true  # Use node IP as external IP
 
-  # Redis configuration (SEPARATE instance for LiveKit)
+  # Redis configuration (SHARED with Synapse - uses Phase 1 Redis)
+  # ============================================================================
+  # DEPLOYMENT OPTIONS:
+  #
+  # Option A: Use Phase 1 Redis (shared with Synapse) - DEFAULT
+  #   - Simpler deployment (single Redis cluster)
+  #   - Use settings below (matrix namespace)
+  #   - Suitable for most deployments
+  #
+  # Option B: Separate Redis for LiveKit (advanced)
+  #   - Install with: helm install redis-livekit bitnami/redis \
+  #       --namespace livekit --values redis-livekit-values.yaml
+  #   - Update sentinel_addresses below to use livekit namespace
+  #   - Better isolation for very large deployments (20K+ CCU)
+  # ============================================================================
   redis:
-    # Native Sentinel support
+    # Native Sentinel support (LiveKit supports Sentinel directly)
     sentinel:
       master_name: mymaster
       sentinel_addresses:
-        - redis-livekit-node-0.redis-livekit-headless.livekit.svc.cluster.local:26379
-        - redis-livekit-node-1.redis-livekit-headless.livekit.svc.cluster.local:26379
-        - redis-livekit-node-2.redis-livekit-headless.livekit.svc.cluster.local:26379
-      # Credentials if Redis auth enabled
+        # Phase 1 Redis in matrix namespace (default deployment)
+        - redis-0.redis-headless.matrix.svc.cluster.local:26379
+        - redis-1.redis-headless.matrix.svc.cluster.local:26379
+        - redis-2.redis-headless.matrix.svc.cluster.local:26379
+      # Credentials - must match infrastructure/02-redis/redis-secret.yaml
       # sentinel_username: ""
-      # sentinel_password: ""
-    # Redis auth
+      sentinel_password: ""  # CHANGE_TO_YOUR_REDIS_PASSWORD if auth enabled
+    # Redis auth - must match infrastructure/02-redis/redis-secret.yaml
     # username: ""
-    # password: ""
-    db: 0
+    password: ""  # CHANGE_TO_YOUR_REDIS_PASSWORD if auth enabled
+    db: 1  # Use db 1 for LiveKit (Synapse uses db 0)
 
   # Turn servers (coturn)
   turn:
@@ -190,7 +206,7 @@ ingress:
     nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
 
   hosts:
-    - host: livekit.CHANGE_TO_YOUR_DOMAIN  # e.g., livekit.chat.z3r0d3v.com
+    - host: livekit.CHANGE_TO_YOUR_DOMAIN  # e.g., livekit.example.com
       paths:
         - path: /
           pathType: Prefix
@@ -305,7 +321,7 @@ tolerations: []
 # kubectl logs -n livekit -l app.kubernetes.io/name=livekit-server
 #
 # Check Redis connectivity:
-# kubectl exec -n livekit <livekit-pod> -- redis-cli -h redis-livekit-master ping
+# kubectl exec -n matrix <livekit-pod> -- redis-cli -h redis.matrix.svc.cluster.local ping
 #
 # Test API endpoint:
 # curl http://livekit.YOUR_DOMAIN/

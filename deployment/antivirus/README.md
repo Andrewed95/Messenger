@@ -33,9 +33,9 @@ The antivirus system provides real-time scanning of all uploaded and downloaded 
 │               CONTENT SCANNER (Proxy + Scanner)                │
 │                                                                │
 │  1. Receive media request                                     │
-│  2. Check cache (already scanned?)                            │
-│     ├─ Cache hit → Serve immediately                          │
-│     └─ Cache miss → Continue                                  │
+│  2. Check Redis cache (already scanned?)                      │
+│     ├─ Cache hit → Serve immediately (no scan)                │
+│     └─ Cache miss → Continue to step 3                        │
 │  3. Download from Synapse                                     │
 │  4. Scan with ClamAV                                          │
 │     ├─ Clean → Serve to client + cache result                 │
@@ -84,7 +84,8 @@ The antivirus system provides real-time scanning of all uploaded and downloaded 
 **Features**:
 - ✅ Intercepts all media downloads
 - ✅ Scans files with ClamAV before serving
-- ✅ In-memory cache (1-hour TTL)
+- ✅ **Redis shared cache** - ensures each file scanned only once
+- ✅ 24-hour cache TTL (infected files blocked for 24 hours)
 - ✅ Horizontal auto-scaling
 - ✅ Prometheus metrics
 
@@ -651,12 +652,12 @@ kubectl exec -n matrix <clamav-pod> -c clamd -- \
 ## Best Practices
 
 1. **Keep virus definitions updated**: FreshClam runs every 6 hours (default) - or use air-gapped procedures above
-2. **Monitor scan latency**: Alert if > 2 seconds average
-3. **Monitor infected file rate**: Alert if sudden spike
+2. **Monitor scan latency**: Watch if > 2 seconds average
+3. **Monitor infected file rate**: Watch for sudden spikes in detections
 4. **Test monthly**: Upload EICAR test file to verify scanning works
 5. **Review logs weekly**: Check for false positives or errors
 6. **Allocate sufficient resources**: ClamAV needs 1-2GB RAM per node
-7. **Use caching**: 1-hour TTL reduces scan load significantly
+7. **Redis cache ensures scan-once**: Each file scanned exactly once (24-hour TTL)
 8. **Scale Content Scanner**: Add replicas during high traffic periods
 
 ## Upgrade

@@ -68,9 +68,11 @@ spec:
             - -c
             - |
               # Create worker-specific config
+              # IMPORTANT: worker_name MUST match exactly what's in homeserver.yaml
+              # federation_sender_instances. Using bare ${HOSTNAME} to match configmap entries.
               cat > /config/worker.yaml <<EOF
               worker_app: synapse.app.federation_sender
-              worker_name: federation_sender_${HOSTNAME}
+              worker_name: ${HOSTNAME}
 
               # Replication
               worker_replication_host: synapse-main-0.synapse-main.matrix.svc.cluster.local

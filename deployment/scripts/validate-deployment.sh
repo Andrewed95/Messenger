@@ -4,6 +4,13 @@
 
 set -euo pipefail
 
+# Determine script directory and deployment directory
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DEPLOYMENT_DIR="$(dirname "$SCRIPT_DIR")"
+
+# Change to deployment directory so relative paths work
+cd "$DEPLOYMENT_DIR"
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'

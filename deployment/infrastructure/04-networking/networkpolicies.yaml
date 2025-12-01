@@ -94,7 +94,7 @@ spec:
         - protocol: TCP
           port: 5432
 
-    # NOTE: key_vault no longer needs PostgreSQL access - uses SQLite
+    # key_vault uses SQLite (no PostgreSQL access needed)
 
     # Allow internal cluster replication
     - from:
@@ -194,15 +194,23 @@ spec:
         - protocol: TCP
           port: 6379
 
-    # NOTE: key_vault no longer needs Redis access - uses SQLite
-    # NOTE: LI instance now uses dedicated Redis LI (redis-li-access policy)
-    # This prevents information leakage via Redis pub/sub channels
+    # key_vault uses SQLite (no Redis access needed)
+    # LI instance uses dedicated Redis LI (see redis-li-access policy)
 
     # Allow from sync-system
     - from:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: sync-system
+      ports:
+        - protocol: TCP
+          port: 6379
+
+    # Allow from content-scanner (antivirus scan result cache)
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: content-scanner
       ports:
         - protocol: TCP
           port: 6379
@@ -248,6 +256,17 @@ spec:
         - protocol: TCP
           port: 9000  # S3 API
 
+    # Allow from Synapse LI (media read access - shared bucket)
+    # LI uses main MinIO directly for media access
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: synapse
+              matrix.instance: li
+      ports:
+        - protocol: TCP
+          port: 9000  # S3 API
+
     # Allow from PostgreSQL for backups
     - from:
         - podSelector:
@@ -265,7 +284,7 @@ spec:
         - protocol: TCP
           port: 9000
 
-    # Allow from sync system (rclone for LI media sync)
+    # Allow from sync system (for PostgreSQL backup access)
     - from:
         - podSelector:
             matchLabels:
@@ -348,12 +367,14 @@ spec:
         - protocol: TCP
           port: 8000
 
-    # 3. Allow from within LI network (for admin API access)
-    #    LI administrators may access key_vault directly via API
+    # 3. Allow from nginx-li (reverse proxy for LI admin access)
+    #    nginx-li routes requests from LI administrators to key_vault
+    #    CRITICAL: synapse-li must NOT access key_vault (per CLAUDE.md 3.3)
     - from:
         - podSelector:
             matchLabels:
-              matrix.instance: li
+              app.kubernetes.io/name: nginx
+              app.kubernetes.io/instance: li
       ports:
         - protocol: TCP
           port: 8000
@@ -407,8 +428,8 @@ spec:
 ---
 ###############################################################################
 # 8. LI Instance Isolation ⭐⭐
-#    IMPORTANT: LI instance CANNOT access main instance resources
-#    Can only access LI-specific PostgreSQL, MinIO, and Redis LI
+#    IMPORTANT: LI instance accesses LI-specific database and Redis,
+#    but uses MAIN MinIO for media (read-only access via S3 credentials)
 ###############################################################################
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -419,7 +440,7 @@ metadata:
     app.kubernetes.io/name: networkpolicy
     app.kubernetes.io/component: security-critical
   annotations:
-    description: "Ensures LI instance only accesses LI-specific resources"
+    description: "Controls LI instance access to shared and LI-specific resources"
 spec:
   podSelector:
     matchLabels:
@@ -441,6 +462,7 @@ spec:
           port: 53
 
     # Allow ONLY LI PostgreSQL (NOT main PostgreSQL)
+    # Database is separate to allow LI admin to reset passwords
     - to:
         - podSelector:
             matchLabels:
@@ -449,7 +471,8 @@ spec:
         - protocol: TCP
           port: 5432
 
-    # Allow MinIO access (read-only access to LI bucket)
+    # Allow MAIN MinIO (LI uses main MinIO directly for media)
+    # WARNING: LI admins must NOT modify/delete media - affects main instance!
     - to:
         - podSelector:
             matchLabels:
@@ -622,6 +645,7 @@ spec:
 ###############################################################################
 # 11. Allow Prometheus Scraping
 #     Prometheus needs to scrape metrics from all components
+#     This policy allows monitoring namespace to scrape metrics ports on ALL pods
 ###############################################################################
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -632,9 +656,9 @@ metadata:
     app.kubernetes.io/name: networkpolicy
     app.kubernetes.io/component: monitoring
 spec:
-  podSelector:
-    matchLabels:
-      prometheus-scrape: "true"
+  # Apply to ALL pods in matrix namespace (not just labeled ones)
+  # This ensures Prometheus can scrape all metrics endpoints
+  podSelector: {}
   policyTypes:
     - Ingress
   ingress:
@@ -659,6 +683,10 @@ spec:
           port: 9121  # Redis exporter
         - protocol: TCP
           port: 9000  # MinIO metrics
+        - protocol: TCP
+          port: 9810  # ClamAV exporter
+        - protocol: TCP
+          port: 8404  # HAProxy stats
 
 ---
 ###############################################################################
@@ -907,3 +935,113 @@ spec:
 
 # NOTE: Sync System NetworkPolicy is defined in sync-system-networkpolicy.yaml
 # That file contains the complete sync-system-access policy with Redis access
+
+---
+###############################################################################
+# 17. nginx-li Reverse Proxy (LI Instance)
+#     Independent reverse proxy for LI - operates separately from main ingress
+#     CRITICAL: Required for LI independence from main instance
+###############################################################################
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: nginx-li-egress
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: networkpolicy
+    app.kubernetes.io/component: li-reverse-proxy
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: nginx
+      app.kubernetes.io/instance: li
+  policyTypes:
+    - Egress
+  egress:
+    # Allow DNS resolution
+    - to:
+        - namespaceSelector:
+            matchExpressions:
+              - key: kubernetes.io/metadata.name
+                operator: In
+                values: ["kube-system"]
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+    # Allow access to Synapse LI (homeserver)
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: synapse
+              app.kubernetes.io/component: homeserver
+              matrix.instance: li
+      ports:
+        - protocol: TCP
+          port: 8008
+
+    # Allow access to Element Web LI
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: element-web
+              matrix.instance: li
+      ports:
+        - protocol: TCP
+          port: 80
+
+    # Allow access to Synapse Admin LI
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: synapse-admin
+              matrix.instance: li
+      ports:
+        - protocol: TCP
+          port: 80
+
+    # Allow access to key_vault
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: key-vault
+              matrix.instance: li
+      ports:
+        - protocol: TCP
+          port: 8000
+
+---
+###############################################################################
+# 18. Allow LI Services to Receive Traffic from nginx-li
+#     All LI services need to accept ingress from nginx-li reverse proxy
+###############################################################################
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-from-nginx-li
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: networkpolicy
+    app.kubernetes.io/component: li-reverse-proxy
+spec:
+  podSelector:
+    matchLabels:
+      matrix.instance: li
+  policyTypes:
+    - Ingress
+  ingress:
+    # From nginx-li reverse proxy
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: nginx
+              app.kubernetes.io/instance: li
+      ports:
+        - protocol: TCP
+          port: 8008  # Synapse LI
+        - protocol: TCP
+          port: 80    # Element Web LI, Synapse Admin LI
+        - protocol: TCP
+          port: 8000  # key_vault

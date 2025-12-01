@@ -271,19 +271,14 @@ sum(rate({namespace="matrix"} | unwrap bytes [5m]))
 
 ### 3. LI Sync System Monitoring
 
-**Media sync job logs**:
+**PostgreSQL replication setup logs**:
 ```logql
-{namespace="matrix", app_kubernetes_io_component="media-sync"}
+{namespace="matrix", app_kubernetes_io_name="sync-system"}
 ```
 
-**Find sync failures**:
+**Find replication errors**:
 ```logql
 {namespace="matrix", app_kubernetes_io_name="sync-system"} |= "error"
-```
-
-**Track sync completion**:
-```logql
-{namespace="matrix", app_kubernetes_io_name="sync-system"} |= "Sync completed successfully"
 ```
 
 ### 4. NGINX Ingress Analysis

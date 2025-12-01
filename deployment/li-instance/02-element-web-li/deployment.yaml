@@ -128,7 +128,8 @@ metadata:
     app.kubernetes.io/version: "v1.11.96"
     matrix.instance: li
 spec:
-  replicas: 2
+  # CLAUDE.md Section 3.4 & 7.1: LI does NOT require HA - single replica
+  replicas: 1
 
   selector:
     matchLabels:
@@ -148,8 +149,7 @@ spec:
         app.kubernetes.io/name: element-web
         app.kubernetes.io/component: webclient
         app.kubernetes.io/version: "v1.11.96"
-        matrix.instance: li
-        ingress-accessible: "true"  # Allow ingress controller access
+        matrix.instance: li  # CRITICAL label for NetworkPolicy (allow-from-nginx-li)
 
     spec:
       securityContext:
@@ -160,16 +160,7 @@ spec:
         seccompProfile:
           type: RuntimeDefault
 
-      affinity:
-        podAntiAffinity:
-          preferredDuringSchedulingIgnoredDuringExecution:
-            - weight: 100
-              podAffinityTerm:
-                labelSelector:
-                  matchLabels:
-                    app.kubernetes.io/name: element-web
-                    matrix.instance: li
-                topologyKey: kubernetes.io/hostname
+      # NOTE: No pod anti-affinity needed - LI runs on single server (CLAUDE.md 7.1)
 
       containers:
         - name: element-web
@@ -278,46 +269,5 @@ spec:
       targetPort: 80
       protocol: TCP
 
----
-# Ingress for Element Web LI
-# Uses DIFFERENT hostname from main Element Web (chat-li.example.com vs chat.example.com)
-# The org must ensure LI network is only accessible to authorized administrators
-# NOTE: While Element Web LI uses a different hostname, the underlying Synapse LI
-# uses the SAME server_name as main (matrix.example.com) - required by Matrix protocol
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: element-web-li
-  namespace: matrix
-  labels:
-    app.kubernetes.io/name: element-web
-    app.kubernetes.io/component: ingress
-    matrix.instance: li
-  annotations:
-    cert-manager.io/cluster-issuer: "letsencrypt-prod"
-    nginx.ingress.kubernetes.io/ssl-redirect: "true"
-    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
-    # Inject custom CSS to show deleted messages and LI watermark
-    nginx.ingress.kubernetes.io/configuration-snippet: |
-      sub_filter '</head>' '<link rel="stylesheet" href="/bundles/custom.css"></head>';
-      sub_filter_once on;
-spec:
-  ingressClassName: nginx
-  tls:
-    - hosts:
-        # CHANGEME: Replace with your LI Element domain
-        # Uses DIFFERENT hostname from main (chat-li.example.com vs chat.example.com)
-        - chat-li.example.com
-      secretName: element-web-li-tls
-  rules:
-    # CHANGEME: Replace with your LI Element domain
-    - host: chat-li.example.com
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: element-web-li
-                port:
-                  number: 80
+# Access: Via nginx-li reverse proxy at https://chat-li.example.com
+# See: li-instance/06-nginx-li/deployment.yaml

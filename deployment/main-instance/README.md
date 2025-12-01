@@ -435,7 +435,7 @@ After deploying the main instance:
    - Synapse LI (read-only instance)
    - Element Web LI (with deleted message display)
    - Synapse Admin LI (forensics interface)
-   - Sync system (PostgreSQL replication + rclone)
+   - Sync system (PostgreSQL logical replication)
 
 3. **Phase 4**: Deploy monitoring stack
    - Prometheus + Alertmanager

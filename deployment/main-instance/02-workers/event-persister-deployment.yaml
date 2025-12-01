@@ -73,9 +73,11 @@ spec:
             - -c
             - |
               # Create worker-specific config
+              # IMPORTANT: worker_name MUST match exactly what's in homeserver.yaml stream_writers
+              # and instance_map. Using bare ${HOSTNAME} to match configmap entries.
               cat > /config/worker.yaml <<EOF
               worker_app: synapse.app.generic_worker
-              worker_name: event_persister_${HOSTNAME}
+              worker_name: ${HOSTNAME}
 
               # Replication
               worker_replication_host: synapse-main-0.synapse-main.matrix.svc.cluster.local

@@ -359,7 +359,7 @@ After completing management node setup:
 
 ## Reference: Tool Versions
 
-**Recommended Versions (as of 2025-11-11):**
+**Recommended Versions:**
 
 | Tool | Minimum Version | Recommended Version | Notes |
 |------|----------------|---------------------|-------|

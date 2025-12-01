@@ -7,7 +7,7 @@
 # - No registration or user management
 # - No worker support (single process only)
 # - Separate PostgreSQL cluster (matrix-postgresql-li)
-# - Separate MinIO bucket (synapse-media-li)
+# - Shared MinIO bucket (synapse-media - same as main, read-only access)
 # - NO access to key_vault (enforced by NetworkPolicy)
 # - Displays ALL messages including soft-deleted (redaction_retention_period: null synced from main)
 
@@ -63,7 +63,9 @@ redis:
 
 # ==================== MEDIA STORAGE ====================
 
-# LI instance has its own media bucket (synced from main via rclone)
+# LI instance uses MAIN MinIO directly (same bucket as main Synapse)
+# This provides real-time media access without sync lag
+# WARNING: LI admins must NOT modify/delete media - changes affect main instance!
 enable_media_repo: true
 media_store_path: "/data/media_store"
 
@@ -73,7 +75,7 @@ media_storage_providers:
     store_remote: true
     store_synchronous: true
     config:
-      bucket: synapse-media-li  # LI-specific bucket
+      bucket: synapse-media  # SHARED bucket - same as main instance
       endpoint_url: http://minio.matrix.svc.cluster.local:9000
       access_key_id: ${S3_ACCESS_KEY}
       secret_access_key: ${S3_SECRET_KEY}

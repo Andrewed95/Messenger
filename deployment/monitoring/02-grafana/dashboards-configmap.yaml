@@ -679,11 +679,11 @@ data:
           "pluginVersion": "9.0.0",
           "targets": [
             {
-              "expr": "time() - kube_job_status_completion_time{job_name=~\"sync-system-media.*\"}",
+              "expr": "up{job=\"minio\"}",
               "refId": "A"
             }
           ],
-          "title": "Last Media Sync (Expected: <15min)",
+          "title": "MinIO Health (LI uses main MinIO)",
           "type": "stat"
         }
       ],

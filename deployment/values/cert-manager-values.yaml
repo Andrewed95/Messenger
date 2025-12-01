@@ -224,10 +224,10 @@ prometheus:
 #   ingressClassName: nginx
 #   tls:
 #   - hosts:
-#     - chat.z3r0d3v.com
+#     - chat.example.com
 #     secretName: matrix-tls  # cert-manager will create this
 #   rules:
-#   - host: chat.z3r0d3v.com
+#   - host: chat.example.com
 #     http:
 #       paths:
 #       - path: /

@@ -7,7 +7,7 @@ MinIO provides S3-compatible object storage for the Matrix deployment using dist
 **Use Cases**:
 - Synapse media storage (images, videos, files)
 - CloudNativePG PostgreSQL backups (PITR WAL archiving)
-- LI instance media replication (via rclone)
+- LI instance media access (shared bucket, read-only)
 
 **Why MinIO instead of single-server storage?**
 - S3-compatible API (industry standard)
@@ -71,7 +71,7 @@ MinIO provides S3-compatible object storage for the Matrix deployment using dist
 - **Volumes per Server**: 2 (total 8 drives)
 - **Storage per Volume**: 500Gi
 - **Total Raw**: 4Ti (2Ti usable with EC:4)
-- **Buckets**: synapse-media, synapse-media-li, postgresql-backups
+- **Buckets**: synapse-media, postgresql-backups
 
 ### 2. Secrets
 - **minio-config**: Root credentials + EC:4 configuration
@@ -191,7 +191,6 @@ Expected output:
 ```
 [2024-11-17 10:00:00 UTC]     0B postgresql-backups/
 [2024-11-17 10:00:00 UTC]     0B synapse-media/
-[2024-11-17 10:00:00 UTC]     0B synapse-media-li/
 ```
 
 ### Test S3 Upload
@@ -278,30 +277,33 @@ backup:
         key: secret-key
 ```
 
-### LI Instance Media Sync (rclone)
+### LI Instance Media Access (Shared Bucket)
 
-**Configuration** (for sync system):
-```ini
-[main-minio]
-type = s3
-provider = Minio
-access_key_id = synapse-s3-user
-secret_access_key = <from-secret>
-endpoint = http://minio.matrix.svc.cluster.local
+**Architecture**: LI Synapse uses main MinIO directly (no separate bucket, no sync).
 
-[main:synapse-media]
-type = alias
-remote = main-minio:synapse-media
-
-[main:synapse-media-li]
-type = alias
-remote = main-minio:synapse-media-li
+**Configuration** (synapse-li homeserver.yaml):
+```yaml
+media_storage_providers:
+  - module: s3_storage_provider.S3StorageProviderBackend
+    store_local: true
+    store_remote: true
+    store_synchronous: true
+    config:
+      bucket: synapse-media  # SAME bucket as main instance
+      endpoint_url: http://minio.matrix.svc.cluster.local
+      access_key_id: synapse-s3-user
+      secret_access_key: <from-secret>
 ```
 
-**Sync command**:
-```bash
-rclone sync main:synapse-media main:synapse-media-li --progress
-```
+**Benefits**:
+- Real-time media access (no sync lag)
+- Reduced storage requirements on LI server
+- Simpler architecture (no rclone, no separate bucket)
+
+**⚠️ CRITICAL WARNING**:
+- LI admins must NOT modify or delete media files
+- Any changes affect the main instance
+- Media quarantine/deletion must be done through main Synapse Admin
 
 ## Monitoring
 
@@ -325,30 +327,17 @@ MinIO exposes Prometheus metrics at:
 
 Import MinIO dashboard: https://grafana.com/grafana/dashboards/13502
 
-### Alerting Rules
+### Key Metrics to Monitor
 
-**Critical Alerts**:
-```yaml
-- alert: MinIODiskOffline
-  expr: minio_cluster_disk_offline_total > 0
-  for: 5m
-  severity: critical
-  annotations:
-    summary: "MinIO has {{ $value }} offline disks"
+```promql
+# Offline disks (should be 0)
+minio_cluster_disk_offline_total
 
-- alert: MinIONodeOffline
-  expr: minio_cluster_nodes_online_total < 4
-  for: 2m
-  severity: critical
-  annotations:
-    summary: "MinIO has {{ $value }} online nodes (expect 4)"
+# Online nodes (should be 4)
+minio_cluster_nodes_online_total
 
-- alert: MinIOStorageLow
-  expr: (minio_cluster_capacity_usable_free_bytes / minio_cluster_capacity_usable_total_bytes) < 0.1
-  for: 15m
-  severity: warning
-  annotations:
-    summary: "MinIO storage is {{ $value | humanizePercentage }} full"
+# Storage utilization
+(minio_cluster_capacity_usable_free_bytes / minio_cluster_capacity_usable_total_bytes)
 ```
 
 ## Maintenance

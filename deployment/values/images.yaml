@@ -92,8 +92,9 @@ key_vault:
   imagePullPolicy: IfNotPresent
 
 sync_system:
-  # Sync system for LI replication (uses rclone)
-  image: rclone/rclone:1.65
+  # Sync system for LI PostgreSQL logical replication setup
+  # Uses postgres image for replication configuration
+  image: postgres:16-alpine
   imagePullPolicy: IfNotPresent
 
 # Monitoring Stack

@@ -92,9 +92,11 @@ spec:
             - -c
             - |
               # Create worker-specific config
+              # IMPORTANT: worker_name MUST match exactly what's in homeserver.yaml
+              # instance_map and media_instance_running_background_jobs. Using bare ${HOSTNAME}.
               cat > /config/worker.yaml <<EOF
               worker_app: synapse.app.generic_worker
-              worker_name: media_repository_${HOSTNAME}
+              worker_name: ${HOSTNAME}
 
               # Replication
               worker_replication_host: synapse-main-0.synapse-main.matrix.svc.cluster.local

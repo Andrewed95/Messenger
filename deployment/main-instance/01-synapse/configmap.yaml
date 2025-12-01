@@ -61,7 +61,9 @@ data:
         port: 5432
         sslmode: require
         cp_min: 5
-        cp_max: 10  # Conservative: 45 workers * 10 = 450 connections (under 500 limit)
+        cp_max: 8  # Conservative: ~50 workers max * 8 = 400 connections (safely under 500 limit)
+        # Worker count at max HPA: main(1) + synchrotron(16) + generic(16) + media(2) +
+        # event-persister(4) + federation(2) + typing(2) + todevice(2) + receipts(2) + presence(2) = 49
 
     # ==================== REDIS & WORKERS ====================
 

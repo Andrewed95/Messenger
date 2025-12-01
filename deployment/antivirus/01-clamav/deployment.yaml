@@ -141,7 +141,7 @@ spec:
         app.kubernetes.io/version: "1.4.1"
       annotations:
         prometheus.io/scrape: "true"
-        prometheus.io/port: "9000"
+        prometheus.io/port: "9810"  # clamav-exporter port (not 9000)
         prometheus.io/path: "/metrics"
 
     spec:

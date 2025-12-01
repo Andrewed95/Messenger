@@ -28,8 +28,8 @@ This directory contains the PostgreSQL cluster configurations using [CloudNative
 **Failover Time**: 30-60 seconds automatic
 
 ### LI Cluster (`matrix-postgresql-li`)
-- **Instances**: 2 (1 primary + 1 replica)
-- **Sync Replicas**: 1
+- **Instances**: 1 (single instance - LI does not require HA per CLAUDE.md 3.4 & 7.1)
+- **Sync Replicas**: N/A (single instance)
 - **Storage**: 1Ti (larger due to infinite message retention)
 - **Databases**:
   - `matrix_li` - LI instance Synapse database (populated via sync)
@@ -112,7 +112,7 @@ kubectl get pods -n matrix -l cnpg.io/cluster=matrix-postgresql
 
 Expected:
 - 3 pods running for main cluster
-- 2 pods running for LI cluster
+- 1 pod running for LI cluster (single instance per CLAUDE.md 7.1)
 
 ### Check Replication Status
 

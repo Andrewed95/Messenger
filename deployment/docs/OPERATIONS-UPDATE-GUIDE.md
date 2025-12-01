@@ -577,7 +577,7 @@ kubectl exec -n matrix synapse-postgres-1 -- \
 **When to Change:**
 - Pods OOMKilled frequently → Increase memory
 - CPU throttling observed → Increase CPU
-- Over-provisioned → Decrease to save costs
+- Over-provisioned → Decrease to optimize resource utilization
 
 ```bash
 # WHERE: kubectl-configured workstation
@@ -722,7 +722,7 @@ done
 ```bash
 # WHERE: kubectl-configured workstation
 # WHEN: During low usage period
-# WHY: Reduce costs
+# WHY: Optimize resource utilization
 # HOW:
 
 # IMPORTANT: Scale down gradually (one or two replicas at a time)

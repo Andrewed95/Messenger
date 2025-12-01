@@ -57,9 +57,11 @@ spec:
             - -c
             - |
               # Create worker-specific config
+              # IMPORTANT: worker_name MUST match exactly what's in homeserver.yaml stream_writers
+              # and instance_map. Using bare ${HOSTNAME} to match configmap entries.
               cat > /config/worker.yaml <<EOF
               worker_app: synapse.app.generic_worker
-              worker_name: todevice_writer_${HOSTNAME}
+              worker_name: ${HOSTNAME}
 
               # Replication
               worker_replication_host: synapse-main-0.synapse-main.matrix.svc.cluster.local
@@ -216,6 +218,16 @@ spec:
             timeoutSeconds: 5
             successThreshold: 1
             failureThreshold: 3
+
+          # Startup probe - prevents liveness from killing pod during initialization
+          startupProbe:
+            httpGet:
+              path: /_synapse/metrics
+              port: 9090
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 20
 
       volumes:
         - name: config

@@ -2280,16 +2280,6 @@ kubectl logs -n matrix -l app=synapse,component=main --tail=100
 # Step 9: Remove maintenance mode
 ```
 
-**Migration time estimates:**
-
-| User Count | Estimated Time | Notes |
-|------------|---------------|-------|
-| < 100 |  | Fast migration |
-| 100-1,000 |  | Typical small org |
-| 1,000-10,000 |  | Medium org |
-| 10,000-50,000 |  | Large org, plan accordingly |
-| > 50,000 |  | Enterprise, may need chunked migration |
-
 ---
 
 ### 7.7: Post-Migration Synapse Configuration

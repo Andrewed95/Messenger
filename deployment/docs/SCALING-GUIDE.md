@@ -141,7 +141,7 @@ coturn RAM = 4GB per instance
 ```
 PostgreSQL = 10GB (base) + (CCU × 500MB per year)
 Media Storage (MinIO) = See Section 10
-Monitoring (Prometheus + Loki) = 50GB (base) + (CCU / 100) × 1GB per month
+Monitoring (Prometheus + Loki) = 50GB (base) + (CCU / 100) × 1GB (additional for log retention)
 ```
 
 ### 2.4 High Availability Requirements

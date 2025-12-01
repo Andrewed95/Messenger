@@ -96,15 +96,19 @@ controller:
   # ============================================================================
   # POD ANTI-AFFINITY (Spread across nodes)
   # ============================================================================
+  # Use 'preferred' instead of 'required' to allow scheduling on fewer nodes
+  # With 'required', pods won't schedule if cluster has fewer than replicaCount nodes
   affinity:
     podAntiAffinity:
-      requiredDuringSchedulingIgnoredDuringExecution:
-        - labelSelector:
-            matchLabels:
-              app.kubernetes.io/name: ingress-nginx
-              app.kubernetes.io/instance: nginx-ingress
-              app.kubernetes.io/component: controller
-          topologyKey: kubernetes.io/hostname
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchLabels:
+                app.kubernetes.io/name: ingress-nginx
+                app.kubernetes.io/instance: nginx-ingress
+                app.kubernetes.io/component: controller
+            topologyKey: kubernetes.io/hostname
 
   # ============================================================================
   # CONFIGURATION
@@ -158,26 +162,7 @@ controller:
       namespace: monitoring
 
     prometheusRule:
-      enabled: true
-      namespace: monitoring
-      rules:
-        - alert: NGINXConfigFailed
-          expr: count(nginx_ingress_controller_config_last_reload_successful == 0) > 0
-          for: 1m
-          labels:
-            severity: critical
-          annotations:
-            summary: "NGINX configuration reload failed"
-            description: "NGINX Ingress controller configuration reload has failed"
-
-        - alert: NGINXTooMany500s
-          expr: 100 * ( sum( nginx_ingress_controller_requests{status=~"5.+"} ) / sum(nginx_ingress_controller_requests) ) > 5
-          for: 1m
-          labels:
-            severity: warning
-          annotations:
-            summary: "Too many 5xxs"
-            description: "More than 5% of all requests returned 5xx"
+      enabled: false  # AlertManager not used in this deployment
 
   # ============================================================================
   # ADMISSION WEBHOOKS
@@ -243,9 +228,9 @@ ingressClassResource:
 # Matrix federation requires port 8448. Two approaches:
 #
 # Option 1: Server Alias (Recommended)
-# - Configure DNS: chat.z3r0d3v.com → LoadBalancer IP
+# - Configure DNS: chat.example.com → LoadBalancer IP
 # - Matrix will check /.well-known/matrix/server for delegation
-# - Serve /.well-known/matrix/server with: {"m.server": "chat.z3r0d3v.com:443"}
+# - Serve /.well-known/matrix/server with: {"m.server": "chat.example.com:443"}
 # - Federation works over port 443 with delegation
 #
 # Option 2: Dedicated Port 8448

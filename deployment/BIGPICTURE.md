@@ -94,7 +94,7 @@ Here's your path from zero to a running production Matrix homeserver:
    └─ LiveKit (optional video/voice)
         ↓
 🔍 PHASE 5: LI INSTANCE DEPLOYMENT
-   ├─ Sync system (DB replication + media sync)
+   ├─ Sync system (PostgreSQL logical replication)
    ├─ Synapse LI (read-only instance)
    ├─ Element Web LI (shows deleted messages)
    ├─ Synapse Admin LI (forensics interface)
@@ -174,7 +174,7 @@ Here's your path from zero to a running production Matrix homeserver:
 │  │  └──────┘  └──────┘  └──────┘  └──────┘             │        │
 │  │  Distributed across nodes with fault tolerance        │        │
 │  │  Erasure coding provides data redundancy              │        │
-│  │  Buckets: synapse-media, synapse-media-li, backups   │        │
+│  │  Buckets: synapse-media, postgresql-backups          │        │
 │  └────────────────────────────────────────────────────────┘        │
 │  Files: infrastructure/03-minio/                                   │
 │  Purpose: Store uploaded media (images, videos, files)             │
@@ -330,16 +330,17 @@ Purpose: Handle all Matrix protocol operations
 │  │  • redaction_retention_period: null (infinite)          │  │
 │  └──────────────────────────────────────────────────────────┘  │
 │  ┌──────────────────────────────────────────────────────────┐  │
-│  │  Component 2: Media Replication (rclone)                │  │
-│  │  ┌────────────────┐         ┌────────────────┐          │  │
-│  │  │  Main MinIO    │────────►│   LI MinIO     │          │  │
-│  │  │  Bucket        │ Sync    │   Bucket       │          │  │
-│  │  │                │ Periodic│                │          │  │
-│  │  └────────────────┘         └────────────────┘          │  │
-│  │  • Deleted media files PRESERVED in LI bucket           │  │
-│  │  • Full media history maintained                        │  │
+│  │  Component 2: Media Access (Shared MinIO)               │  │
+│  │  ┌────────────────┐                                     │  │
+│  │  │  Main MinIO    │◄─────────────────────────────────   │  │
+│  │  │  Bucket        │          LI Synapse reads directly  │  │
+│  │  │  synapse-media │          via S3 API (no sync)       │  │
+│  │  └────────────────┘                                     │  │
+│  │  • LI uses main MinIO directly (no separate bucket)     │  │
+│  │  • Real-time access without sync lag                    │  │
+│  │  • WARNING: LI must NOT modify media (affects main)     │  │
 │  └──────────────────────────────────────────────────────────┘  │
-│  Files: li-instance/04-sync-system/                            │
+│  Files: li-instance/04-sync-system/ (DB replication only)      │
 │  Purpose: Ensure LI instance has ALL data including deleted    │
 └─────────────────────────────────────────────────────────────────┘
 
@@ -348,7 +349,7 @@ Purpose: Handle all Matrix protocol operations
 │  ┌──────────────────────────────────────────────────────────┐  │
 │  │  • Read-only Synapse instance                           │  │
 │  │  • Points to LI database (replica)                      │  │
-│  │  • Points to LI MinIO bucket                            │  │
+│  │  • Uses main MinIO bucket (shared, read-only access)    │  │
 │  │  • Cannot accept writes                                 │  │
 │  │  • Shows ALL messages (including "deleted" ones)        │  │
 │  └──────────────────────────────────────────────────────────┘  │
@@ -443,7 +444,6 @@ Purpose: Handle all Matrix protocol operations
 │  │  • Kubernetes (node metrics, pod metrics)                │  │
 │  │                                                           │  │
 │  │  Stores metrics history for trend analysis               │  │
-│  │  Alerts: PrometheusRules for critical conditions         │  │
 │  └──────────────────────────────────────────────────────────┘  │
 │  Files: monitoring/01-prometheus/                              │
 │  Purpose: Collect and store time-series metrics                │
@@ -668,9 +668,9 @@ deployment/
 │   │   Configuration: LI homeserver URL
 │   │
 │   ├── 04-sync-system/
-│   │   └── deployment.yaml         → Replication + sync jobs
-│   │   Purpose: Keep LI database and media synchronized
-│   │   Configuration: DB credentials, MinIO credentials
+│   │   └── deployment.yaml         → PostgreSQL logical replication
+│   │   Purpose: Keep LI database synchronized with main
+│   │   Configuration: DB credentials (media uses main MinIO directly)
 │   │
 │   ├── 05-key-vault/
 │   │   └── deployment.yaml         → E2EE key backup service
@@ -684,9 +684,8 @@ deployment/
 ├── monitoring/                 ← PHASE 6: Observability
 │   │
 │   ├── 01-prometheus/
-│   │   ├── servicemonitors.yaml    → Auto-discover metrics endpoints
-│   │   └── prometheusrules.yaml    → Alert rules
-│   │   Purpose: Metrics collection and alerting
+│   │   └── servicemonitors.yaml    → Auto-discover metrics endpoints
+│   │   Purpose: Metrics collection
 │   │   Configuration: Via Helm (values/prometheus-stack-values.yaml)
 │   │
 │   ├── 02-grafana/
@@ -875,7 +874,7 @@ Based on your expected user load (see SCALING-GUIDE.md):
 
 PARALLEL: If message has media attachment
     └─ Media upload → Content Scanner → ClamAV scan → MinIO storage
-    └─ MinIO replication (rclone) → LI MinIO bucket (periodic)
+    └─ LI accesses same MinIO bucket directly (no replication needed)
 ```
 
 ### How a Voice Call Works
@@ -1035,14 +1034,14 @@ OPTIONAL: If LiveKit enabled
     │  (HA cluster)│ │  (HA cluster)│ │ (Distributed)│
     └──────┬───────┘ └──────────────┘ └──────┬───────┘
            │                                  │
-           │ WAL Streaming                   │ rclone sync
-           │                                  │
-           ▼                                  ▼
-    ┌──────────────┐                  ┌──────────────┐
-    │ PostgreSQL   │                  │   MinIO      │
-    │     LI       │◄─────────────────┤   Bucket LI  │
-    │ (Replicas)   │  Sync System     └──────────────┘
-    └──────┬───────┘  Replication
+           │ Logical Replication             │ Direct S3 access
+           │                                  │ (shared bucket)
+           ▼                                  │
+    ┌──────────────┐                          │
+    │ PostgreSQL   │                          │
+    │     LI       │◄─────────────────────────┘
+    │ (Replicas)   │  LI Synapse uses main MinIO
+    └──────┬───────┘  (no separate LI bucket)
            │
            │
            ▼

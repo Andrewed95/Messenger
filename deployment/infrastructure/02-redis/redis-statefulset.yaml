@@ -1,20 +1,6 @@
----
-# Redis Password Secret
-# Used by Redis StatefulSet and Synapse
-apiVersion: v1
-kind: Secret
-metadata:
-  name: redis-password
-  namespace: matrix
-  labels:
-    app.kubernetes.io/name: redis
-    app.kubernetes.io/component: database
-type: Opaque
-stringData:
-  password: "CHANGEME_SECURE_REDIS_PASSWORD"  # Generate with: openssl rand -base64 32
-
----
 # Redis with Sentinel for High Availability
+# NOTE: Redis Secret is defined separately in redis-secret.yaml
+# Apply redis-secret.yaml BEFORE applying this file
 # Provides automatic failover for Synapse and LiveKit
 apiVersion: v1
 kind: ConfigMap
@@ -144,6 +130,7 @@ metadata:
     app.kubernetes.io/name: redis
     app.kubernetes.io/component: database
     app.kubernetes.io/part-of: matrix-stack
+    matrix.instance: main
 spec:
   serviceName: redis-headless
   replicas: 3
@@ -155,6 +142,7 @@ spec:
       labels:
         app.kubernetes.io/name: redis
         app.kubernetes.io/component: database
+        matrix.instance: main
     spec:
       affinity:
         podAntiAffinity:
@@ -283,11 +271,13 @@ spec:
               containerPort: 6379
           resources:
             requests:
-              memory: "1Gi"  # Increased for 8GB maxmemory config
-              cpu: "100m"
+              # IMPORTANT: Request MUST match or exceed maxmemory (8gb) to ensure
+              # Kubernetes schedules the pod on a node with sufficient memory
+              memory: "8Gi"  # Must match maxmemory in redis.conf
+              cpu: "500m"    # Increased for high-throughput operations
             limits:
-              memory: "10Gi"  # Increased from 2Gi to support 8GB maxmemory + overhead
-              cpu: "2"  # Increased CPU for high-throughput operations
+              memory: "10Gi"  # Buffer above maxmemory for Redis overhead
+              cpu: "2"
           livenessProbe:
             exec:
               command:
