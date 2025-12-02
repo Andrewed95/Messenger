@@ -986,7 +986,7 @@ cat li_keypair_v1_${DATE}_metadata.txt
 
 #### Element Web
 
-**File**: `/home/ali/Messenger/element-web/src/utils/LIEncryption.ts`
+**File**: `element-web/src/utils/LIEncryption.ts`
 
 **Current lines 5-15** (example):
 ```typescript
@@ -1009,7 +1009,7 @@ MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAo8Z...  ← PLACEHOLDER
 cat ~/li-keys/li_public_key_v1_YYYYMMDD.pem
 
 # Step 2: Edit LIEncryption.ts
-nano /home/ali/Messenger/element-web/src/utils/LIEncryption.ts
+nano element-web/src/utils/LIEncryption.ts
 
 # Step 3: Replace lines 5-15 with:
 const LI_PUBLIC_KEY = `-----BEGIN PUBLIC KEY-----
@@ -1020,7 +1020,7 @@ const LI_PUBLIC_KEY = `-----BEGIN PUBLIC KEY-----
 # CRITICAL: Keep backticks (`) for TypeScript multi-line string
 
 # Step 4: Verify syntax
-cd /home/ali/Messenger/element-web
+cd element-web
 npm run lint src/utils/LIEncryption.ts
 
 # Expected: No errors
@@ -1042,7 +1042,7 @@ console.log(encrypted);
 
 #### Element Android
 
-**File**: `/home/ali/Messenger/element-x-android/libraries/matrix/impl/src/main/kotlin/io/element/android/libraries/matrix/impl/li/LIEncryption.kt`
+**File**: `element-x-android/libraries/matrix/impl/src/main/kotlin/io/element/android/libraries/matrix/impl/li/LIEncryption.kt`
 
 **Current lines 8-18** (example):
 ```kotlin
@@ -1064,7 +1064,7 @@ MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA...  ← PLACEHOLDER
 cat ~/li-keys/li_public_key_v1_YYYYMMDD.pem
 
 # Step 2: Edit LIEncryption.kt
-nano /home/ali/Messenger/element-x-android/libraries/matrix/impl/src/main/kotlin/io/element/android/libraries/matrix/impl/li/LIEncryption.kt
+nano element-x-android/libraries/matrix/impl/src/main/kotlin/io/element/android/libraries/matrix/impl/li/LIEncryption.kt
 
 # Step 3: Replace lines 8-18 with:
 private const val LI_PUBLIC_KEY = """-----BEGIN PUBLIC KEY-----
@@ -1075,7 +1075,7 @@ private const val LI_PUBLIC_KEY = """-----BEGIN PUBLIC KEY-----
 # CRITICAL: Keep triple quotes (""") for Kotlin multi-line string
 
 # Step 4: Verify syntax
-cd /home/ali/Messenger/element-x-android
+cd element-x-android
 ./gradlew :libraries:matrix:impl:compileDebugKotlin
 
 # Expected: BUILD SUCCESSFUL
@@ -1374,13 +1374,13 @@ Follow "Generating RSA Key Pair" section above with NEW version number:
 
 ```bash
 # Update element-web
-cd /home/ali/Messenger/element-web
+cd element-web
 nano src/utils/LIEncryption.ts
 # Replace LI_PUBLIC_KEY with new public key v2
 # Build and deploy updated element-web
 
 # Update element-x-android
-cd /home/ali/Messenger/element-x-android
+cd element-x-android
 nano libraries/matrix/impl/src/main/kotlin/io/element/android/libraries/matrix/impl/li/LIEncryption.kt
 # Replace LI_PUBLIC_KEY with new public key v2
 # Build and distribute updated APK
@@ -1424,7 +1424,7 @@ EOF
 Modify key_vault database schema to add `key_version` field:
 
 ```python
-# /home/ali/Messenger/key_vault/secret/models.py
+# key_vault/secret/models.py
 class EncryptedKey(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE)
     encrypted_payload = models.TextField()

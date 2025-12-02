@@ -76,11 +76,11 @@ content_scanner:
 key_vault:
   # Django service for LI encrypted recovery key storage
   #
-  # IMPORTANT: This image must be built from /home/ali/Messenger/key_vault/
+  # IMPORTANT: This image must be built from key_vault/
   # key_vault is a custom Django application, not a public image.
   #
   # Build procedure:
-  #   1. cd /home/ali/Messenger/key_vault/
+  #   1. cd key_vault/
   #   2. docker build -t registry.yourorg.com/matrix/key-vault:v1.0.0 .
   #   3. docker push registry.yourorg.com/matrix/key-vault:v1.0.0
   #   4. Update image reference below with your registry URL

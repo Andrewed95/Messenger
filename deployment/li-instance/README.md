@@ -161,14 +161,14 @@ kubectl apply -f 01-synapse-li/deployment.yaml
 
 ### 2. Element Web LI (02-element-web-li/)
 
-**Modified web client** showing deleted messages with special formatting.
+**Custom-built web client** showing deleted messages with original content.
 
-**Features**:
-- Displays redacted messages with `[DELETED]` badge
-- Strikethrough formatting for deleted content
-- Read-only composer (no message sending)
-- "LAWFUL INTERCEPT" watermark on all pages
-- Custom CSS injection via nginx
+**IMPORTANT**: Requires custom image built from `element-web-li/`
+
+**Features** (via React components in custom image):
+- Displays deleted messages with **original content** (LIRedactedBody)
+- Fetches redacted events from Synapse admin API (LIRedactedEventsStore)
+- Visual styling distinguishing deleted messages (light red background)
 
 **Deployment**:
 

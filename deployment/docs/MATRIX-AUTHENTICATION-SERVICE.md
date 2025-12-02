@@ -1713,7 +1713,7 @@ template: "{{ user.preferred_username | lower }}"
 
 ```bash
 # Navigate to deployment directory
-cd /home/user/Messenger/deployment
+cd deployment
 
 # Create MAS secrets namespace (if not exists)
 kubectl create namespace matrix-auth

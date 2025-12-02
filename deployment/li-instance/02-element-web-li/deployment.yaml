@@ -1,10 +1,15 @@
 # Element Web LI (Lawful Intercept)
-# Modified Matrix web client for law enforcement access
+# Custom-built Matrix web client for law enforcement access
 # Shows ALL messages including soft-deleted (redacted) content
 #
+# IMPORTANT: This deployment requires a custom element-web-li image built from
+# element-web-li/ which contains React components for:
+# - Displaying deleted messages with original content (LIRedactedBody)
+# - Fetching redacted events from Synapse admin API (LIRedactedEventsStore)
+# - Visual styling for deleted messages (_LIRedactedBody.pcss)
+#
 # Key Features:
-# - Displays redacted/deleted messages with strikethrough or special formatting
-# - Read-only interface (no message sending from LI)
+# - Displays deleted messages with original content (via React components)
 # - Connects to Synapse LI instance
 #
 # Access Control:
@@ -75,44 +80,6 @@ data:
         "jitsi": null,
         "element_call": null,
         "permalink_prefix": "https://matrix.example.com"
-    }
-
-  # Custom CSS to show redacted messages (injected via nginx)
-  custom.css: |
-    /* Show redacted messages with strikethrough */
-    .mx_EventTile_redacted {
-        text-decoration: line-through !important;
-        opacity: 0.7 !important;
-        background-color: #fff3cd !important;
-    }
-
-    /* Add "DELETED" badge to redacted messages */
-    .mx_EventTile_redacted::after {
-        content: " [DELETED]";
-        color: red;
-        font-weight: bold;
-        font-size: 0.8em;
-    }
-
-    /* Highlight message composer as read-only */
-    .mx_MessageComposer {
-        opacity: 0.5;
-        pointer-events: none;
-    }
-
-    /* Add watermark */
-    body::before {
-        content: "LAWFUL INTERCEPT - RESTRICTED ACCESS";
-        position: fixed;
-        top: 10px;
-        right: 10px;
-        background-color: #ff0000;
-        color: white;
-        padding: 5px 10px;
-        font-weight: bold;
-        font-size: 12px;
-        z-index: 10000;
-        border-radius: 3px;
     }
 
 ---
@@ -187,13 +154,6 @@ spec:
               mountPath: /app/config.json
               subPath: config.json
               readOnly: true
-            # Custom CSS must be loaded via modified index.html or nginx config
-            # To use: Add <link rel="stylesheet" href="/custom.css"> to index.html
-            # Or configure nginx to inject it
-            - name: custom-css
-              mountPath: /app/custom.css
-              subPath: custom.css
-              readOnly: true
             - name: cache
               mountPath: /var/cache/nginx
             - name: run
@@ -246,9 +206,6 @@ spec:
 
       volumes:
         - name: config
-          configMap:
-            name: element-web-li-config
-        - name: custom-css
           configMap:
             name: element-web-li-config
         - name: cache
