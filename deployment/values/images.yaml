@@ -59,7 +59,7 @@ livekit:
 
 # NOTE: Sygnal (push notification gateway) intentionally NOT included
 # Per CLAUDE.md Rule 4.3: No external services - deployment operates without internet
-# Push notifications require connection to Apple/Google servers which violates air-gapped requirement
+# Push notifications require connection to external Apple/Google servers
 # See deployment/docs/PUSH-NOTIFICATIONS-GUIDE.md for alternatives
 
 # Antivirus Services

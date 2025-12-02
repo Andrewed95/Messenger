@@ -77,7 +77,17 @@ spec:
         seccompProfile:
           type: RuntimeDefault
 
-      # NOTE: No pod anti-affinity needed - LI runs on single server (CLAUDE.md 7.1)
+      # CLAUDE.md Section 7.1: All LI services must run on one server
+      # This ensures Synapse Admin LI runs on the designated LI node
+      nodeSelector:
+        node-role.kubernetes.io/li: "true"
+
+      # Tolerate LI node taints (if the node is dedicated to LI workloads)
+      tolerations:
+        - key: "dedicated"
+          operator: "Equal"
+          value: "li"
+          effect: "NoSchedule"
 
       containers:
         - name: synapse-admin

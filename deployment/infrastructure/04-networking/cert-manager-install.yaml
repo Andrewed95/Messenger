@@ -1,62 +1,73 @@
 ---
-# Cert-Manager Installation
-# Automatic TLS certificate management
-# DO NOT apply this file directly - follow the instructions below
-
+# Cert-Manager Installation and ClusterIssuers
+# Automatic TLS certificate management for initial deployment
+#
 # Installation Method: Using kubectl
 # kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.14.0/cert-manager.yaml
-
+#
 # Verification:
 # kubectl get pods -n cert-manager
+#
+# ==============================================================================
+# TLS CERTIFICATE SCOPE (Per CLAUDE.md Section 4.4 and 4.5)
+# ==============================================================================
+# This deployment uses Let's Encrypt for INITIAL certificate provisioning.
+#
+# IMPORTANT:
+# - Let's Encrypt certificates are valid for 90 days
+# - Certificate RENEWAL is the ORGANIZATION'S responsibility
+# - Post-deployment maintenance (including renewals) is out of scope
+# - The organization's infrastructure team handles ongoing renewals independently
+# ==============================================================================
 
 ---
 # ClusterIssuer for Let's Encrypt Production
-# Used for automatic TLS certificate generation
+# Used for initial deployment - provides trusted TLS certificates
+# CHANGEME: Update email address before applying
 apiVersion: cert-manager.io/v1
 kind: ClusterIssuer
 metadata:
   name: letsencrypt-prod
 spec:
   acme:
-    # Let's Encrypt production server
+    # Let's Encrypt production ACME server
     server: https://acme-v02.api.letsencrypt.org/directory
-
-    # Email for expiration notifications
-    email: admin@example.com  # CHANGE THIS
-
-    # Secret to store ACME account private key
+    # CHANGEME: Email address for certificate expiration notifications
+    email: admin@CHANGE_TO_YOUR_DOMAIN
+    # Secret to store the ACME account private key
     privateKeySecretRef:
       name: letsencrypt-prod-private-key
-
-    # HTTP-01 challenge
+    # HTTP-01 challenge solver using nginx ingress
     solvers:
       - http01:
           ingress:
             class: nginx
 ---
-# ClusterIssuer for Let's Encrypt Staging (Testing)
-# Use this for testing before switching to production
+# ClusterIssuer for Let's Encrypt Staging
+# Use for testing to avoid rate limits (certificates are NOT trusted)
+# CHANGEME: Update email address before applying
 apiVersion: cert-manager.io/v1
 kind: ClusterIssuer
 metadata:
   name: letsencrypt-staging
 spec:
   acme:
-    # Let's Encrypt staging server (higher rate limits)
+    # Let's Encrypt staging ACME server (higher rate limits, untrusted certs)
     server: https://acme-staging-v02.api.letsencrypt.org/directory
-
-    email: admin@example.com  # CHANGE THIS
-
+    # CHANGEME: Email address for certificate expiration notifications
+    email: admin@CHANGE_TO_YOUR_DOMAIN
+    # Secret to store the ACME account private key
     privateKeySecretRef:
       name: letsencrypt-staging-private-key
-
+    # HTTP-01 challenge solver using nginx ingress
     solvers:
       - http01:
           ingress:
             class: nginx
 ---
-# ClusterIssuer for Self-Signed Certificates (Air-Gapped)
-# Use this for air-gapped deployments or internal testing
+# ClusterIssuer for Self-Signed Certificates
+# Only for testing or when Let's Encrypt is not available
+# Self-signed certificates will show browser warnings
 apiVersion: cert-manager.io/v1
 kind: ClusterIssuer
 metadata:
@@ -65,7 +76,8 @@ spec:
   selfSigned: {}
 ---
 # Example Certificate for Testing
-# Tests cert-manager is working correctly
+# Tests cert-manager is working correctly with Let's Encrypt
+# CHANGEME: Update domain before applying
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
@@ -74,8 +86,8 @@ metadata:
 spec:
   secretName: test-tls
   issuerRef:
-    name: selfsigned
+    name: letsencrypt-prod
     kind: ClusterIssuer
-  commonName: test.example.com
+  commonName: test.CHANGE_TO_YOUR_DOMAIN
   dnsNames:
-    - test.example.com
+    - test.CHANGE_TO_YOUR_DOMAIN

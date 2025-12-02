@@ -72,7 +72,7 @@ The deployer has SSH access to servers and handles all configuration and deploym
 | Port | Protocol | Direction | Server Type | Purpose |
 |------|----------|-----------|-------------|---------|
 | **443** | TCP | Inbound | Ingress Node(s) | HTTPS - All web traffic (Synapse, Element, Admin) |
-| **80** | TCP | Inbound | Ingress Node(s) | HTTP - cert-manager ACME validation only |
+| **80** | TCP | Inbound | Ingress Node(s) | HTTP - redirect to HTTPS |
 | **3478** | TCP | Inbound | TURN Server | TURN/STUN signaling (NAT traversal) |
 | **3478** | UDP | Inbound | TURN Server | TURN/STUN signaling (NAT traversal) |
 | **5349** | TCP | Inbound | TURN Server | TURN over TLS (secure NAT traversal) |
@@ -212,7 +212,7 @@ The deployer has SSH access to servers and handles all configuration and deploym
 | apt/package repos | 443, 80 | TCP | OS package installation |
 | Helm chart repos | 443 | TCP | Helm chart downloads |
 
-**After installation (air-gapped operation):**
+**After installation:**
 - No outbound internet required
 - All traffic is internal between servers
 
@@ -326,22 +326,28 @@ keyvault.example.com  →  10.0.2.100  (LI Ingress - key_vault)
 
 ### 5. TLS Certificates
 
-**The organization MUST provide ONE of:**
+**This deployment uses Let's Encrypt for automatic TLS certificate provisioning.**
 
-| Option | Description | Best For |
-|--------|-------------|----------|
-| **Wildcard Certificate** | `*.example.com` cert + private key | Simplest, air-gapped |
-| **DNS Provider API Access** | API credentials for DNS-01 challenge | Automatic renewal |
-| **Manual Certificates** | Individual certs for each hostname | Full control |
+| Component | Description |
+|-----------|-------------|
+| **cert-manager** | Installed in cluster, manages certificates automatically |
+| **Let's Encrypt** | Free, trusted certificates via ACME protocol |
+| **ClusterIssuer** | `letsencrypt-prod` (default) or `letsencrypt-staging` (testing) |
 
-**If providing certificates manually:**
+**Requirements:**
+- Port 80 must be accessible from internet (HTTP-01 challenge)
+- Valid DNS records pointing to your ingress IP
+- Valid email address for Let's Encrypt notifications
+
+**Certificate Renewal:**
+Per CLAUDE.md 4.5: Initial deployment uses Let's Encrypt with internet access.
+Certificate renewal (every 90 days) is the organization's responsibility
+and is out of scope for this deployment solution.
+
+**Alternative (if organization provides certificates):**
+- Import pre-signed certificates as Kubernetes TLS secrets
 - Certificate file (PEM format)
 - Private key file (PEM format)
-- CA chain if not publicly trusted
-
-**If using cert-manager with DNS-01:**
-- DNS provider API key/token
-- Access to create DNS TXT records
 
 ### 6. Optional External Services
 
@@ -353,7 +359,7 @@ keyvault.example.com  →  10.0.2.100  (LI Ingress - key_vault)
 | **Federation** | External DNS SRV records, open port 8448 |
 | **SMTP Notifications** | SMTP server credentials |
 
-**Note**: These are disabled by default for air-gapped deployments.
+**Note**: These are disabled by default (per CLAUDE.md Rule 4.3: No external services).
 
 ---
 
@@ -384,7 +390,6 @@ keyvault.example.com  →  10.0.2.100  (LI Ingress - key_vault)
 ```
 [ ] Primary domain name: _________________________ (e.g., example.com)
 [ ] Number of expected concurrent users (CCU): _____
-[ ] Air-gapped deployment? Yes / No
 [ ] Federation enabled? Yes / No
 
 Server Information:
@@ -409,11 +414,10 @@ Network Information:
 
 TLS Certificates:
 [ ] Certificate provisioning method:
-    [ ] Organization provides wildcard cert
-    [ ] Organization provides individual certs
-    [ ] cert-manager with DNS-01 (provide API credentials)
-    [ ] cert-manager with HTTP-01 (requires port 80 open)
-    [ ] Self-signed (for testing only)
+    [x] Let's Encrypt (default - requires initial internet access)
+    [ ] Organization provides pre-signed certificates
+
+    NOTE: Let's Encrypt used for initial setup. Renewal (90 days) is org's responsibility.
 
 LI Network:
 [ ] LI DNS server IP: _____________
@@ -896,43 +900,31 @@ turn_uris:
 
 #### 2.8 TLS Certificates
 
-**Option A: Let's Encrypt (Production - Recommended)**
+**Default: Let's Encrypt (Automatic)**
 
-**Update in:** `infrastructure/04-networking/cert-manager-install.yaml`
-```yaml
-apiVersion: cert-manager.io/v1
-kind: ClusterIssuer
-metadata:
-  name: letsencrypt-prod
-spec:
-  acme:
-    server: https://acme-v02.api.letsencrypt.org/directory
-    email: admin@example.com  # ⚠️ UPDATE THIS
-    privateKeySecretRef:
-      name: letsencrypt-prod-account-key
-    solvers:
-      - http01:
-          ingress:
-            class: nginx
-```
+This deployment uses Let's Encrypt via cert-manager for automatic TLS certificates.
+Certificates are automatically issued when Ingress resources are created.
 
-**No manual certificate generation required** - cert-manager handles this automatically.
+Per CLAUDE.md 4.5: Initial deployment uses Let's Encrypt with internet access.
+Certificate renewal (every 90 days) is the organization's responsibility.
 
-**Option B: Self-Signed (Air-Gapped/Development)**
+**Requirements for Let's Encrypt:**
+- Port 80 accessible from internet (HTTP-01 challenge)
+- Valid DNS records pointing to ingress IP
+- Valid email configured in cert-manager ClusterIssuer
 
+**Alternative: Organization-Provided Certificates**
+
+If the organization prefers to provide their own certificates:
 ```bash
-# Generate self-signed certificate
-openssl req -x509 -newkey rsa:4096 -sha256 -days 3650 \
-  -nodes -keyout tls.key -out tls.crt \
-  -subj "/CN=matrix.example.com" \
-  -addext "subjectAltName=DNS:matrix.example.com,DNS:*.matrix.example.com"
-
-# Create Kubernetes secret
+# Create Kubernetes secret from organization-provided certs
 kubectl create secret tls matrix-tls \
-  --cert=tls.crt \
-  --key=tls.key \
+  --cert=/path/to/org-provided-cert.crt \
+  --key=/path/to/org-provided-key.key \
   -n matrix
 ```
+
+Then update Ingress annotations to use the pre-created secret instead of cert-manager.
 
 #### 2.9 Complete Secret Generation Script
 
@@ -1138,37 +1130,7 @@ kubectl get nodes -l livekit=true
 | `monitoring=true` | Prometheus, Grafana, Loki | 1 |
 | `livekit=true` | LiveKit SFU instances | 2-4 (if using LiveKit) |
 
-### 7. Air-Gapped / Intranet Deployment Requirements
-
-**For deployments without internet access after setup:**
-
-- [ ] **Pre-pull all container images** before cutting internet access
-  ```bash
-  # List all images used in deployment
-  grep -r "image:" deployment/ --include="*.yaml" | grep -v "#" | awk '{print $NF}' | sort -u
-
-  # Pull images on all nodes (while internet is available)
-  # Or use a private registry with pre-loaded images
-  ```
-
-- [ ] **Self-signed or organization CA certificates**
-  - cert-manager ClusterIssuer configured for `selfsigned` or organization CA
-  - Or pre-generated TLS certificates loaded into secrets
-
-- [ ] **ClamAV virus definitions**
-  - ClamAV needs initial virus definitions download
-  - After initial download, definitions are cached
-  - For fully air-gapped: pre-load definitions or use private mirror
-
-- [ ] **Coturn EXTERNAL_IP configured**
-  - Uses Kubernetes node IP automatically (correct for intranet)
-  - No internet access needed for TURN/STUN functionality
-
-- [ ] **LiveKit configured for internal use only**
-  - WebRTC works on intranet without internet
-  - Ensure firewall allows UDP traffic between clients and LiveKit nodes
-
-### 8. LiveKit / Element Call Setup (For Group Video Calls)
+### 7. LiveKit / Element Call Setup (For Group Video Calls)
 
 **If you want group video/voice calls, you MUST deploy LiveKit:**
 

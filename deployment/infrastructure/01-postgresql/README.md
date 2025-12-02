@@ -22,8 +22,8 @@ This directory contains the PostgreSQL cluster configurations using [CloudNative
 - **Storage**: 500Gi (scales with usage)
 - **Databases**:
   - `matrix` - Main Synapse database
-  - `matrix_authentication_service` - MAS database
-  - `keyvault` - LI key vault database
+  - `matrix_authentication_service` - MAS database (optional, if MAS is deployed)
+  - NOTE: key_vault uses SQLite (not PostgreSQL) per CLAUDE.md requirements
 
 **Failover Time**: 30-60 seconds automatic
 

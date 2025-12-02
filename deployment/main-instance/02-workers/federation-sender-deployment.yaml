@@ -71,7 +71,9 @@ spec:
               # IMPORTANT: worker_name MUST match exactly what's in homeserver.yaml
               # federation_sender_instances. Using bare ${HOSTNAME} to match configmap entries.
               cat > /config/worker.yaml <<EOF
-              worker_app: synapse.app.federation_sender
+              # NOTE: synapse.app.federation_sender is now equivalent to synapse.app.generic_worker
+              # per Synapse docs. Using generic_worker for forward compatibility.
+              worker_app: synapse.app.generic_worker
               worker_name: ${HOSTNAME}
 
               # Replication
@@ -153,11 +155,8 @@ spec:
                 secretKeyRef:
                   name: synapse-secrets
                   key: TURN_SECRET
-            - name: KEY_VAULT_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: synapse-secrets
-                  key: KEY_VAULT_API_KEY
+            # NOTE: KEY_VAULT_API_KEY not needed for workers
+            # Per CLAUDE.md 3.3: Only Synapse main process accesses key_vault
           volumeMounts:
             - name: config-template
               mountPath: /config-template
@@ -175,7 +174,7 @@ spec:
           command:
             - python
             - -m
-            - synapse.app.federation_sender
+            - synapse.app.generic_worker
             - --config-path=/config/homeserver.yaml
             - --config-path=/config/worker.yaml
 
@@ -189,7 +188,7 @@ spec:
 
           env:
             - name: SYNAPSE_WORKER
-              value: "synapse.app.federation_sender"
+              value: "synapse.app.generic_worker"
             - name: SYNAPSE_WORKER_NAME
               valueFrom:
                 fieldRef:

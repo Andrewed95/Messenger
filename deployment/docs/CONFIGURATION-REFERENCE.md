@@ -815,62 +815,64 @@ kubectl port-forward -n monitoring svc/prometheus-grafana 3000:80
 
 ## TLS/Certificate Configuration
 
+This deployment uses **Let's Encrypt** for automatic TLS certificate provisioning during initial deployment.
+
+Per CLAUDE.md 4.5: Initial deployment uses Let's Encrypt when internet is available.
+Certificate renewal (every 90 days) is the organization's responsibility and out of scope.
+
 ### CERT_ISSUER
 
-**Description:** Certificate issuer type
+**Description:** ClusterIssuer to use for TLS certificates
 
 **Required:** Yes
 
 **Options:**
-- `letsencrypt-prod` (Recommended for production)
-- `letsencrypt-staging` (For testing, avoids rate limits)
-- `selfsigned` (Self-signed certificates)
-- `internal-ca` (Internal CA)
+- `letsencrypt-prod` (Production Let's Encrypt certificates - **default**)
+- `letsencrypt-staging` (Staging certificates for testing - higher rate limits)
+- `selfsigned` (Fallback only - not recommended)
 
 **Example:**
 ```bash
 CERT_ISSUER="letsencrypt-prod"
 ```
 
-**Production:**
-```bash
-CERT_ISSUER="letsencrypt-prod"
-LETSENCRYPT_EMAIL="admin@example.com"
+**Default (Let's Encrypt Production):**
+```yaml
+# In Ingress annotations
+cert-manager.io/cluster-issuer: letsencrypt-prod
 ```
 
-**Testing (avoid rate limits):**
+Certificates are automatically:
+- Issued when Ingress resources are created
+- Stored in Kubernetes secrets
+- Valid for 90 days (renewal is org's responsibility)
+
+**Testing (Staging):**
+Use staging to avoid rate limits during testing:
 ```bash
 CERT_ISSUER="letsencrypt-staging"
-LETSENCRYPT_EMAIL="admin@example.com"
+# Higher rate limits but certificates show browser warning
 ```
 
-### LETSENCRYPT_EMAIL
-
-**Description:** Email for Let's Encrypt notifications
-
-**Required:** Yes (if using letsencrypt)
-
-**Example:**
+**Alternative (Organization-Provided):**
+If the organization provides pre-signed certificates:
 ```bash
-LETSENCRYPT_EMAIL="admin@example.com"
+# Import organization-provided certificates
+kubectl create secret tls matrix-tls \
+  --cert=/path/to/cert.pem \
+  --key=/path/to/key.pem \
+  -n matrix
 ```
+Then update Ingress to use the secret directly instead of cert-manager.
 
-**Used For:**
-- Certificate expiry notifications
-- Rate limit notifications
-- Account recovery
+### Certificate Options Comparison
 
-**Let's Encrypt Rate Limits:**
-- 50 certificates per domain per week
-- 5 duplicate certificates per week
-- Use staging issuer for testing
-
-**Staging vs Production:**
-
-| Issuer | Trusted | Rate Limits | Use Case |
-|--------|---------|-------------|----------|
-| letsencrypt-prod | ✅ Yes | ✅ Yes | Production |
-| letsencrypt-staging | ❌ No (browser warning) | ❌ No | Testing |
+| Issuer | Trusted | Internet Required | Use Case |
+|--------|---------|-------------------|----------|
+| letsencrypt-prod | ✅ Yes | ✅ Yes (initial only) | Production (default) |
+| letsencrypt-staging | ❌ No (test CA) | ✅ Yes (initial only) | Testing |
+| organization-provided | ✅ Yes | ❌ No | Custom PKI |
+| selfsigned | ❌ No (browser warning) | ❌ No | Last resort |
 
 ---
 
@@ -1084,7 +1086,7 @@ Before deploying, verify:
 - [ ] `COTURN_NODE*_IP` set to public IPs
 - [ ] `LIVEKIT_API_KEY` and `_SECRET` generated
 - [ ] `GRAFANA_ADMIN_PASSWORD` set
-- [ ] `LETSENCRYPT_EMAIL` set to your email
+- [ ] `LETSENCRYPT_EMAIL` set to valid email (for certificate notifications)
 - [ ] No `CHANGE_TO_*` placeholders remain
 
 ---

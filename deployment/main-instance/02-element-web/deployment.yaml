@@ -80,11 +80,12 @@ data:
         },
 
         "element_call": {
-            "url": "https://call.example.com",
+            "url": "https://livekit.matrix.example.com",
             "use_exclusively": true,
             "participant_limit": 8,
             "brand": "Element Call"
         },
+        "_comment_element_call": "NOTE: URL must match LiveKit ingress host in 04-livekit/deployment.yaml",
 
         "jitsi": {
             "preferred_domain": null
@@ -279,6 +280,7 @@ metadata:
     app.kubernetes.io/name: element-web
     app.kubernetes.io/component: webclient
   annotations:
+    # Uses letsencrypt-prod for initial deployment (per CLAUDE.md 4.5)
     cert-manager.io/cluster-issuer: "letsencrypt-prod"
     nginx.ingress.kubernetes.io/ssl-redirect: "true"
     nginx.ingress.kubernetes.io/force-ssl-redirect: "true"

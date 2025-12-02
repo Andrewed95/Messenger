@@ -23,10 +23,11 @@ This directory contains networking configuration for security, ingress, and TLS 
 ┌──────────────────────────────────────────────┐
 │  NetworkPolicies define allowed paths:       │
 │  ✓ Synapse → PostgreSQL, Redis, MinIO       │
-│  ✓ Synapse → key_vault (LI)                 │
-│  ✓ key_vault ⇄ PostgreSQL only              │
+│  ✓ Synapse main → key_vault (LI)            │
+│  ✓ key_vault uses SQLite (no external DB)   │
 │  ✓ LI Instance → LI PostgreSQL only         │
-│  ✗ LI Instance ⇏ Main resources             │
+│  ✓ LI Instance → Main MinIO (shared media)  │
+│  ✗ LI Instance ⇏ Main PostgreSQL/Redis      │
 │  ✗ key_vault ⇏ External access              │
 └──────────────────────────────────────────────┘
 ```
@@ -34,16 +35,18 @@ This directory contains networking configuration for security, ingress, and TLS 
 ### Critical Security Policies
 
 **1. key_vault Isolation** (MOST IMPORTANT for LI compliance)
-- ONLY accessible from Synapse main instance
-- Can ONLY talk to PostgreSQL and Redis
-- CANNOT be accessed from LI instance
-- CANNOT be accessed from external networks
+- ONLY accessible from Synapse main instance (for storing recovery keys)
+- Also accessible from Synapse Admin LI and nginx-li (for LI admin retrieval)
+- Uses SQLite internally (NO external database connections)
+- Egress: DNS only (for internal Kubernetes service resolution)
+- CANNOT be accessed from external networks (network isolation is org's responsibility)
 
 **2. LI Instance Isolation**
-- CANNOT access main instance PostgreSQL
-- CANNOT access main instance resources
-- Can ONLY access LI PostgreSQL
-- Can ONLY access LI MinIO bucket
+- CANNOT access main instance PostgreSQL or Redis
+- Can ONLY access LI PostgreSQL (replicated from main)
+- Can access Main MinIO for media (shared bucket, read-only in practice)
+  - Per CLAUDE.md 7.5: LI uses main MinIO directly for media access
+  - WARNING: LI admins must NOT modify/delete media (affects main instance)
 
 **3. Database Access Control**
 - Each database has explicit allow list
@@ -81,7 +84,7 @@ This directory contains networking configuration for security, ingress, and TLS 
 #### Cache Policies
 
 5. **redis-access**
-   - Allows: Synapse, LiveKit, key_vault
+   - Allows: Synapse, LiveKit (NOT key_vault - uses SQLite)
    - Ports: 6379 (Redis), 26379 (Sentinel)
    - Enables worker replication and sessions
 
@@ -153,10 +156,14 @@ kubectl wait --for=condition=Available deployment/ingress-nginx-controller -n in
 
 **Automatic TLS Certificate Management**
 
-**Issuers:**
-1. **letsencrypt-prod** - Production certificates
-2. **letsencrypt-staging** - Testing (higher rate limits)
-3. **selfsigned** - Air-gapped deployments
+**ClusterIssuers:**
+1. **letsencrypt-prod** - Production Let's Encrypt certificates (default for initial deployment)
+2. **letsencrypt-staging** - Staging certificates (for testing, higher rate limits)
+3. **selfsigned** - Self-signed certificates (fallback only)
+
+**Per CLAUDE.md 4.5:** Initial deployment uses Let's Encrypt with cert-manager.
+Let's Encrypt certificates are valid for 90 days.
+Certificate renewal after deployment is the organization's responsibility.
 
 **Installation:**
 
@@ -429,46 +436,6 @@ kubectl get order,challenge -n matrix
 - Rate limit hit (use staging for testing)
 - Firewall blocking port 80 (HTTP-01 challenge)
 
-## Air-Gapped Deployment
-
-For air-gapped environments (after initial setup):
-
-**WHERE:** Pre-pull images on a machine with internet access, then transfer to cluster nodes
-
-**1. Pre-pull Images:**
-```bash
-# NGINX Ingress
-docker pull registry.k8s.io/ingress-nginx/controller:v1.11.1
-
-# Cert-Manager
-docker pull quay.io/jetstack/cert-manager-controller:v1.14.0
-docker pull quay.io/jetstack/cert-manager-webhook:v1.14.0
-docker pull quay.io/jetstack/cert-manager-cainjector:v1.14.0
-```
-
-**2. Use Self-Signed Certificates:**
-```yaml
-# Use selfsigned ClusterIssuer
-apiVersion: cert-manager.io/v1
-kind: Certificate
-metadata:
-  name: matrix-tls
-spec:
-  secretName: matrix-tls
-  issuerRef:
-    name: selfsigned
-    kind: ClusterIssuer
-  commonName: matrix.example.com
-  dnsNames:
-    - matrix.example.com
-    - "*.matrix.example.com"
-```
-
-**3. Import Organization CA:**
-- Generate certificates using org's CA
-- Create TLS secrets manually
-- Skip cert-manager if using external PKI
-
 ## Security Best Practices
 
 ### 1. NetworkPolicy Guidelines
@@ -525,7 +492,7 @@ kubectl get networkpolicy key-vault-isolation -n matrix
 - Use strong ciphers only
 
 ❌ **DON'T:**
-- Use self-signed in production (unless air-gapped)
+- Use self-signed in production (unless internal/isolated)
 - Allow SSLv3, TLS1.0, TLS1.1
 - Ignore expiration warnings
 

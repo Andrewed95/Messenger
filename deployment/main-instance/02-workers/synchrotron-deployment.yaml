@@ -162,11 +162,8 @@ spec:
                 secretKeyRef:
                   name: synapse-secrets
                   key: TURN_SECRET
-            - name: KEY_VAULT_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: synapse-secrets
-                  key: KEY_VAULT_API_KEY
+            # NOTE: KEY_VAULT_API_KEY not needed for workers
+            # Per CLAUDE.md 3.3: Only Synapse main process accesses key_vault
           volumeMounts:
             - name: config-template
               mountPath: /config-template

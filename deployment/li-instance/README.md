@@ -618,6 +618,38 @@ kubectl create secret generic nginx-li-auth \
 
 **Note:** Since LI is only accessible from the isolated LI network, network-level access control is usually sufficient.
 
+## LI Node Requirements
+
+### Node Labeling (CRITICAL)
+
+**Per CLAUDE.md Section 7.1**: All LI services must run on a **single server** (the LI node).
+
+**Before deploying LI components**, you MUST label your LI node:
+
+```bash
+# Identify your LI node
+kubectl get nodes
+
+# Label the LI node (replace <li-node-name> with your node name)
+kubectl label node <li-node-name> node-role.kubernetes.io/li=true
+
+# Optionally, add a taint to prevent non-LI workloads (recommended for dedicated LI servers)
+kubectl taint nodes <li-node-name> dedicated=li:NoSchedule
+```
+
+**Verify the label:**
+```bash
+kubectl get nodes -l node-role.kubernetes.io/li=true
+```
+
+All LI components (Redis LI, PostgreSQL LI, Synapse LI, Element Web LI, Synapse Admin LI, nginx-li, key_vault, sync-system) are configured with:
+- `nodeSelector: node-role.kubernetes.io/li: "true"` - ensures scheduling on LI node
+- `tolerations` for `dedicated=li:NoSchedule` - allows running on tainted LI node
+
+**Important**: If you don't label a node, LI pods will remain in `Pending` state.
+
+---
+
 ## Deployment Order
 
 **WHERE:** Run all commands from your **management node**
@@ -627,6 +659,9 @@ kubectl create secret generic nginx-li-auth \
 Deploy in this order to ensure dependencies:
 
 ```bash
+# 0. PREREQUISITE: Label the LI node (see "LI Node Requirements" section above)
+kubectl label node <li-node-name> node-role.kubernetes.io/li=true
+
 # 1. Ensure Phase 1 infrastructure is running
 kubectl get cluster -n matrix matrix-postgresql-li
 kubectl get tenant -n matrix matrix-minio  # Main MinIO for sync source
@@ -909,13 +944,17 @@ kubectl exec -n matrix synapse-li-0 -- \
 
 ### Users can't login to LI
 
-**Cause**: Signing key mismatch or replication not complete.
+**Cause**: Signing key not accessible or replication not complete.
 
 ```bash
-# Check signing key matches main
-kubectl get secret synapse-li-secrets -n matrix -o yaml | grep signing.key
+# Verify signing key secret exists (Synapse LI uses MAIN signing key)
+# This is the cleanest solution - no copying needed, automatically in sync
 kubectl get secret synapse-secrets -n matrix -o yaml | grep signing.key
-# Should be IDENTICAL
+# Should return the signing key
+
+# Check that Synapse LI pod can access the signing key volume
+kubectl describe pod synapse-li-0 -n matrix | grep -A5 "signing-key"
+# Should show volume mounted from synapse-secrets
 
 # Check users table is replicated
 kubectl exec -n matrix matrix-postgresql-li-1-0 -- \
@@ -923,6 +962,8 @@ kubectl exec -n matrix matrix-postgresql-li-1-0 -- \
   "SELECT COUNT(*) FROM users;"
 # Should match main instance user count
 ```
+
+**Note**: Synapse LI is configured to use the main Synapse's signing key directly (from `synapse-secrets`). This eliminates the need for manual key copying and ensures authentication always works.
 
 ## Scaling
 

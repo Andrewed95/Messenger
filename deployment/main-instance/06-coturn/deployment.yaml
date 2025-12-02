@@ -5,7 +5,7 @@
 # Runs as DaemonSet with hostNetwork for optimal connectivity
 #
 # ============================================================================
-# AIR-GAPPED / INTRANET DEPLOYMENT
+# INTRANET DEPLOYMENT
 # ============================================================================
 # For intranet deployments where users access the messenger from within the
 # organization's network (not via internet):
@@ -183,10 +183,9 @@ spec:
             - -c
             - |
               # Determine external IP address
-              # For INTRANET/AIR-GAPPED deployments:
+              # For intranet deployments:
               # - The node IP (status.hostIP) is the correct value
               # - Clients reach coturn via internal network, so node IP is correct
-              # - No internet access needed
 
               if [ -n "$EXTERNAL_IP" ]; then
                 echo "Using EXTERNAL_IP: $EXTERNAL_IP"
@@ -394,6 +393,7 @@ metadata:
     app.kubernetes.io/component: turn-server
 spec:
   secretName: coturn-tls
+  # Uses letsencrypt-prod for initial deployment (per CLAUDE.md 4.5)
   issuerRef:
     name: letsencrypt-prod
     kind: ClusterIssuer

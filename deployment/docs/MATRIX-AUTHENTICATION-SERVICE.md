@@ -879,8 +879,9 @@ metadata:
   name: matrix
   namespace: matrix
   annotations:
+    # Uses letsencrypt-prod for initial deployment (per CLAUDE.md 4.5)
     cert-manager.io/cluster-issuer: letsencrypt-prod
-    
+
     # Route specific paths to MAS
     nginx.ingress.kubernetes.io/configuration-snippet: |
       # Matrix authentication endpoints → MAS

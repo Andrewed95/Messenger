@@ -98,7 +98,10 @@ metadata:
     app.kubernetes.io/component: sfu
     app.kubernetes.io/version: "v1.8.1"
 spec:
-  replicas: 3  # HA deployment
+  # With hostNetwork: true, each replica needs its own node.
+  # Adjust replica count to match your available nodes (minimum 3 for HA).
+  # If you have fewer nodes, reduce replicas accordingly.
+  replicas: 3
 
   selector:
     matchLabels:
@@ -124,6 +127,28 @@ spec:
         prometheus.io/path: "/metrics"
 
     spec:
+      # ========================================================================
+      # HOST NETWORK MODE (REQUIRED FOR PRODUCTION UDP PORT ACCESS)
+      # ========================================================================
+      # LiveKit requires UDP ports 50000-60000 for WebRTC media streams.
+      # Without hostNetwork, only 2 ports are exposed via NodePort (2 participants max).
+      # With hostNetwork, the full UDP range is available for production use.
+      #
+      # TRADE-OFFS:
+      # - Pro: Full UDP port range (50000-60000) = ~100+ concurrent participants
+      # - Pro: Lower latency (no NAT traversal inside cluster)
+      # - Con: Only ONE pod per node (ports are bound to host)
+      # - Con: Pod has access to host network stack
+      # - Con: NetworkPolicies may behave differently
+      #
+      # REQUIREMENTS:
+      # - Number of replicas must match number of available nodes
+      # - Nodes must have ports 7880, 7881, 50000-60000 available
+      # - Anti-affinity is REQUIRED (enforced below)
+      # ========================================================================
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet  # Required for cluster DNS with hostNetwork
+
       securityContext:
         runAsUser: 1000
         runAsGroup: 1000
@@ -132,16 +157,16 @@ spec:
         seccompProfile:
           type: RuntimeDefault
 
-      # Anti-affinity: spread across nodes
+      # Anti-affinity: REQUIRED with hostNetwork (one pod per node)
+      # Changed from preferredDuringSchedulingIgnoredDuringExecution to requiredDuringSchedulingIgnoredDuringExecution
+      # because hostNetwork means each pod uses the same ports on the host.
       affinity:
         podAntiAffinity:
-          preferredDuringSchedulingIgnoredDuringExecution:
-            - weight: 100
-              podAffinityTerm:
-                labelSelector:
-                  matchLabels:
-                    app.kubernetes.io/name: livekit
-                topologyKey: kubernetes.io/hostname
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: livekit
+              topologyKey: kubernetes.io/hostname
 
       initContainers:
         - name: generate-config
@@ -346,31 +371,22 @@ spec:
       protocol: TCP
       nodePort: 30781
     # UDP range for WebRTC media
-    # ⚠️ CRITICAL LIMITATION: Only 2 UDP ports exposed by default!
-    # This limits LiveKit to approximately 2 concurrent video call participants.
+    # ========================================================================
+    # HOSTNETWORK IS NOW ENABLED (see pod spec above)
+    # ========================================================================
+    # With hostNetwork: true, LiveKit pods bind directly to host ports.
+    # The full UDP range 50000-60000 is available without NodePort mapping.
     #
-    # PRODUCTION DEPLOYMENT OPTIONS (choose based on your requirements):
+    # These NodePort mappings are kept for:
+    # - Kubernetes service discovery
+    # - Fallback if you disable hostNetwork
+    # - LoadBalancer compatibility
     #
-    # Option 1: Use hostNetwork (RECOMMENDED for on-premises)
-    #   Add to pod spec above: hostNetwork: true
-    #   Pros: Full UDP port range (50000-60000) available
-    #   Cons: Requires dedicated nodes or port coordination
-    #
-    # Option 2: Use LoadBalancer Service (RECOMMENDED for cloud)
-    #   Change service type from NodePort to LoadBalancer
-    #   Pros: Cloud provider handles port mapping automatically
-    #   Cons: Requires cloud LoadBalancer support, costs may apply
-    #
-    # Option 3: Use TURN server relay (RECOMMENDED for restrictive networks)
-    #   Configure coturn to relay all WebRTC traffic
-    #   Pros: Works through firewalls, only needs TCP 443
-    #   Cons: Higher latency, more server resources needed
-    #
-    # Option 4: Manually add more ports (NOT RECOMMENDED)
-    #   Add more port mappings below (one per participant)
-    #   Pros: Works with NodePort
-    #   Cons: Very tedious, limited to ~30 ports maximum
-    #
+    # With hostNetwork enabled:
+    # - Clients connect to node IP:50000-60000 directly (UDP)
+    # - ~100+ concurrent participants supported
+    # - One LiveKit pod per node (required, enforced by anti-affinity)
+    # ========================================================================
     - name: rtc-udp-1
       port: 50000
       targetPort: 50000
@@ -381,13 +397,6 @@ spec:
       targetPort: 50001
       protocol: UDP
       nodePort: 30001
-    # To support more participants with NodePort, uncomment and continue pattern:
-    # - name: rtc-udp-3
-    #   port: 50002
-    #   targetPort: 50002
-    #   protocol: UDP
-    #   nodePort: 30002
-    # ... continue up to ~30 ports (Kubernetes NodePort range limit)
 
 ---
 # Ingress for LiveKit WebSocket
@@ -400,6 +409,7 @@ metadata:
     app.kubernetes.io/name: livekit
     app.kubernetes.io/component: ingress
   annotations:
+    # Uses letsencrypt-prod for initial deployment (per CLAUDE.md 4.5)
     cert-manager.io/cluster-issuer: "letsencrypt-prod"
     nginx.ingress.kubernetes.io/ssl-redirect: "true"
     nginx.ingress.kubernetes.io/websocket-services: "livekit"

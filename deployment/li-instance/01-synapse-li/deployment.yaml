@@ -210,11 +210,10 @@ stringData:
   REGISTRATION_SECRET: "CHANGEME_SECURE_LI_REGISTRATION_SECRET"
   FORM_SECRET: "CHANGEME_SECURE_LI_FORM_SECRET"
 
-  # Signing key (MUST be same as main for signature verification)
-  signing.key: |
-    ed25519 a_XXXX CHANGEME_COPY_FROM_MAIN_SIGNING_KEY
-    # CRITICAL: This MUST be the SAME signing key as the main instance
-    # Otherwise users cannot log in to LI instance
+  # NOTE: Signing key is NOT stored here!
+  # Synapse LI uses the SAME signing key as main Synapse (from synapse-secrets).
+  # This is configured via the volume mount below that references synapse-secrets.
+  # Reason: LI uses replicated data from main - different keys would break authentication.
 
 ---
 # Synapse LI StatefulSet
@@ -273,7 +272,19 @@ spec:
         seccompProfile:
           type: RuntimeDefault
 
-      # Prefer different nodes from main instance
+      # CLAUDE.md Section 7.1: All LI services must run on one server
+      # This ensures Synapse LI runs on the designated LI node
+      nodeSelector:
+        node-role.kubernetes.io/li: "true"
+
+      # Tolerate LI node taints (if the node is dedicated to LI workloads)
+      tolerations:
+        - key: "dedicated"
+          operator: "Equal"
+          value: "li"
+          effect: "NoSchedule"
+
+      # Prefer different nodes from main instance (additional preference, not required)
       affinity:
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
@@ -416,6 +427,8 @@ spec:
               mountPath: /config
             - name: data
               mountPath: /data
+            # CRITICAL: Use MAIN Synapse signing key (from synapse-secrets, not synapse-li-secrets)
+            # This ensures LI can verify tokens/signatures from replicated data
             - name: signing-key
               mountPath: /config-template/signing.key
               subPath: signing.key
@@ -520,9 +533,14 @@ spec:
           emptyDir: {}
         - name: python-packages
           emptyDir: {}
+        # CRITICAL: Use MAIN Synapse signing key (synapse-secrets), NOT synapse-li-secrets
+        # Reason: LI uses replicated data from main instance. All events, tokens, and
+        # signatures are created with main's signing key. If LI uses a different key,
+        # signature verification fails and users cannot log in.
+        # This is the cleanest solution - no manual copying needed, automatically in sync.
         - name: signing-key
           secret:
-            secretName: synapse-li-secrets
+            secretName: synapse-secrets  # MAIN Synapse secret, not synapse-li-secrets
             items:
               - key: signing.key
                 path: signing.key

@@ -136,76 +136,18 @@ prometheus:
 # ============================================================================
 # CLUSTER ISSUER CONFIGURATION
 # ============================================================================
-# After cert-manager installation, create ClusterIssuers:
+# After cert-manager installation, create ClusterIssuers.
 #
-# For Let's Encrypt (if servers have internet access):
-# kubectl apply -f - <<EOF
-# apiVersion: cert-manager.io/v1
-# kind: ClusterIssuer
-# metadata:
-#   name: letsencrypt-prod
-# spec:
-#   acme:
-#     server: https://acme-v02.api.letsencrypt.org/directory
-#     email: admin@CHANGE_TO_YOUR_DOMAIN
-#     privateKeySecretRef:
-#       name: letsencrypt-prod
-#     solvers:
-#     - http01:
-#         ingress:
-#           class: nginx
-# ---
-# apiVersion: cert-manager.io/v1
-# kind: ClusterIssuer
-# metadata:
-#   name: letsencrypt-staging
-# spec:
-#   acme:
-#     server: https://acme-staging-v02.api.letsencrypt.org/directory
-#     email: admin@CHANGE_TO_YOUR_DOMAIN
-#     privateKeySecretRef:
-#       name: letsencrypt-staging
-#     solvers:
-#     - http01:
-#         ingress:
-#           class: nginx
-# EOF
+# Per CLAUDE.md 4.5: Initial deployment uses Let's Encrypt with cert-manager.
+# Certificate renewal after deployment is the organization's responsibility.
 #
-# For self-signed certificates (air-gapped/intranet):
-# kubectl apply -f - <<EOF
-# apiVersion: cert-manager.io/v1
-# kind: ClusterIssuer
-# metadata:
-#   name: selfsigned
-# spec:
-#   selfSigned: {}
-# ---
-# # Create CA certificate
-# apiVersion: cert-manager.io/v1
-# kind: Certificate
-# metadata:
-#   name: internal-ca
-#   namespace: cert-manager
-# spec:
-#   isCA: true
-#   commonName: Internal CA
-#   secretName: internal-ca-secret
-#   privateKey:
-#     algorithm: ECDSA
-#     size: 256
-#   issuerRef:
-#     name: selfsigned
-#     kind: ClusterIssuer
-# ---
-# # Use CA to issue certificates
-# apiVersion: cert-manager.io/v1
-# kind: ClusterIssuer
-# metadata:
-#   name: internal-ca
-# spec:
-#   ca:
-#     secretName: internal-ca-secret
-# EOF
+# Apply the ClusterIssuers from infrastructure/04-networking/cert-manager-install.yaml:
+#   kubectl apply -f infrastructure/04-networking/cert-manager-install.yaml
+#
+# This creates:
+#   - letsencrypt-prod: Production certificates (default for initial deployment)
+#   - letsencrypt-staging: Staging certificates (for testing, higher rate limits)
+#   - selfsigned: Self-signed certificates (fallback only)
 
 # ============================================================================
 # CERTIFICATE REQUEST EXAMPLE
@@ -218,8 +160,8 @@ prometheus:
 #   name: matrix-ingress
 #   annotations:
 #     cert-manager.io/cluster-issuer: letsencrypt-prod
-#     # OR for self-signed:
-#     # cert-manager.io/cluster-issuer: internal-ca
+#     # OR for staging (higher rate limits during testing):
+#     # cert-manager.io/cluster-issuer: letsencrypt-staging
 # spec:
 #   ingressClassName: nginx
 #   tls:
@@ -237,26 +179,6 @@ prometheus:
 #             name: synapse
 #             port:
 #               number: 8008
-
-# ============================================================================
-# AIR-GAPPED DEPLOYMENT NOTES
-# ============================================================================
-# For air-gapped deployments after initial setup:
-#
-# 1. Obtain Let's Encrypt certificates during setup phase (with internet)
-# 2. Extract certificate secrets before cutting internet
-# 3. After going air-gapped, certificates cannot auto-renew via ACME
-# 4. Options:
-#    a) Use self-signed certificates with internal CA
-#    b) Manually renew Let's Encrypt certs (requires temp internet)
-#    c) Use long-lived certificates from internal CA
-#
-# Recommended for air-gapped:
-# - Use internal-ca ClusterIssuer
-# - Generate long-lived certificates (1-2 years)
-# - Plan manual renewal process
-# - Distribute CA certificate to all clients
-# ============================================================================
 
 # ============================================================================
 # TROUBLESHOOTING

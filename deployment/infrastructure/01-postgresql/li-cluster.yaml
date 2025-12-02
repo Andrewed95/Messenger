@@ -133,19 +133,17 @@ spec:
 
   # Affinity rules
   affinity:
-    podAntiAffinity:
-      preferredDuringSchedulingIgnoredDuringExecution:
-        # Spread LI pods across different nodes (within LI cluster)
-        - weight: 100
-          podAffinityTerm:
-            labelSelector:
-              matchLabels:
-                cnpg.io/cluster: matrix-postgresql-li
-            topologyKey: kubernetes.io/hostname
-        # Prefer different nodes from main instance
-        - weight: 50
-          podAffinityTerm:
-            labelSelector:
-              matchLabels:
-                matrix.instance: main
-            topologyKey: kubernetes.io/hostname
+    # CLAUDE.md Section 7.1: All LI services must run on one server
+    # This ensures PostgreSQL LI runs on the designated LI node
+    nodeSelector:
+      node-role.kubernetes.io/li: "true"
+
+    # Tolerate LI node taints (if the node is dedicated to LI workloads)
+    tolerations:
+      - key: "dedicated"
+        operator: "Equal"
+        value: "li"
+        effect: "NoSchedule"
+
+    # Note: podAntiAffinity is not needed for single-instance LI PostgreSQL
+    # All LI services run on the same node by design (CLAUDE.md 7.1)

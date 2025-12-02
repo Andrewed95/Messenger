@@ -43,8 +43,8 @@ This directory contains Redis with Sentinel configuration for automatic failover
 
 ### 1. Redis ConfigMap
 - AOF persistence enabled (appendonly yes)
-- RDB disabled (AOF is safer)
-- 2GB memory limit with allkeys-lru eviction
+- RDB disabled (AOF is safer for HA)
+- 8GB memory limit with volatile-lru eviction
 - Password authentication enabled
 
 ### 2. Sentinel ConfigMap
@@ -445,8 +445,8 @@ kubectl scale statefulset redis -n matrix --replicas=3
 ## Performance Tuning
 
 Current configuration optimized for:
-- **Memory**: 2GB max per instance
-- **Eviction**: allkeys-lru (Least Recently Used)
+- **Memory**: 8GB max per instance
+- **Eviction**: volatile-lru (only keys with TTL)
 - **Persistence**: AOF with fsync everysec
 
 ### For Higher Throughput

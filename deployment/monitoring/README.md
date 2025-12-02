@@ -68,7 +68,7 @@ The monitoring stack provides comprehensive observability for:
 ### 2. Grafana (`02-grafana/`)
 - **Purpose**: Visualization and dashboards
 - **Port**: 3000 (80 internal)
-- **Replicas**: 2 (HA)
+- **Replicas**: 1 (single instance on dedicated monitoring server)
 - **Files**:
   - `dashboards-configmap.yaml`: Pre-configured dashboards
   - `README.md`: Dashboard creation and management

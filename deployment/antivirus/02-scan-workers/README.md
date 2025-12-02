@@ -441,23 +441,13 @@ kubectl exec -n matrix <clamav-pod> -c freshclam -- \
 
 ## Performance Optimization
 
-### Use Redis for Shared Cache
+### Cache Architecture
 
-Replace in-memory cache with Redis:
+The matrix-content-scanner-python uses **in-memory TTLCache** (from cachetools library) for caching scan results. Each scanner pod maintains its own independent cache.
 
-```yaml
-# Deploy Redis (if not already present)
-# Then update config.yaml:
-result_cache:
-  type: redis
-  redis_url: redis://redis.matrix.svc.cluster.local:6379/1
-  ttl: 7200  # 
-```
-
-**Benefits**:
-- Shared cache across all Content Scanner replicas
-- Persistent cache (survives pod restarts)
-- Higher cache hit ratio
+**IMPORTANT**: Redis caching is NOT supported by matrix-content-scanner-python. The solution achieves "scan-once" behavior through:
+1. **HAProxy consistent hashing**: Routes requests for the same media to the same scanner pod
+2. **Per-pod TTL cache**: Each pod caches results for configurable duration
 
 ### Increase Cache TTL
 
@@ -465,7 +455,7 @@ For rarely-changing media:
 
 ```yaml
 result_cache:
-  ttl: 86400  #  instead of 
+  ttl: 86400  # 24 hours instead of default 1 hour
 ```
 
 ### Adjust Max File Size

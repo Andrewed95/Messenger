@@ -38,6 +38,9 @@ data:
             compress: false
 
       # Replication endpoint for workers (internal only)
+      # SECURITY: Binds to all pod interfaces since workers connect via Kubernetes DNS.
+      # Network isolation is enforced by NetworkPolicies (infrastructure/04-networking/).
+      # The worker_replication_secret provides authentication for replication traffic.
       - port: 9093
         type: http
         bind_addresses: ['0.0.0.0']
@@ -221,13 +224,15 @@ data:
     # CRITICAL: Infinite retention for deleted messages (LI compliance)
     redaction_retention_period: null
 
-    # Recovery key module for E2EE key storage (integrates with key_vault)
-    # and LiveKit integration for WebRTC video/voice calling
-    modules:
-      - module: synapse_recovery_key_storage.RecoveryKeyStorageModule
-        config:
-          backend_url: "http://key-vault.matrix.svc.cluster.local:8000"
-          api_key: "${KEY_VAULT_API_KEY}"
+    # LI: Disable automatic message retention to preserve all messages
+    retention:
+      enabled: false
+
+    # NOTE: Recovery key storage is handled via the li.enabled endpoint below.
+    # When li.enabled: true, Synapse registers the /_synapse/client/v1/li/store_key
+    # endpoint (implemented in synapse/rest/client/li_proxy.py) which handles
+    # RSA-encrypted recovery key forwarding to key_vault.
+    # A Synapse module is NOT required - the li_proxy endpoint is built into synapse-li.
 
     # LI system configuration - enables key capture, endpoint protection, and session limiting
     # Per LI_IMPLEMENTATION.md Components 1, 3, and 3.5
@@ -390,7 +395,8 @@ data:
       # Global cache multiplier - 1.0 is baseline, 2.0 doubles all caches
       # Higher values use more memory but improve performance
       # Formula: 256MB RAM per 1.0 global_factor increment
-      global_factor: 1.5
+      # Per config.env.example CACHE_FACTOR default: 2.0 for production
+      global_factor: 2.0
       per_cache_factors:
         # Room membership cache - critical for large rooms
         get_users_in_room: 3.0
@@ -404,7 +410,7 @@ data:
 
     # ==================== PUSH NOTIFICATIONS ====================
     # NOTE: Push notifications (Sygnal) intentionally NOT configured
-    # Per CLAUDE.md Rule 4.3: No external services (air-gapped deployment)
+    # Per CLAUDE.md Rule 4.3: No external services
     # Push notifications require connection to Apple/Google servers
     # Clients will use long-polling via /sync endpoint for real-time updates
 

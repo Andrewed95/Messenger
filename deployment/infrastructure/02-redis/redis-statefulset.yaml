@@ -15,7 +15,10 @@ data:
     # Network
     bind 0.0.0.0
     port 6379
-    protected-mode no
+    # protected-mode yes is the secure default. Password authentication is
+    # configured via requirepass (added by init container from Secret).
+    # Network isolation is enforced by Kubernetes NetworkPolicies.
+    protected-mode yes
 
     # General
     daemonize no

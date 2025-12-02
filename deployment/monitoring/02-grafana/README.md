@@ -425,6 +425,7 @@ grafana:
   ingress:
     enabled: true
     annotations:
+      # Uses letsencrypt-prod for initial deployment (per CLAUDE.md 4.5)
       cert-manager.io/cluster-issuer: letsencrypt-prod
       nginx.ingress.kubernetes.io/whitelist-source-range: "10.0.0.0/8"
     hosts:

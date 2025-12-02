@@ -151,6 +151,11 @@ metadata:
     app.kubernetes.io/component: setup
 spec:
   template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: sync-system
+        app.kubernetes.io/component: setup
+        matrix.instance: sync
     spec:
       restartPolicy: OnFailure
       securityContext:
@@ -158,6 +163,20 @@ spec:
         runAsGroup: 999
         fsGroup: 999
         runAsNonRoot: true
+
+      # CLAUDE.md Section 7.1: All LI services must run on one server
+      # Sync system is an LI component that runs on the LI node
+      # Note: It needs network access to BOTH main and LI PostgreSQL
+      nodeSelector:
+        node-role.kubernetes.io/li: "true"
+
+      # Tolerate LI node taints (if the node is dedicated to LI workloads)
+      tolerations:
+        - key: "dedicated"
+          operator: "Equal"
+          value: "li"
+          effect: "NoSchedule"
+
       containers:
         - name: setup-replication
           image: postgres:16-alpine

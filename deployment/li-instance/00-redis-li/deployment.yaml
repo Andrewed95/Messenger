@@ -116,6 +116,18 @@ spec:
         seccompProfile:
           type: RuntimeDefault
 
+      # CLAUDE.md Section 7.1: All LI services must run on one server
+      # This ensures Redis LI runs on the designated LI node
+      nodeSelector:
+        node-role.kubernetes.io/li: "true"
+
+      # Tolerate LI node taints (if the node is dedicated to LI workloads)
+      tolerations:
+        - key: "dedicated"
+          operator: "Equal"
+          value: "li"
+          effect: "NoSchedule"
+
       containers:
         - name: redis
           image: redis:7.2-alpine

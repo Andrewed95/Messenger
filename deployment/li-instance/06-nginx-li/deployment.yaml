@@ -421,7 +421,7 @@ spec:
 # You must create TLS certificate secrets before deploying this nginx.
 # Each LI service needs its own certificate.
 #
-# Option 1: Self-signed certificates (for testing or air-gapped deployments)
+# Option 1: Self-signed certificates (for testing or internal deployments)
 # --------------------------------------------------------------------------
 # Generate self-signed certificates:
 #

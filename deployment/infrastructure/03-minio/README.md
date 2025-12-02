@@ -14,7 +14,6 @@ MinIO provides S3-compatible object storage for the Matrix deployment using dist
 - Erasure coding for data protection
 - Distributed mode for high availability
 - Scales horizontally
-- Air-gapped deployment capable
 - Self-healing on drive failures
 
 ## Architecture
@@ -49,7 +48,7 @@ MinIO provides S3-compatible object storage for the Matrix deployment using dist
 
 ### Comparison with Alternatives
 
-| Solution | HA | Complexity | Data Protection | Air-gapped | S3 API |
+| Solution | HA | Complexity | Data Protection | On-Premise | S3 API |
 |----------|----|-----------|-----------------| -----------|--------|
 | Single NFS | ❌ | Low | None | ✅ | ❌ |
 | Ceph RBD | ✅ | Very High | Replication | ✅ | ❌ |
@@ -61,7 +60,7 @@ MinIO provides S3-compatible object storage for the Matrix deployment using dist
 - ✅ Simpler than Ceph for Kubernetes
 - ✅ Native S3 API (Synapse, CloudNativePG support)
 - ✅ Erasure coding more efficient than 3x replication
-- ✅ Air-gapped deployment capable
+- ✅ On-premise deployment capable
 - ✅ Operator-managed (easier than manual deployment)
 
 ## Components
@@ -254,7 +253,7 @@ media_storage_providers:
     store_synchronous: true
     config:
       bucket: synapse-media
-      endpoint_url: http://minio.matrix.svc.cluster.local
+      endpoint_url: http://minio.matrix.svc.cluster.local:9000
       access_key_id: synapse-s3-user
       secret_access_key: <from-secret>
       region_name: us-east-1
@@ -267,7 +266,7 @@ media_storage_providers:
 backup:
   barmanObjectStore:
     destinationPath: s3://postgresql-backups/main/
-    endpointURL: http://minio.matrix.svc.cluster.local
+    endpointURL: http://minio.matrix.svc.cluster.local:9000
     s3Credentials:
       accessKeyId:
         name: minio-credentials
@@ -290,7 +289,7 @@ media_storage_providers:
     store_synchronous: true
     config:
       bucket: synapse-media  # SAME bucket as main instance
-      endpoint_url: http://minio.matrix.svc.cluster.local
+      endpoint_url: http://minio.matrix.svc.cluster.local:9000
       access_key_id: synapse-s3-user
       secret_access_key: <from-secret>
 ```
@@ -522,7 +521,7 @@ kubectl exec -n matrix $POD -- mc admin speedtest local/
 # Test from another pod
 kubectl run -n matrix minio-test --rm -it --image=alpine -- sh
 apk add curl
-curl -I http://minio.matrix.svc.cluster.local/minio/health/live
+curl -I http://minio.matrix.svc.cluster.local:9000/minio/health/live
 
 # Check service
 kubectl get svc minio -n matrix

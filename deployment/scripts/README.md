@@ -49,19 +49,11 @@ Automated deployment and validation scripts for Matrix/Synapse infrastructure.
 
 **Usage:**
 ```bash
-# Validate all phases
+# Run full validation
 ./validate-deployment.sh
-
-# Validate specific phase only
-./validate-deployment.sh --phase 1
-./validate-deployment.sh --phase 2
-./validate-deployment.sh --phase 3
-./validate-deployment.sh --phase 4
-./validate-deployment.sh --phase 5
-
-# Show detailed pod information
-./validate-deployment.sh --detailed
 ```
+
+**NOTE**: This script runs a complete validation of all deployment phases. It does not accept any command-line arguments.
 
 **Checks:**
 - ✅ Pod health and readiness
@@ -97,22 +89,19 @@ grep -r "CHANGEME" ../
 
 # Or deploy phase-by-phase
 ./deploy-all.sh --phase 1  # Infrastructure
-# Wait and validate before proceeding
-./validate-deployment.sh --phase 1
+# Wait for deployment, then run full validation
+./validate-deployment.sh
 
 ./deploy-all.sh --phase 2  # Main instance
-./validate-deployment.sh --phase 2
+./validate-deployment.sh
 
 # ... continue for phases 3-5
 ```
 
 **3. Validation**
 ```bash
-# Full validation
+# Full validation (checks all deployment phases)
 ./validate-deployment.sh
-
-# Check specific components
-./validate-deployment.sh --phase 1 --detailed
 ```
 
 **4. Post-Deployment**

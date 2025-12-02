@@ -4,7 +4,7 @@ This directory contains Kubernetes manifests for horizontally scalable Synapse w
 
 ## Worker Types
 
-Five essential worker types are configured:
+Nine worker types are configured:
 
 ### 1. Generic Worker (`generic-worker-deployment.yaml`)
 **Purpose**: Handles general client API endpoints
@@ -48,6 +48,42 @@ Five essential worker types are configured:
 
 **Use Case**: Handle thousands of long-polling /sync connections
 **Note**: Most heavily scaled worker type, uses strong anti-affinity
+
+### 6. Presence Writer (`presence-writer-deployment.yaml`)
+**Purpose**: Handles user presence updates (online/offline/unavailable)
+**Endpoints**: Internal only (stream writer)
+**Scaling**: 2 replicas (StatefulSet)
+**Resources**: 256-512Mi memory, 100-250m CPU per pod
+
+**Use Case**: Offload presence stream processing from main process
+**CRITICAL**: Listed in instance_map - changing replicas requires config update
+
+### 7. Typing Writer (`typing-writer-deployment.yaml`)
+**Purpose**: Handles typing indicator updates ("User is typing...")
+**Endpoints**: Internal only (stream writer)
+**Scaling**: 2 replicas (StatefulSet)
+**Resources**: 256-512Mi memory, 100-250m CPU per pod
+
+**Use Case**: Offload typing notification stream from main process
+**CRITICAL**: Listed in instance_map - changing replicas requires config update
+
+### 8. To-Device Writer (`todevice-writer-deployment.yaml`)
+**Purpose**: Handles to-device messages (E2EE key exchanges, etc.)
+**Endpoints**: Internal only (stream writer)
+**Scaling**: 2 replicas (StatefulSet)
+**Resources**: 256-512Mi memory, 100-250m CPU per pod
+
+**Use Case**: Offload E2EE key exchange traffic from main process
+**CRITICAL**: Listed in instance_map - changing replicas requires config update
+
+### 9. Receipts Writer (`receipts-writer-deployment.yaml`)
+**Purpose**: Handles read receipt updates
+**Endpoints**: Internal only (stream writer)
+**Scaling**: 2 replicas (StatefulSet)
+**Resources**: 256-512Mi memory, 100-250m CPU per pod
+
+**Use Case**: Offload read receipt stream from main process
+**CRITICAL**: Listed in instance_map - changing replicas requires config update
 
 ## Architecture
 

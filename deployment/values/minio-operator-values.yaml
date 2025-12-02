@@ -54,6 +54,7 @@ console:
   ingress:
     enabled: false  # Enable if you want web UI access
     # annotations:
+    #   # Uses letsencrypt-prod for initial deployment (per CLAUDE.md 4.5)
     #   cert-manager.io/cluster-issuer: letsencrypt-prod
     # host: minio-console.CHANGE_TO_YOUR_DOMAIN
     # tls: true
@@ -74,15 +75,15 @@ prometheus:
 # kubectl apply -f manifests/minio-tenant.yaml
 #
 # Tenant will be configured with:
-# - 4 servers × 4 drives/server = 16 drives total (1 erasure set)
-# - Erasure coding EC:4 (12 data + 4 parity)
-# - 75% usable capacity (lose up to 4 drives and still operational)
-# - Total storage: 4TB per server × 4 servers = 16TB raw
-# - Usable: ~12TB after EC:4
+# - 4 servers × 2 drives/server = 8 drives total (1 erasure set)
+# - Erasure coding EC:4 (4 data + 4 parity shards)
+# - 50% usable capacity (lose up to 4 drives and still operational)
+# - Total storage: 500Gi × 8 drives = 4Ti raw
+# - Usable: ~2Ti after EC:4
 #
 # For 20K CCU:
-# - Estimated media growth: 500GB-1TB/day
-# - 16TB provides 12-24 days before expansion needed
+# - Estimated media growth: 50-100GB/day
+# - 2Ti provides 20-40 days before expansion needed
 # - Plan expansion strategy accordingly
 # ============================================================================
 
@@ -107,7 +108,7 @@ serviceAccount:
 # spec:
 #   pools:
 #     - servers: 4           # 4 MinIO servers
-#       volumesPerServer: 4  # 4 drives per server
+#       volumesPerServer: 2  # 2 drives per server (8 total for EC:4)
 #       volumeClaimTemplate:
 #         spec:
 #           storageClassName: CHANGE_TO_YOUR_STORAGE_CLASS

@@ -31,23 +31,6 @@ Complete production-grade Matrix Synapse homeserver deployment on Kubernetes, su
 2. **TLS Certificates**: Either use Let's Encrypt during setup, or provide your own certificates
 3. **DNS Configuration**: Internal DNS resolving all service domains
 
-**After Internet Cutoff (organization's responsibility):**
-- **Virus Definitions**: Manual updates to ClamAV if needed (quarterly recommended)
-- **TLS Renewal**: Manual certificate renewal process
-- **Security Patches**: Rebuild and redeploy container images as needed
-
-### Air-Gapped Configuration:
-
-For fully offline operation after deployment, change TLS certificate issuer:
-```yaml
-# In all Ingress files, change:
-cert-manager.io/cluster-issuer: "letsencrypt-prod"
-# To:
-cert-manager.io/cluster-issuer: "selfsigned"
-```
-
-See `infrastructure/04-networking/cert-manager-install.yaml` for available issuers.
-
 ## 🎯 What This Deployment Provides
 
 ### Core Features
@@ -56,7 +39,7 @@ See `infrastructure/04-networking/cert-manager-install.yaml` for available issue
 - ✅ **Lawful Intercept**: Complete LI instance with E2EE recovery
 - ✅ **Antivirus**: Real-time ClamAV scanning of all media
 - ✅ **Monitoring**: Prometheus + Grafana + Loki observability
-- ✅ **Air-gapped**: Can run fully offline after initial setup
+- ✅ **Intranet Ready**: Operates fully within internal network after initial setup
 
 ### Architecture Highlights
 - **Worker-based Synapse**: 5 worker types with intelligent HAProxy routing
@@ -500,6 +483,15 @@ Follow the phase-by-phase commands below for manual control:
 **WHERE:** Run ALL commands in this phase from your **management node**
 
 **WORKING DIRECTORY:** `deployment/` (root of this repository)
+
+**Step 0: Create Namespace** (MUST do first)
+```bash
+# Create the matrix namespace before any other resources
+kubectl apply -f namespace.yaml
+
+# Verify namespace was created
+kubectl get namespace matrix
+```
 
 **Deploy PostgreSQL Clusters:**
 ```bash

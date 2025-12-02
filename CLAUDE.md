@@ -192,15 +192,38 @@ When you provide a command, file, or step:
   - Disable Matrix **bridges** and **integrations** by default on the backend.
   - Any optional external features that depend on internet access must be **off by default** in configuration.
 
-4.4 **TLS / HTTPS**
+4.4 **Internet-dependent maintenance is out of scope**
 
 - Both main and LI environments **must** be exposed over **HTTPS**.
+- The deployment solution covers: **Configure → Deploy → Update** (version upgrades).
+- After deployment, **any ongoing task that requires internet access is out of scope**, including but not limited to:
+  - TLS certificate renewal (ACME, Let's Encrypt).
+  - Antivirus definition updates (ClamAV freshclam).
+  - Operating system or package updates.
+  - Security patches that require downloading from the internet.
 - You **must not**:
-  - Describe or implement certificate renewal processes.
-  - Depend on public ACME endpoints or other internet interactions for ongoing operation.
-- Treat TLS renewal and other ongoing internet-dependent tasks as **outside the scope** of this solution; they are handled by the organization’s own infrastructure team.
+  - Describe or document how to handle these internet-dependent maintenance tasks.
+  - Create "air-gapped" guides, workarounds, or procedures for offline operation.
+  - Add configuration options specifically for "air-gapped" or "offline" scenarios.
+- The organization's infrastructure team handles all ongoing internet-dependent maintenance.
+- The solution assumes: initial setup with internet → deploy → system works without internet → organization handles maintenance independently.
 
-4.5 **Images and registries are out of scope**
+4.5 **TLS certificate initial setup**
+
+- During initial deployment (when internet access is available):
+  - Use **Let's Encrypt** with cert-manager for automatic TLS certificate provisioning.
+  - Configure `letsencrypt-prod` as the default ClusterIssuer for production certificates.
+- What to include:
+  - cert-manager installation and ClusterIssuer configuration.
+  - Ingress annotations for automatic certificate generation.
+  - Verification that certificates are issued successfully.
+- What NOT to include:
+  - Certificate renewal procedures (organization's responsibility after deployment).
+  - Alternative certificate provisioning methods (self-signed, manual, etc.).
+  - Troubleshooting for post-deployment certificate issues.
+- The initial Let's Encrypt certificates will be valid for 90 days; the organization handles renewal independently.
+
+4.6 **Images and registries are out of scope**
 
 - Do **not** describe:
   - How to build Docker images.
@@ -351,9 +374,11 @@ When you provide a command, file, or step:
   - Use **ClamAV** as the antivirus scanning service.
   - The ClamAV deployment must be **scalable**:
     - Able to scale up based on organization size and usage.
-  - **Each file must be scanned only once**:
-    - Use a shared cache (e.g., Redis) across all scanner instances.
-    - Scanning the same file multiple times wastes resources and must be avoided.
+  - **Each file should be scanned only once** to avoid wasting resources:
+    - The matrix-content-scanner uses **in-memory TTL caching** (cachetools.TTLCache).
+    - Each scanner pod maintains its own cache; there is NO shared Redis cache.
+    - Configure `result_cache.max_size` and `result_cache.ttl` for cache behaviour.
+    - Note: Redis caching is NOT supported by matrix-content-scanner-python.
   - **Files in encrypted rooms (E2EE) must also be scanned**:
     - The scanner must be able to decrypt encrypted media for scanning.
     - Decryption happens in memory only; decrypted content must never be persisted to disk.

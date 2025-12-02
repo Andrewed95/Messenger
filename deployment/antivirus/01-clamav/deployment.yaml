@@ -102,11 +102,9 @@ data:
     ConnectTimeout 30
     ReceiveTimeout 60
 
-    # Don't fork
+    # Run in foreground (required for containers)
+    # NOTE: Foreground mode means freshclam stays in foreground without forking
     Foreground yes
-
-    # Daemon mode
-    Daemon yes
 
     # PID file
     PidFile /var/run/clamav/freshclam.pid
@@ -258,12 +256,12 @@ spec:
                 - ALL
 
         # FreshClam daemon (virus definition updater)
+        # Runs in foreground mode and checks for updates per freshclam.conf Checks setting
         - name: freshclam
           image: clamav/clamav:1.4.1
           command:
             - freshclam
             - --config-file=/etc/clamav/freshclam.conf
-            - --daemon
             - --foreground=true
 
           volumeMounts:

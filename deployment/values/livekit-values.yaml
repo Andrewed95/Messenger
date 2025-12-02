@@ -199,6 +199,7 @@ ingress:
   enabled: true
   className: nginx
   annotations:
+    # Uses letsencrypt-prod for initial deployment (per CLAUDE.md 4.5)
     cert-manager.io/cluster-issuer: letsencrypt-prod
     nginx.ingress.kubernetes.io/ssl-redirect: "true"
     # Increase timeouts for long-lived WebSocket connections

@@ -101,9 +101,9 @@ spec:
       encoding: UTF8
       localeCollate: C
       localeCType: C
+      # NOTE: key_vault uses SQLite (not PostgreSQL) - see li-instance/05-key-vault/
       postInitSQL:
         - CREATE DATABASE matrix_authentication_service OWNER synapse;
-        # NOTE: key_vault uses SQLite (not PostgreSQL) - see li-instance/05-key-vault/
 
   # Monitoring configuration
   monitoring:

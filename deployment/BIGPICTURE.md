@@ -52,30 +52,30 @@ Here's your path from zero to a running production Matrix homeserver:
 │                    YOUR DEPLOYMENT JOURNEY                      │
 └─────────────────────────────────────────────────────────────────┘
 
-📚 PHASE 0: UNDERSTAND & PREPARE
+📚 PREP 0: UNDERSTAND & PREPARE
    ├─ Read this document (BIGPICTURE.md)
    ├─ Understand what you're building
    └─ Gather prerequisites (servers, domains, etc.)
         ↓
-🔧 PHASE 1: SETUP FOUNDATION
+🔧 PREP 1: SETUP FOUNDATION
    ├─ Setup management node (docs/00-WORKSTATION-SETUP.md)
    ├─ Deploy Kubernetes cluster (docs/00-KUBERNETES-INSTALLATION-DEBIAN-OVH.md)
    └─ Determine resource requirements (docs/SCALING-GUIDE.md)
         ↓
-⚙️ PHASE 2: CONFIGURATION
+⚙️ PREP 2: CONFIGURATION
    ├─ Generate secrets
    ├─ Update YAML files with secrets
    ├─ Configure domains
    ├─ Verify storage class
    └─ Review all parameters
         ↓
-🚀 PHASE 3: INFRASTRUCTURE DEPLOYMENT
+🚀 PHASE 1: INFRASTRUCTURE DEPLOYMENT
    ├─ PostgreSQL (main + LI databases)
    ├─ Redis Sentinel (caching + workers)
    ├─ MinIO (S3-compatible object storage)
    └─ Networking (ingress, TLS, network policies)
         ↓
-💬 PHASE 4: MAIN INSTANCE DEPLOYMENT
+💬 PHASE 2: MAIN INSTANCE DEPLOYMENT
    ├─ Synapse main process
    ├─ Synapse workers (9 types for horizontal scaling)
    │   ├─ synchrotron (sync requests)
@@ -93,23 +93,23 @@ Here's your path from zero to a running production Matrix homeserver:
    # NOTE: Sygnal (push) not included - requires external Apple/Google servers
    └─ LiveKit (optional video/voice)
         ↓
-🔍 PHASE 5: LI INSTANCE DEPLOYMENT
+🔍 PHASE 3: LI INSTANCE DEPLOYMENT
    ├─ Sync system (PostgreSQL logical replication)
    ├─ Synapse LI (read-only instance)
    ├─ Element Web LI (shows deleted messages)
    ├─ Synapse Admin LI (forensics interface)
    └─ key_vault (E2EE recovery - in LI network)
         ↓
-📊 PHASE 6: MONITORING DEPLOYMENT
+📊 PHASE 4: MONITORING DEPLOYMENT
    ├─ Prometheus (metrics collection)
    ├─ Grafana (dashboards)
    └─ Loki (log aggregation)
         ↓
-🛡️ PHASE 7: ANTIVIRUS DEPLOYMENT
+🛡️ PHASE 5: ANTIVIRUS DEPLOYMENT
    ├─ ClamAV (virus scanner)
    └─ Content Scanner (media proxy with AV)
         ↓
-✅ PHASE 8: VERIFICATION & TESTING
+✅ VERIFY: TESTING & VALIDATION
    ├─ Verify all pods running
    ├─ Create first user
    ├─ Test login via Element Web
@@ -123,7 +123,7 @@ Here's your path from zero to a running production Matrix homeserver:
 
 ## Architecture & Component Diagrams
 
-### 1. **The Foundation Layer** (Phase 3: Infrastructure)
+### 1. **The Foundation Layer** (Phase 1: Infrastructure)
 
 ```
 ┌────────────────────────────────────────────────────────────────────┐
@@ -214,7 +214,7 @@ Here's your path from zero to a running production Matrix homeserver:
 
 ---
 
-### 2. **The Main Instance** (Phase 4: Your Production Homeserver)
+### 2. **The Main Instance** (Phase 2: Your Production Homeserver)
 
 ```
 ┌────────────────────────────────────────────────────────────────────┐
@@ -289,7 +289,7 @@ Purpose: Handle all Matrix protocol operations
 │  Purpose: Enable voice/video calls through firewalls               │
 ├────────────────────────────────────────────────────────────────────┤
 │  NOTE: Sygnal (push notifications) NOT INCLUDED                    │
-│  Reason: Requires external Apple/Google servers (air-gapped deploy)│
+│  Reason: Requires external Apple/Google servers                    │
 ├────────────────────────────────────────────────────────────────────┤
 │  NOTE: key_vault is deployed in LI INSTANCE (Phase 5)              │
 │  Located in LI network for security (per CLAUDE.md requirements)   │
@@ -308,7 +308,7 @@ Purpose: Handle all Matrix protocol operations
 
 ---
 
-### 3. **The LI (Lawful Intercept) Instance** (Phase 5: Compliance)
+### 3. **The LI (Lawful Intercept) Instance** (Phase 3: Compliance)
 
 ```
 ┌────────────────────────────────────────────────────────────────────┐
@@ -424,7 +424,7 @@ Purpose: Handle all Matrix protocol operations
 
 ---
 
-### 4. **Monitoring Stack** (Phase 6: Observability)
+### 4. **Monitoring Stack** (Phase 4: Observability)
 
 ```
 ┌────────────────────────────────────────────────────────────────────┐
@@ -495,7 +495,7 @@ Purpose: Handle all Matrix protocol operations
 
 ---
 
-### 5. **Antivirus Protection** (Phase 7: Security)
+### 5. **Antivirus Protection** (Phase 5: Security)
 
 ```
 ┌────────────────────────────────────────────────────────────────────┐
@@ -576,7 +576,7 @@ deployment/
 │   Purpose: Kubernetes namespace where everything deploys
 │   When: First deployment step (or auto-applied by scripts)
 │
-├── infrastructure/             ← PHASE 3: Foundation
+├── infrastructure/             ← PHASE 1: Foundation
 │   │
 │   ├── 01-postgresql/
 │   │   ├── main-cluster.yaml       → Main database (HA cluster)
@@ -602,7 +602,7 @@ deployment/
 │       Purpose: Ingress routing, TLS, network security
 │       Configuration: Domains, TLS issuers
 │
-├── main-instance/              ← PHASE 4: Your Homeserver
+├── main-instance/              ← PHASE 2: Your Homeserver
 │   │
 │   ├── 01-synapse/
 │   │   ├── configmap.yaml          → homeserver.yaml + log.yaml
@@ -650,7 +650,7 @@ deployment/
 │   # NOTE: 07-sygnal/ NOT INCLUDED - requires external Apple/Google servers
 │   # NOTE: key_vault is in li-instance/05-key-vault/ (LI network)
 │
-├── li-instance/                ← PHASE 5: Compliance
+├── li-instance/                ← PHASE 3: Compliance
 │   │
 │   ├── 01-synapse-li/
 │   │   └── deployment.yaml         → Read-only Synapse instance
@@ -681,7 +681,7 @@ deployment/
 │   └── README.md               → Complete LI architecture guide
 │       Purpose: Deep dive into LI design and compliance
 │
-├── monitoring/                 ← PHASE 6: Observability
+├── monitoring/                 ← PHASE 4: Observability
 │   │
 │   ├── 01-prometheus/
 │   │   └── servicemonitors.yaml    → Auto-discover metrics endpoints
@@ -698,7 +698,7 @@ deployment/
 │       Purpose: Log aggregation
 │       Configuration: values/loki-values.yaml
 │
-├── antivirus/                  ← PHASE 7: Security
+├── antivirus/                  ← PHASE 5: Security
 │   │
 │   ├── 01-clamav/
 │   │   └── deployment.yaml         → ClamAV DaemonSet

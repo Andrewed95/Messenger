@@ -206,14 +206,8 @@ spec:
         - protocol: TCP
           port: 6379
 
-    # Allow from content-scanner (antivirus scan result cache)
-    - from:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/name: content-scanner
-      ports:
-        - protocol: TCP
-          port: 6379
+    # NOTE: content-scanner uses in-memory TTLCache (not Redis)
+    # Per CLAUDE.md Section 8: Redis caching is NOT supported by matrix-content-scanner-python
 
     # Allow internal Redis cluster communication
     - from:
@@ -491,6 +485,183 @@ spec:
         - protocol: TCP
           port: 6379
 
+    # Allow key_vault access (for LI admin to RETRIEVE recovery keys)
+    # Per CLAUDE.md 3.3: LI admin retrieves keys for E2EE recovery in lawful intercept
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: key-vault
+      ports:
+        - protocol: TCP
+          port: 8000
+
+---
+###############################################################################
+# 8.5. Synapse Main Ingress Policy
+#      CRITICAL: Allows HAProxy to route traffic to Synapse main pods
+###############################################################################
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: synapse-main-ingress
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: networkpolicy
+    app.kubernetes.io/component: application
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: synapse
+      app.kubernetes.io/component: homeserver
+      matrix.instance: main
+  policyTypes:
+    - Ingress
+  ingress:
+    # Allow from HAProxy load balancer
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: haproxy
+      ports:
+        - protocol: TCP
+          port: 8008  # HTTP API
+        - protocol: TCP
+          port: 9090  # Metrics
+        - protocol: TCP
+          port: 9093  # Replication
+
+    # Allow from ingress controller (for direct access if needed)
+    - from:
+        - namespaceSelector:
+            matchExpressions:
+              - key: kubernetes.io/metadata.name
+                operator: In
+                values: ["ingress-nginx"]
+      ports:
+        - protocol: TCP
+          port: 8008
+        - protocol: TCP
+          port: 8448  # Federation
+
+    # Allow from Synapse workers (for replication)
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: synapse
+              app.kubernetes.io/type: worker
+      ports:
+        - protocol: TCP
+          port: 9093  # Replication port
+
+---
+###############################################################################
+# 8.6. Synapse Workers Ingress Policy
+#      CRITICAL: Allows HAProxy to route traffic to Synapse worker pods
+###############################################################################
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: synapse-workers-ingress
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: networkpolicy
+    app.kubernetes.io/component: workers
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: synapse
+      app.kubernetes.io/type: worker
+  policyTypes:
+    - Ingress
+  ingress:
+    # Allow from HAProxy load balancer
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: haproxy
+      ports:
+        - protocol: TCP
+          port: 8008  # HTTP API
+        - protocol: TCP
+          port: 9090  # Metrics
+
+    # Allow from Synapse main (for replication coordination)
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: synapse
+              app.kubernetes.io/component: homeserver
+      ports:
+        - protocol: TCP
+          port: 9093  # Replication port
+
+---
+###############################################################################
+# 8.7. Element Web Ingress Policy
+#      CRITICAL: Allows ingress controller to serve Element Web
+###############################################################################
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: element-web-ingress
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: networkpolicy
+    app.kubernetes.io/component: client
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: element-web
+      matrix.instance: main
+  policyTypes:
+    - Ingress
+  ingress:
+    # Allow from ingress-nginx namespace
+    - from:
+        - namespaceSelector:
+            matchExpressions:
+              - key: kubernetes.io/metadata.name
+                operator: In
+                values: ["ingress-nginx"]
+      ports:
+        - protocol: TCP
+          port: 80
+
+---
+###############################################################################
+# 8.8. HAProxy Ingress Policy
+#      CRITICAL: Allows ingress controller to route traffic to HAProxy
+###############################################################################
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: haproxy-ingress
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: networkpolicy
+    app.kubernetes.io/component: load-balancer
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: haproxy
+  policyTypes:
+    - Ingress
+  ingress:
+    # Allow from ingress-nginx namespace
+    - from:
+        - namespaceSelector:
+            matchExpressions:
+              - key: kubernetes.io/metadata.name
+                operator: In
+                values: ["ingress-nginx"]
+      ports:
+        - protocol: TCP
+          port: 8008  # Main entry point
+        - protocol: TCP
+          port: 8448  # Federation
+        - protocol: TCP
+          port: 8404  # Stats
+
 ---
 ###############################################################################
 # 9. Synapse Main Egress Policy
@@ -573,8 +744,8 @@ spec:
           port: 7880
 
     # NOTE: Sygnal (push notifications) intentionally NOT included
-    # Per CLAUDE.md Rule 4.3: No external services (air-gapped deployment)
-    # Push notifications require Apple/Google server connectivity
+    # Per CLAUDE.md Rule 4.3: No external services
+    # Push notifications require external Apple/Google server connectivity
 
     # Allow coturn (TURN/STUN)
     - to:
@@ -932,6 +1103,15 @@ spec:
       ports:
         - protocol: TCP
           port: 8008
+
+    # Allow MinIO access (to download files for scanning)
+    - to:
+        - podSelector:
+            matchLabels:
+              v1.min.io/tenant: matrix-minio
+      ports:
+        - protocol: TCP
+          port: 9000  # S3 API
 
 # NOTE: Sync System NetworkPolicy is defined in sync-system-networkpolicy.yaml
 # That file contains the complete sync-system-access policy with Redis access
