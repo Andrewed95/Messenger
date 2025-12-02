@@ -55,9 +55,9 @@ This directory contains networking configuration for security, ingress, and TLS 
 
 ## Components
 
-### 1. NetworkPolicies (networkpolicies.yaml)
+### 1. NetworkPolicies (networkpolicies.yaml + sync-system-networkpolicy.yaml)
 
-**Total: 13 NetworkPolicy objects**
+**Total: 25+ NetworkPolicy objects** (includes sync-system policies)
 
 #### Global Policies
 

@@ -572,7 +572,7 @@ All scans are logged:
 4. **Test monthly**: Upload EICAR test file to verify scanning works
 5. **Review logs weekly**: Check for false positives or errors
 6. **Allocate sufficient resources**: ClamAV needs 1-2GB RAM per node
-7. **Redis cache ensures scan-once**: Each file scanned exactly once (24-hour TTL)
+7. **In-memory cache ensures scan-once**: Each file scanned exactly once per pod (24-hour TTL). Note: Redis caching is NOT supported by matrix-content-scanner-python.
 8. **Scale Content Scanner**: Add replicas during high traffic periods
 
 ## Upgrade

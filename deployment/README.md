@@ -42,11 +42,11 @@ Complete production-grade Matrix Synapse homeserver deployment on Kubernetes, su
 - ✅ **Intranet Ready**: Operates fully within internal network after initial setup
 
 ### Architecture Highlights
-- **Worker-based Synapse**: 5 worker types with intelligent HAProxy routing
+- **Worker-based Synapse**: 9 worker types with intelligent HAProxy routing
 - **HA Database**: CloudNativePG with synchronous replication
 - **Distributed Storage**: MinIO with EC:4 erasure coding
 - **Redis Sentinel**: Automatic failover for caching
-- **Zero-trust Security**: 16+ NetworkPolicies with strict isolation
+- **Zero-trust Security**: 25+ NetworkPolicies with strict isolation
 
 ---
 
@@ -66,7 +66,7 @@ deployment/
 ├── main-instance/               ← Phase 2: Main Matrix Instance
 │   ├── 01-synapse/              # Synapse main process
 │   ├── 02-element-web/          # Web client interface
-│   ├── 02-workers/              # 5 worker types (synchrotron, generic, etc.)
+│   ├── 02-workers/              # 9 worker types (synchrotron, generic, media, event-persister, etc.)
 │   ├── 03-haproxy/              # Intelligent load balancer
 │   ├── 04-livekit/              # Video/voice calling (Helm reference)
 │   └── 06-coturn/               # TURN/STUN NAT traversal
@@ -104,7 +104,7 @@ deployment/
 │
 └── docs/                        ← Reference Guides
     ├── 00-WORKSTATION-SETUP.md           (REQUIRED: Setup management node)
-    ├── 00-KUBERNETES-INSTALLATION.md     (REQUIRED: Setup K8s cluster)
+    ├── 00-KUBERNETES-INSTALLATION-DEBIAN-OVH.md  (REQUIRED: Setup K8s cluster)
     ├── SCALING-GUIDE.md                  (REQUIRED: Determine resources)
     ├── CONFIGURATION-REFERENCE.md        (Optional: Parameter details)
     ├── OPERATIONS-UPDATE-GUIDE.md        (Post-deployment operations)
@@ -1011,7 +1011,7 @@ Replace `example.com` with your actual domain in:
 Check all NetworkPolicies are applied:
 ```bash
 kubectl get networkpolicies -n matrix
-# Should show 16+ policies
+# Should show 25+ policies
 ```
 
 ---

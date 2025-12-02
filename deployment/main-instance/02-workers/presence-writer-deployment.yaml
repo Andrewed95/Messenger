@@ -50,6 +50,18 @@ spec:
         seccompProfile:
           type: RuntimeDefault
 
+      affinity:
+        podAntiAffinity:
+          # Soft preference to spread pods across nodes for HA
+          # Uses "preferred" not "required" to allow scheduling on smaller clusters
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/component: presence-writer
+                topologyKey: kubernetes.io/hostname
+
       initContainers:
         - name: generate-worker-config
           image: matrixdotorg/synapse:v1.119.0

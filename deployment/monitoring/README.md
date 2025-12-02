@@ -195,7 +195,7 @@ kubectl port-forward -n monitoring svc/prometheus-kube-prometheus-prometheus 909
 | Component | Metrics Port | Metrics Path | ServiceMonitor | Notes |
 |-----------|--------------|--------------|----------------|-------|
 | **Synapse Main** | 9090 | `/_synapse/metrics` | ✅ synapse | Main homeserver process |
-| **Synapse Workers** | 9090 | `/_synapse/metrics` | ✅ synapse-workers | All 5 worker types |
+| **Synapse Workers** | 9090 | `/_synapse/metrics` | ✅ synapse-workers | All 9 worker types |
 | **Synapse LI** | 9090 | `/_synapse/metrics` | ✅ synapse-li | Read-only LI instance |
 | **PostgreSQL Main** | 9187 | `/metrics` | ✅ PodMonitor | CloudNativePG |
 | **PostgreSQL LI** | 9187 | `/metrics` | ✅ PodMonitor | CloudNativePG LI |

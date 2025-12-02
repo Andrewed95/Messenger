@@ -95,7 +95,7 @@ main-instance/
 - **Ports**: 8008 (HTTP), 9093 (replication), 9090 (metrics)
 
 ### 2. Synapse Workers (02-workers/)
-Five worker types for horizontal scaling:
+Nine worker types for horizontal scaling:
 - **Synchrotron** (4-16 replicas): /sync long-polling connections
 - **Generic Worker** (2-16 replicas): General client API requests
 - **Media Repository** (2-8 replicas): Media upload/download/thumbnailing

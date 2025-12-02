@@ -141,7 +141,11 @@ spec:
 
       containers:
         - name: element-web
-          image: vectorim/element-web:v1.11.96
+          # CRITICAL: Must use custom-built element-web-li image that displays deleted messages
+          # Build from: element-web-li/ directory using included Dockerfile
+          # Contains: LIRedactedBody component, LIRedactedEventsStore, custom CSS
+          # Standard vectorim/element-web will NOT show deleted message content!
+          image: registry.example.com/matrix/element-web-li:v1.11.96
           imagePullPolicy: IfNotPresent
 
           ports:

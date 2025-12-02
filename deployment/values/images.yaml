@@ -43,8 +43,30 @@ haproxy:
 
 # Auxiliary Services
 element_web:
-  # Element Web client
+  # Element Web client (main instance)
   image: vectorim/element-web:v1.11.77
+  imagePullPolicy: IfNotPresent
+
+element_web_li:
+  # Element Web LI client (CUSTOM BUILD REQUIRED)
+  #
+  # CRITICAL: This MUST be a custom-built image, NOT standard vectorim/element-web!
+  # Standard Element Web will NOT display deleted message content.
+  #
+  # Custom components included in element-web-li/:
+  #   - LIRedactedBody: Shows original content of deleted messages
+  #   - LIRedactedEventsStore: Stores and retrieves redacted events
+  #   - Custom CSS: Visual distinction for deleted messages
+  #
+  # Build procedure:
+  #   1. cd element-web-li/
+  #   2. docker build -t registry.yourorg.com/matrix/element-web-li:v1.11.96 .
+  #   3. docker push registry.yourorg.com/matrix/element-web-li:v1.11.96
+  #   4. Update image reference below with your registry URL
+  #
+  # Replace "registry.example.com" with your organization's private registry
+  #
+  image: registry.example.com/matrix/element-web-li:v1.11.96
   imagePullPolicy: IfNotPresent
 
 coturn:

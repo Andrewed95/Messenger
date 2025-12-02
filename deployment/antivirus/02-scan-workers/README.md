@@ -159,7 +159,7 @@ proxy:
 **Result Cache**:
 ```yaml
 result_cache:
-  type: memory     # In-memory cache (can use Redis for shared cache)
+  type: memory     # In-memory cache (Redis NOT supported by matrix-content-scanner-python)
   ttl: 3600        # 
   max_size: 10000  # 10,000 entries
 ```
@@ -406,7 +406,7 @@ rate(content_scanner_cache_hits_total[5m]) / rate(content_scanner_scans_total[5m
 
 **Solutions**:
 - Increase cache TTL (longer than )
-- Use Redis for shared cache (instead of in-memory)
+- Use HAProxy consistent hashing to route same media to same scanner pod
 - Increase ClamAV resources
 - Scale Content Scanner horizontally
 

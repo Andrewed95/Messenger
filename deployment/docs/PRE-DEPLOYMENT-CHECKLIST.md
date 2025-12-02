@@ -481,7 +481,7 @@ The deployer generates all secrets and credentials during deployment using the p
         operator: In
         values: ["kube-system"]  # or ["ingress-nginx"]
   ```
-- [ ] **Verify all 13 NetworkPolicies:**
+- [ ] **Verify all 25+ NetworkPolicies:**
   - [ ] DNS access (`allow-dns`)
   - [ ] Database access policies
   - [ ] key_vault isolation

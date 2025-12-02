@@ -192,7 +192,7 @@ Here's your path from zero to a running production Matrix homeserver:
 │  │  ├─ Automatic TLS certificate generation              │        │
 │  │  └─ Let's Encrypt integration                         │        │
 │  ├────────────────────────────────────────────────────────┤        │
-│  │  NetworkPolicies (13 policies)                        │        │
+│  │  NetworkPolicies (25+ policies)                       │        │
 │  │  ├─ default-deny-all (zero-trust)                     │        │
 │  │  ├─ Allow DNS                                         │        │
 │  │  ├─ PostgreSQL access control                         │        │
