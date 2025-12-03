@@ -371,41 +371,6 @@ timedatectl status
 
 **CRITICAL:** Time skew > will cause certificate validation failures.
 
-### 3.2 Configure Firewall
-
-**WHERE:** All nodes
-**WHEN:** Before Kubernetes installation
-**WHY:** Security and proper network access
-**HOW:** Use iptables (Debian 12 default is nftables, but Kubernetes works better with iptables legacy mode)
-
-```bash
-# Switch to iptables legacy mode (kubeadm compatibility)
-update-alternatives --set iptables /usr/sbin/iptables-legacy
-update-alternatives --set ip6tables /usr/sbin/ip6tables-legacy
-update-alternatives --set arptables /usr/sbin/arptables-legacy
-update-alternatives --set ebtables /usr/sbin/ebtables-legacy
-
-# Install iptables-persistent to save rules
-apt-get install -y iptables-persistent
-
-# Allow established connections
-iptables -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
-
-# Allow loopback
-iptables -A INPUT -i lo -j ACCEPT
-
-# Allow SSH (IMPORTANT - don't lock yourself out!)
-iptables -A INPUT -p tcp --dport 22 -j ACCEPT
-
-# Allow from private network (adjust to your network)
-iptables -A INPUT -s 192.168.0.0/16 -j ACCEPT
-
-# Save rules
-iptables-save > /etc/iptables/rules.v4
-```
-
-**NOTE:** Specific Kubernetes ports will be opened after installation.
-
 ---
 
 ## 4. Container Runtime Installation

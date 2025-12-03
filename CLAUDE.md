@@ -135,18 +135,20 @@ When you provide a command, file, or step:
     - Which services they affect.
     - What extra configuration / deployment behaviour is required.
 
-3.3 **Isolation between main and LI**
+3.3 **Relationship between main and LI**
 
-- `homeserver` name in LI **must be identical** to the main environment’s homeserver name.
+- `homeserver` name in LI **must be identical** to the main environment's homeserver name.
 - `element-web-li` and `synapse-admin-li` must **connect to `synapse-li`**, not to the main Synapse.
-- LI stack runs on a **separate network** from the main environment.
-- From the main environment, only:
-  - Main Synapse may access `key_vault` in the LI network, and only for:
-    - Storing recovery keys.
+- All servers (main and LI) are in the **same network** and can communicate without restrictions.
+- From the main environment:
+  - Main Synapse may access `key_vault` for storing recovery keys.
 - Data synchronization from main → LI:
-  - Sync **interval must be configurable**.
-  - LI admin must be able to **trigger a sync manually** from an admin panel.
-  - At any time, there must be **at most one sync process** in progress.
+  - Uses **pg_dump/pg_restore** for full database synchronization.
+  - Sync **interval must be configurable** (via Kubernetes CronJob).
+  - LI admin must be able to **trigger a sync manually** from synapse-admin-li.
+  - At any time, there must be **at most one sync process** in progress (enforced via file lock).
+  - Each sync **completely overwrites** the LI database with a fresh copy from main.
+  - Any changes made in LI (such as password resets) are lost after the next sync.
   - Further behavioral details are in the existing root-level docs; consult them as needed.
 
 3.4 **HA scope**
@@ -258,7 +260,17 @@ When you provide a command, file, or step:
   - No missing or incorrect routes that would prevent normal operation.
 - Take into account:
   - HA topologies (multiple replicas, failover paths).
-  - Network separation between main and LI environments.
+- **No security-only network configurations**:
+  - Do **not** include NetworkPolicies, firewall rules, or ingress restrictions that exist only for security purposes.
+  - The deployment assumes all servers are in a trusted internal network.
+  - Focus on **functional connectivity**, not on restricting access.
+
+5.3 **Management node**
+
+- The management node is a **dedicated computer** in the organization's network.
+- It is **not** one of the Kubernetes cluster nodes (not a control plane or worker node).
+- All kubectl, helm, and deployment commands are executed from this management node.
+- Do **not** document alternative management node configurations (e.g., using a control plane node as management node).
 
 ---
 
@@ -300,7 +312,8 @@ When you provide a command, file, or step:
 7.2 **Independence from main instance**
 
 - The LI instance must be **operationally independent** for core functionality:
-  - LI has its **own PostgreSQL database** (replicated from main).
+  - LI has its **own PostgreSQL database** (synchronized from main via pg_dump/pg_restore).
+  - LI database is **writable** (LI admin can reset user passwords).
   - LI has its **own Redis cache**.
   - LI has its **own reverse proxy** (nginx-li).
 - LI shares **main MinIO** for media storage (see section 7.5):
@@ -336,17 +349,19 @@ When you provide a command, file, or step:
     - Organization-managed DNS split-horizon configuration.
   - Without this DNS configuration, Element Web LI and Synapse Admin LI would try to connect to the main Synapse instead of Synapse LI.
 
-7.4 **Network isolation is organization's responsibility**
+7.4 **LI access control is organization's responsibility**
 
-- The organization must provide a **private network** or appropriate access controls to isolate the LI instance.
-- This solution does **not** implement network-level isolation; it is outside the scope of the deployment.
-- The organization must ensure:
-  - Only authorized LI administrators can reach the LI server/network.
-  - LI server IPs or network segments are not accessible to regular users.
-- The only cross-network connections (main ↔ LI) are:
-  - **Data sync**: Background replication from main PostgreSQL to LI PostgreSQL.
+- All servers (main and LI) are in the **same network**.
+- The organization must ensure that only authorized LI administrators can access LI services.
+- This access control is **outside the scope** of this deployment solution.
+- The deployment does **not** implement:
+  - NetworkPolicies to restrict LI access.
+  - Firewall rules specific to LI isolation.
+  - Any network-level access control.
+- Cross-service connections:
+  - **Data sync**: pg_dump from main PostgreSQL, pg_restore to LI PostgreSQL.
   - **Media access**: LI Synapse reads directly from main MinIO (shared S3 bucket).
-  - **key_vault writes**: Synapse main stores recovery keys in key_vault (LI network).
+  - **key_vault writes**: Synapse main stores recovery keys in key_vault.
 
 7.5 **Shared MinIO for media storage**
 
@@ -358,7 +373,6 @@ When you provide a command, file, or step:
 - Requirements:
   - LI Synapse connects to main MinIO using S3 credentials.
   - LI Synapse uses the **same bucket** (`synapse-media`) as main Synapse.
-  - NetworkPolicy allows LI pods to access main MinIO.
 - **CRITICAL WARNING for LI administrators**:
   - LI admin access to media is **read-only in practice**.
   - LI admins **must NOT delete or modify media files**.

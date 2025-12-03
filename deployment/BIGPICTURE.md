@@ -58,9 +58,9 @@ Here's your path from zero to a running production Matrix homeserver:
    └─ Gather prerequisites (servers, domains, etc.)
         ↓
 🔧 PREP 1: SETUP FOUNDATION
+   ├─ Determine resource requirements (docs/SCALING-GUIDE.md)
    ├─ Setup management node (docs/00-WORKSTATION-SETUP.md)
-   ├─ Deploy Kubernetes cluster (docs/00-KUBERNETES-INSTALLATION-DEBIAN-OVH.md)
-   └─ Determine resource requirements (docs/SCALING-GUIDE.md)
+   └─ Deploy Kubernetes cluster (docs/00-KUBERNETES-INSTALLATION-DEBIAN-OVH.md)
         ↓
 ⚙️ PREP 2: CONFIGURATION
    ├─ Generate secrets
@@ -89,13 +89,12 @@ Here's your path from zero to a running production Matrix homeserver:
    │   └─ presence-writer (online status)
    ├─ HAProxy (load balancer)
    ├─ Element Web (chat interface)
-   ├─ coturn (NAT traversal for calls)
-   # NOTE: Sygnal (push) not included - requires external Apple/Google servers
-   └─ LiveKit (optional video/voice)
+   ├─ coturn (NAT traversal for peer-to-peer calls)
+   └─ LiveKit (group video/voice calls via Element Call)
         ↓
 🔍 PHASE 3: LI INSTANCE DEPLOYMENT
-   ├─ Sync system (PostgreSQL logical replication)
-   ├─ Synapse LI (read-only instance)
+   ├─ Sync system (pg_dump/pg_restore periodic sync)
+   ├─ Synapse LI (writable instance for password resets)
    ├─ Element Web LI (shows deleted messages)
    ├─ Synapse Admin LI (forensics interface)
    └─ key_vault (E2EE recovery - in LI network)
@@ -139,10 +138,10 @@ Here's your path from zero to a running production Matrix homeserver:
 │  │  │ P  │─│ R  │─│ R  ││          │  │ P  │─│ R  │      │       │
 │  │  │RI  │ │ EP │ │ EP ││          │  │RI  │ │ EP │      │       │
 │  │  │ MA │ │ LI │ │ LI ││          │  │ MA │ │ LI │      │       │
-│  │  │ RY │ │ CA │ │ CA ││◄─────────┤  │ RY │ │ CA │      │       │
-│  │  └────┘ └────┘ └────┘│Replication│  └────┘ └────┘      │       │
-│  │  Auto-failover       │          │  Read-only           │       │
-│  │  Sync replication    │          │  Streaming replica   │       │
+│  │  │ RY │ │ CA │ │ CA ││─pg_dump──┤  │ RY │ │ CA │      │       │
+│  │  └────┘ └────┘ └────┘│ restore  │  └────┘ └────┘      │       │
+│  │  Auto-failover       │          │  Writable (LI only)  │       │
+│  │  Sync replication    │          │  Periodic sync       │       │
 │  └──────────────────────┘          └──────────────────────┘       │
 │  Files: infrastructure/01-postgresql/                              │
 │  Purpose: Store all messages, users, rooms, state                  │
@@ -191,18 +190,9 @@ Here's your path from zero to a running production Matrix homeserver:
 │  │  cert-manager                                          │        │
 │  │  ├─ Automatic TLS certificate generation              │        │
 │  │  └─ Let's Encrypt integration                         │        │
-│  ├────────────────────────────────────────────────────────┤        │
-│  │  NetworkPolicies (25+ policies)                       │        │
-│  │  ├─ default-deny-all (zero-trust)                     │        │
-│  │  ├─ Allow DNS                                         │        │
-│  │  ├─ PostgreSQL access control                         │        │
-│  │  ├─ Redis access control                              │        │
-│  │  ├─ MinIO access control                              │        │
-│  │  ├─ key_vault isolation (CRITICAL for LI)             │        │
-│  │  └─ LI instance isolation                             │        │
 │  └────────────────────────────────────────────────────────┘        │
 │  Files: infrastructure/04-networking/                              │
-│  Purpose: Secure routing, TLS, zero-trust security                 │
+│  Purpose: Ingress routing and TLS certificate management           │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -288,15 +278,12 @@ Purpose: Handle all Matrix protocol operations
 │  Files: main-instance/06-coturn/                                   │
 │  Purpose: Enable voice/video calls through firewalls               │
 ├────────────────────────────────────────────────────────────────────┤
-│  NOTE: Sygnal (push notifications) NOT INCLUDED                    │
-│  Reason: Requires external Apple/Google servers                    │
-├────────────────────────────────────────────────────────────────────┤
 │  NOTE: key_vault is deployed in LI INSTANCE (Phase 5)              │
 │  Located in LI network for security (per CLAUDE.md requirements)   │
 ├────────────────────────────────────────────────────────────────────┤
-│  LiveKit (optional)           │  Advanced video/voice              │
+│  LiveKit (REQUIRED)           │  Group video/voice via Element Call│
 │  Files: main-instance/04-livekit/                                  │
-│  Purpose: High-quality group calls, screen sharing                 │
+│  Purpose: Group calls, screen sharing via Element Call             │
 └────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -319,15 +306,16 @@ Purpose: Handle all Matrix protocol operations
 ┌─────────────────────────────────────────────────────────────────┐
 │                        SYNC SYSTEM                              │
 │  ┌──────────────────────────────────────────────────────────┐  │
-│  │  Component 1: PostgreSQL Replication                     │  │
+│  │  Component 1: Database Sync (pg_dump/pg_restore)        │  │
 │  │  ┌────────────────┐         ┌────────────────┐          │  │
 │  │  │  Main DB       │────────►│   LI DB        │          │  │
-│  │  │  (Primary)     │ Stream  │  (Read-only    │          │  │
-│  │  │                │ WAL     │   Replica)     │          │  │
+│  │  │  (Primary)     │ pg_dump │  (Writable     │          │  │
+│  │  │                │ restore │   Copy)        │          │  │
 │  │  └────────────────┘         └────────────────┘          │  │
-│  │  • Streaming replication with minimal lag               │  │
+│  │  • Periodic sync via CronJob (configurable interval)    │  │
+│  │  • Manual sync trigger via Synapse Admin LI             │  │
 │  │  • Deleted messages PRESERVED in LI DB                  │  │
-│  │  • redaction_retention_period: null (infinite)          │  │
+│  │  • LI admin can reset passwords (overwritten on sync)   │  │
 │  └──────────────────────────────────────────────────────────┘  │
 │  ┌──────────────────────────────────────────────────────────┐  │
 │  │  Component 2: Media Access (Shared MinIO)               │  │
@@ -340,21 +328,22 @@ Purpose: Handle all Matrix protocol operations
 │  │  • Real-time access without sync lag                    │  │
 │  │  • WARNING: LI must NOT modify media (affects main)     │  │
 │  └──────────────────────────────────────────────────────────┘  │
-│  Files: li-instance/04-sync-system/ (DB replication only)      │
+│  Files: Sync built into synapse-li (see synapse-li/sync/)      │
 │  Purpose: Ensure LI instance has ALL data including deleted    │
 └─────────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────────┐
 │                      SYNAPSE LI INSTANCE                        │
 │  ┌──────────────────────────────────────────────────────────┐  │
-│  │  • Read-only Synapse instance                           │  │
-│  │  • Points to LI database (replica)                      │  │
+│  │  • Writable Synapse instance (for password resets)      │  │
+│  │  • Points to LI database (copy from main)               │  │
 │  │  • Uses main MinIO bucket (shared, read-only access)    │  │
-│  │  • Cannot accept writes                                 │  │
+│  │  • LI admin can reset user passwords for lawful access  │  │
 │  │  • Shows ALL messages (including "deleted" ones)        │  │
+│  │  • Password changes overwritten on next sync            │  │
 │  └──────────────────────────────────────────────────────────┘  │
 │  Files: li-instance/01-synapse-li/                             │
-│  Purpose: Forensics access to complete message history         │
+│  Purpose: Forensics access with admin password reset           │
 └─────────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────────┐
@@ -391,22 +380,19 @@ Purpose: Handle all Matrix protocol operations
 └─────────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────────┐
-│                    CRITICAL SECURITY                            │
+│                       ACCESS MODEL                              │
 │  ┌──────────────────────────────────────────────────────────┐  │
-│  │  NetworkPolicy: key-vault-access                         │  │
-│  │  • key_vault located in LI network (isolation)          │  │
-│  │  • Synapse main can STORE recovery keys (cross-network) │  │
+│  │  key_vault access:                                       │  │
+│  │  • Synapse main can STORE recovery keys                 │  │
 │  │  • LI admin can RETRIEVE keys for E2EE recovery         │  │
-│  │  • All other access BLOCKED                             │  │
 │  └──────────────────────────────────────────────────────────┘  │
 │  ┌──────────────────────────────────────────────────────────┐  │
-│  │  NetworkPolicy: li-instance-isolation                    │  │
-│  │  • LI instance CANNOT access main PostgreSQL             │  │
-│  │  • LI instance CANNOT access main MinIO                  │  │
-│  │  • Complete data separation                              │  │
+│  │  LI instance:                                            │  │
+│  │  • Uses separate PostgreSQL database (LI)               │  │
+│  │  • Shares main MinIO for media (read-only access)       │  │
+│  │  • Has own Redis instance for caching                   │  │
 │  └──────────────────────────────────────────────────────────┘  │
-│  Files: infrastructure/04-networking/networkpolicies.yaml      │
-│  Purpose: Ensure LI cannot interfere with production           │
+│  Purpose: LI operates independently with synced data           │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -458,7 +444,7 @@ Purpose: Handle all Matrix protocol operations
 │  │  • PostgreSQL Health (connections, replication lag)      │  │
 │  │  • Redis Performance (cache hit rate, memory)            │  │
 │  │  • MinIO Storage (usage, throughput)                     │  │
-│  │  • LI Instance Status (replication lag, sync status)     │  │
+│  │  • LI Instance Status (sync checkpoint, last sync time)   │  │
 │  │  • Federation (outbound/inbound federation health)       │  │
 │  └──────────────────────────────────────────────────────────┘  │
 │  Files: monitoring/02-grafana/                                 │
@@ -596,11 +582,11 @@ deployment/
 │   │   Configuration: Access keys, storage size
 │   │
 │   └── 04-networking/
-│       ├── networkpolicies.yaml    → Zero-trust security policies
+│       ├── ingress-install.yaml      → NGINX Ingress configuration
 │       ├── cert-manager-install.yaml → TLS certificates
-│       └── sync-system-networkpolicy.yaml → LI sync isolation
-│       Purpose: Ingress routing, TLS, network security
+│       Purpose: Ingress routing, TLS management
 │       Configuration: Domains, TLS issuers
+│       Note: Network isolation is org's responsibility (CLAUDE.md 7.4)
 │
 ├── main-instance/              ← PHASE 2: Your Homeserver
 │   │
@@ -647,7 +633,6 @@ deployment/
 │   │   Purpose: NAT traversal for voice/video calls
 │   │   Configuration: Shared secret, domains, port ranges
 │   │
-│   # NOTE: 07-sygnal/ NOT INCLUDED - requires external Apple/Google servers
 │   # NOTE: key_vault is in li-instance/05-key-vault/ (LI network)
 │
 ├── li-instance/                ← PHASE 3: Compliance
@@ -668,7 +653,7 @@ deployment/
 │   │   Configuration: LI homeserver URL
 │   │
 │   ├── 04-sync-system/
-│   │   └── deployment.yaml         → PostgreSQL logical replication
+│   │   └── deployment.yaml         → Sync config (built into synapse-li)
 │   │   Purpose: Keep LI database synchronized with main
 │   │   Configuration: DB credentials (media uses main MinIO directly)
 │   │
@@ -764,9 +749,8 @@ You need to generate and configure secrets across multiple components:
 | Redis | Redis password | Cache access control |
 | MinIO | Root credentials, application access keys | Object storage authentication |
 | coturn | Shared secret for TURN authentication | VoIP relay access control |
-| NOTE: Sygnal NOT included - requires external Apple/Google servers |
 | key_vault | API keys, Django secret, encryption key | E2EE backup security |
-| LI Instance | Replication credentials, sync credentials | Compliance system access |
+| LI Instance | Database credentials, sync configuration | Compliance system access |
 
 **Conceptual approach**: Generate strong random secrets and systematically update all `CHANGEME_*` placeholders in YAML files.
 
@@ -853,13 +837,13 @@ Based on your expected user load (see SCALING-GUIDE.md):
         ▼
 7. POSTGRESQL MAIN
    └─ Store event in events table
-   └─ Stream WAL to LI replica (real-time)
+   └─ Data synced to LI periodically via pg_dump/pg_restore
         │
         ▼
-8. POSTGRESQL LI REPLICA
-   └─ Receive WAL stream
-   └─ Apply to LI database
-   └─ Event now visible in LI instance
+8. POSTGRESQL LI DATABASE
+   └─ Receives periodic sync (pg_dump/pg_restore)
+   └─ Event visible in LI after next sync
+   └─ LI admin can trigger manual sync via Synapse Admin LI
         │
         ▼
 9. GENERIC WORKER
@@ -912,7 +896,7 @@ PARALLEL: If message has media attachment
    └─ Call start/end sent as Matrix events
    └─ Follows normal message flow
 
-OPTIONAL: If LiveKit enabled
+GROUP CALLS: LiveKit (required)
    └─ Group calls use LiveKit SFU
    └─ Better performance for multi-party calls
    └─ Screen sharing support
@@ -930,7 +914,6 @@ OPTIONAL: If LiveKit enabled
 | **PostgreSQL LI** | Compliance - preserve deleted data | LI instance won't work, compliance failure |
 | **Redis Sentinel** | Cache hot data, worker communication | Slow performance, workers can't coordinate |
 | **MinIO** | Store uploaded media (images/videos) | Can't upload files, media won't work |
-| **NetworkPolicies** | Zero-trust security | Cluster-wide access, security risk |
 | **NGINX Ingress** | TLS termination, external access | Can't access from internet |
 | **cert-manager** | Automatic TLS certificates | Manual cert management, HTTPS breaks |
 
@@ -945,19 +928,18 @@ OPTIONAL: If LiveKit enabled
 | **Federation Senders** | Outbound federation | Can't send to other servers |
 | **HAProxy** | Route requests to correct workers | Can't use workers, main process does everything |
 | **Element Web** | User interface | Can use other clients, but no web UI |
-| **coturn** | NAT traversal for calls | Calls won't work through firewalls |
-| NOTE: Sygnal NOT included - requires external Apple/Google servers |
+| **coturn** | NAT traversal for peer-to-peer calls | Peer-to-peer calls won't work through firewalls |
+| **LiveKit** | Group video/voice calls | Group calls via Element Call won't work |
 
 ### LI Instance
 
 | Component | Why It Exists | What Happens If You Remove It |
 |-----------|---------------|-------------------------------|
-| **Sync System** | Replicate data to LI | LI instance has no data |
-| **Synapse LI** | Read-only access to all data | Can't access deleted messages |
+| **Sync System** | Sync data from main to LI | LI instance has no data |
+| **Synapse LI** | Access all data + reset passwords | Can't access deleted messages or reset passwords |
 | **Element Web LI** | UI for forensics | Can't view LI data easily |
-| **Synapse Admin LI** | Admin/forensics tools | Limited search capabilities |
-| **key_vault** | E2EE recovery key storage | Users lose keys if they lose device; LI cannot decrypt E2EE |
-| **NetworkPolicy Isolation** | Prevent LI from affecting production | LI could disrupt main instance |
+| **Synapse Admin LI** | Admin/forensics + sync trigger | Limited search, no manual sync |
+| **key_vault** | E2EE recovery key storage | LI cannot decrypt E2EE messages |
 
 ### Monitoring
 
@@ -1034,13 +1016,13 @@ OPTIONAL: If LiveKit enabled
     │  (HA cluster)│ │  (HA cluster)│ │ (Distributed)│
     └──────┬───────┘ └──────────────┘ └──────┬───────┘
            │                                  │
-           │ Logical Replication             │ Direct S3 access
-           │                                  │ (shared bucket)
+           │ pg_dump/pg_restore              │ Direct S3 access
+           │ (periodic sync)                  │ (shared bucket)
            ▼                                  │
     ┌──────────────┐                          │
     │ PostgreSQL   │                          │
     │     LI       │◄─────────────────────────┘
-    │ (Replicas)   │  LI Synapse uses main MinIO
+    │ (Writable)   │  LI Synapse uses main MinIO
     └──────┬───────┘  (no separate LI bucket)
            │
            │
@@ -1050,7 +1032,7 @@ OPTIONAL: If LiveKit enabled
     │  ┌──────────┐  ┌──────────┐  ┌──────────────┐ │
     │  │ Synapse  │  │ Element  │  │   Synapse    │ │
     │  │    LI    │  │  Web LI  │  │   Admin LI   │ │
-    │  │(Read-Only│  │(Shows    │  │  (Forensics) │ │
+    │  │(Writable)│  │(Shows    │  │  (Forensics) │ │
     │  │ Instance)│  │Deleted)  │  │              │ │
     │  └──────────┘  └──────────┘  └──────────────┘ │
     └────────────────────────────────────────────────┘
@@ -1080,32 +1062,14 @@ OPTIONAL: If LiveKit enabled
     │  │  key_vault   │  (LI Instance - see above)  │
     │  │  (E2EE Keys) │  Cross-network from main    │
     │  └──────────────┘                             │
-    │  NOTE: Sygnal (push) not included             │
+    │  LiveKit + coturn   │  (Call Servers)                  │
     └────────────────────────────────────────────────┘
 
-┌────────────────────────────────────────────────────────────────┐
-│                    NETWORK SECURITY LAYER                      │
-│  (NetworkPolicies - Zero-Trust Security)                       │
-│                                                                │
-│  Rules:                                                        │
-│  • Default deny all traffic                                   │
-│  • Synapse main → PostgreSQL main, Redis, MinIO ✓             │
-│  • Synapse main → key_vault (LI network) ✓ (STORE keys)       │
-│  • Synapse LI → PostgreSQL LI, MinIO LI ✓                     │
-│  • Synapse LI → PostgreSQL main ✗ (BLOCKED)                   │
-│  • LI admin → key_vault ✓ (RETRIEVE keys for E2EE recovery)   │
-│  • Workers → Redis ✓                                          │
-│  • All → DNS ✓                                                │
-│  • Ingress → HAProxy, Element Web ✓                           │
-│  • Prometheus → All (scrape metrics) ✓                        │
-└────────────────────────────────────────────────────────────────┘
-
 SECURITY HIGHLIGHTS:
-🔒 key_vault in LI network with controlled cross-network access
-🔒 LI instance CANNOT access main database (read-only replica only)
 🔒 All traffic TLS encrypted (cert-manager + Let's Encrypt)
 🔒 All media scanned for malware (ClamAV)
-🔒 Zero-trust networking (default deny, explicit allows)
+🔒 LI instance uses separate database (synced from main)
+🔒 key_vault stores encrypted E2EE recovery keys
 ```
 
 ---
@@ -1116,9 +1080,9 @@ SECURITY HIGHLIGHTS:
 2. **You follow a linear path**: Prepare → Setup → Configure → Deploy (5 phases) → Verify
 3. **Configuration is the key**: Generate secrets, update YAML files, configure domains
 4. **Deployment follows a sequence**: Infrastructure first, then main instance, then LI, then observability, then security
-5. **Each component has a purpose**: Nothing is optional except LiveKit (group calls)
+5. **Each component has a purpose**: All components are required for full functionality
 6. **The system is resilient**: PostgreSQL failover, Redis HA, MinIO erasure coding
-7. **Security is built-in**: Zero-trust networking, TLS everywhere, AV scanning
+7. **Security is built-in**: TLS everywhere, antivirus scanning
 8. **Compliance is guaranteed**: LI instance preserves all deleted data
 9. **Observability is complete**: Prometheus, Grafana, Loki for full visibility
 10. **You own and control everything**: No vendor lock-in, runs on your infrastructure

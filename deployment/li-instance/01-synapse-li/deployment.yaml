@@ -1,12 +1,12 @@
 # Synapse LI (Lawful Intercept) Instance Deployment
-# ⭐ READ-ONLY Synapse instance for law enforcement access ⭐
+# ⭐ WRITABLE Synapse instance for law enforcement access ⭐
 #
-# CRITICAL Security Features:
-# - NetworkPolicy li-instance-isolation: Can ONLY access LI PostgreSQL and MinIO
-# - NetworkPolicy key-vault-isolation: CANNOT access key_vault
-# - Read-only PostgreSQL: default_transaction_read_only: on
+# Key Features:
+# - Writable PostgreSQL: LI admin can reset user passwords
+# - Password changes overwritten on next sync (pg_dump/pg_restore)
 # - No federation: Isolated from Matrix federation network
-# - No registration: Users synced from main via logical replication
+# - No registration: Users synced from main via pg_dump/pg_restore
+# - Shows ALL messages including soft-deleted (redaction_retention_period: null)
 
 ---
 # ConfigMap for Synapse LI
@@ -257,7 +257,7 @@ spec:
         app.kubernetes.io/name: synapse
         app.kubernetes.io/component: homeserver
         app.kubernetes.io/instance: li
-        matrix.instance: li  # CRITICAL label for NetworkPolicy (allow-from-nginx-li)
+        matrix.instance: li  # LI instance label for pod identification and network isolation
       annotations:
         prometheus.io/scrape: "true"
         prometheus.io/port: "9090"

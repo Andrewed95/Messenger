@@ -732,7 +732,15 @@ Browser-based RSA decryption for captured recovery keys.
 
 **Location**: `/home/user/Messenger/synapse-li/sync/`
 
-Monitors and synchronizes data from main instance to hidden instance.
+Synchronizes database from main instance to LI instance using **pg_dump/pg_restore**.
+
+Per CLAUDE.md section 3.3 and 7.2:
+- Uses pg_dump/pg_restore for **full database synchronization**
+- Each sync **completely overwrites** the LI database with a fresh copy from main
+- Any changes made in LI (such as password resets) are **lost after the next sync**
+- LI uses **shared MinIO** for media (no media sync needed)
+- Sync interval is configurable via Kubernetes CronJob
+- Manual sync trigger available from synapse-admin-li
 
 **Files Implemented**:
 
@@ -740,9 +748,11 @@ Monitors and synchronizes data from main instance to hidden instance.
    - `SyncCheckpoint` class
    - File storage: `/var/lib/synapse-li/sync_checkpoint.json`
    - Fields tracked:
-     - `pg_lsn`: PostgreSQL LSN (Log Sequence Number)
-     - `last_media_sync_ts`: Media sync timestamp
      - `last_sync_at`: Last successful sync time
+     - `last_sync_status`: 'success', 'failed', or 'never'
+     - `last_dump_size_mb`: Size of database dump in MB
+     - `last_duration_seconds`: Total sync duration
+     - `last_error`: Error message from last failed sync
      - `total_syncs`: Count of successful syncs
      - `failed_syncs`: Count of failed syncs
    - Methods: `get_checkpoint()`, `update_checkpoint()`, `mark_failed()`
@@ -756,105 +766,79 @@ Monitors and synchronizes data from main instance to hidden instance.
    - Methods: `acquire()`, `release()`, `is_locked()`
    - Context manager: `with lock.lock():`
    - Returns True/False on acquire (non-blocking check)
+   - Ensures at most one sync process runs at any time
 
-3. **`monitor_replication.py`** - PostgreSQL replication monitoring
-   - `monitor_postgresql_replication(from_lsn)` → Returns current LSN
-   - `check_replication_health()` → Returns (healthy, stats)
-   - Queries: `pg_replication_slots` table
-   - Checks:
-     - Slot active status
-     - Replication lag in bytes and MB
-     - confirmed_flush_lsn position
-   - Alert threshold: 100 MB lag
-   - Uses psql command-line tool
-   - Environment variables: SYNAPSE_DB_HOST, SYNAPSE_DB_USER, SYNAPSE_DB_PASSWORD
-
-4. **`sync_media.sh`** - Media synchronization script
-   - Uses rclone for S3-to-S3 sync (MinIO)
-   - Remotes: `main-s3` → `hidden-s3`
-   - Bucket: `synapse-media`
-   - Options:
-     - `--transfers 4`: Parallel transfers
-     - `--checkers 8`: Parallel hash checks
-     - `--update`: Only newer files
-     - `--retries 3`: Retry failed transfers
-   - Logging: `/var/log/synapse-li/media-sync.log`
-   - Optional: `--since TIMESTAMP` flag
-   - Exit codes: 0 (success), 1 (failure)
-
-5. **`sync_task.py`** - Main sync orchestration
+3. **`sync_task.py`** - Main sync orchestration
    - `run_sync()` function:
      1. Acquires lock (prevents concurrent syncs)
-     2. Reads checkpoint
-     3. Checks PostgreSQL replication health
-     4. Gets current LSN
-     5. Syncs media files
-     6. Updates checkpoint
-     7. Releases lock
-   - Returns: `{status, new_lsn, new_media_ts, replication_stats}`
+     2. Performs pg_dump from main PostgreSQL
+     3. Performs pg_restore to LI PostgreSQL (full replacement)
+     4. Cleans up dump file
+     5. Updates checkpoint
+     6. Releases lock
+   - `get_sync_status()` function for status queries
+   - Returns: `{status, dump_size_mb, duration_seconds}`
    - Status values: `success`, `skipped` (lock held), `failed`
    - Can run as standalone script or imported
-   - Comprehensive error handling
+   - Command line: `python3 sync_task.py` or `python3 sync_task.py --status`
 
-6. **`README.md`** - Sync system documentation
+4. **`README.md`** - Sync system documentation
    - Component descriptions
-   - Prerequisites:
-     - PostgreSQL logical replication setup
-     - rclone configuration
+   - Prerequisites (PostgreSQL access)
    - Environment variables
    - Manual sync instructions
-   - Automated sync (cron/Celery)
+   - Kubernetes CronJob setup
    - Monitoring commands
    - Troubleshooting guide
    - Security considerations
-   - Performance tuning tips
 
-7. **`__init__.py`** - Python package initialization
+5. **`__init__.py`** - Python package initialization
    - Exports: `SyncCheckpoint`, `SyncLock`
 
 **Prerequisites**:
 
-PostgreSQL Logical Replication:
-```sql
--- On main instance
-CREATE PUBLICATION synapse_pub FOR ALL TABLES;
+PostgreSQL Access:
+```bash
+# Environment variables required
+MAIN_DB_HOST=matrix-postgresql-rw.matrix.svc.cluster.local
+MAIN_DB_PORT=5432
+MAIN_DB_NAME=matrix
+MAIN_DB_USER=synapse
+MAIN_DB_PASSWORD=<password>
 
--- On hidden instance
-CREATE SUBSCRIPTION hidden_instance_sub
-CONNECTION 'host=postgres-rw.matrix.svc.cluster.local port=5432 dbname=synapse user=synapse password=xxx'
-PUBLICATION synapse_pub;
+LI_DB_HOST=matrix-postgresql-li-rw.matrix.svc.cluster.local
+LI_DB_PORT=5432
+LI_DB_NAME=matrix_li
+LI_DB_USER=synapse_li
+LI_DB_PASSWORD=<password>
 ```
 
-rclone Configuration (`/etc/rclone/rclone.conf`):
-```ini
-[main-s3]
-type = s3
-provider = Minio
-endpoint = http://minio.matrix.svc.cluster.local:9000
-access_key_id = <MAIN_ACCESS_KEY>
-secret_access_key = <MAIN_SECRET_KEY>
-
-[hidden-s3]
-type = s3
-provider = Minio
-endpoint = http://minio.matrix-li.svc.cluster.local:9000
-access_key_id = <HIDDEN_ACCESS_KEY>
-secret_access_key = <HIDDEN_SECRET_KEY>
-```
+Required Tools (in container):
+- `pg_dump` (PostgreSQL client tools)
+- `psql` (PostgreSQL client)
 
 **Running Sync**:
 
 Manual:
 ```bash
 cd /home/user/Messenger/synapse-li/sync
-export SYNAPSE_DB_PASSWORD="<password>"
+export MAIN_DB_PASSWORD="<main_password>"
+export LI_DB_PASSWORD="<li_password>"
 python3 sync_task.py
 ```
 
-Automated (cron):
-```cron
-0 * * * * cd /path/to/synapse-li/sync && SYNAPSE_DB_PASSWORD="xxx" /usr/bin/python3 sync_task.py
+Check Status:
+```bash
+python3 sync_task.py --status
 ```
+
+**Media Storage**:
+
+LI uses **shared MinIO** for media access:
+- LI Synapse connects directly to main MinIO
+- No media sync is needed
+- Media is read-only for LI in practice
+- LI admins must NOT delete or modify media files
 
 ---
 
@@ -947,9 +931,7 @@ Automated (cron):
 │       ├── __init__.py                     # Package init
 │       ├── checkpoint.py                   # Sync progress tracking
 │       ├── lock.py                         # Sync locking
-│       ├── monitor_replication.py          # PostgreSQL monitoring
-│       ├── sync_media.sh                   # Media sync script
-│       ├── sync_task.py                    # Main sync orchestration
+│       ├── sync_task.py                    # Main sync orchestration (pg_dump/pg_restore)
 │       └── README.md                       # Sync documentation
 │
 └── LI_REQUIREMENTS_ANALYSIS_*.md           # Original requirement docs (4 files)
@@ -1068,11 +1050,10 @@ MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA...
 
 ### Test Sync System
 
-1. Run: `python3 synapse-li/sync/monitor_replication.py`
-2. Verify replication health check passes
-3. Run: `python3 synapse-li/sync/sync_task.py`
-4. Check checkpoint: `cat /var/lib/synapse-li/sync_checkpoint.json`
-5. Verify LSN and timestamp updated
+1. Run: `python3 synapse-li/sync/sync_task.py`
+2. Verify sync completes successfully
+3. Check checkpoint: `cat /var/lib/synapse-li/sync_checkpoint.json`
+4. Verify `last_sync_status`, `last_dump_size_mb`, and `last_duration_seconds` are updated
 
 ---
 
@@ -1146,7 +1127,7 @@ cat /var/lib/synapse/li_session_tracking.json | jq '.sessions'
 ### Monitoring
 
 - Monitor key_vault availability
-- Check replication lag: `python3 synapse-li/sync/monitor_replication.py`
+- Check sync status: `python3 synapse-li/sync/sync_task.py --status`
 - Watch for HTTP 429 errors (session limits)
 - Monitor sync task execution (cron logs)
 - Track LI logs for errors

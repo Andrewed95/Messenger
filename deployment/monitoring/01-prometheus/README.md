@@ -220,11 +220,14 @@ minio_cluster_disk_offline_total
 ### LI Sync System
 
 ```promql
-# Replication lag (PostgreSQL logical replication)
-cnpg_pg_replication_lag{cnpg_io_cluster="matrix-postgresql-li"}
+# LI sync uses pg_dump/pg_restore (no replication lag metric)
+# Monitor sync status via checkpoint file or custom metrics
 
 # MinIO health (LI uses main MinIO directly)
 up{job="minio"}
+
+# LI PostgreSQL health
+up{job="postgresql-li"}
 ```
 
 ## Troubleshooting

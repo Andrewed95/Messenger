@@ -483,12 +483,6 @@ deploy_phase1() {
     wait_for_condition "tenant" "matrix-minio" "Initialized" "matrix" 600
 
     # Deploy Networking
-    log_info "Deploying NetworkPolicies..."
-    apply_manifest "$DEPLOYMENT_DIR/infrastructure/04-networking/networkpolicies.yaml"
-    if [[ -f "$DEPLOYMENT_DIR/infrastructure/04-networking/sync-system-networkpolicy.yaml" ]]; then
-        apply_manifest "$DEPLOYMENT_DIR/infrastructure/04-networking/sync-system-networkpolicy.yaml"
-    fi
-
     log_info "Installing NGINX Ingress Controller..."
     if [[ "$DRY_RUN" == "false" ]]; then
         helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx 2>/dev/null || true
@@ -586,48 +580,10 @@ deploy_phase3() {
     apply_manifest "$DEPLOYMENT_DIR/li-instance/00-redis-li/deployment.yaml"
     check_pod_status "app.kubernetes.io/name=redis,app.kubernetes.io/instance=li" "matrix" 1
 
-    # Deploy Sync System
-    log_info "Deploying sync system..."
-    apply_manifest "$DEPLOYMENT_DIR/li-instance/04-sync-system/deployment.yaml"
-
-    # Run replication setup job (idempotent - only run if subscription doesn't exist)
-    log_info "Checking replication setup..."
-    if [[ "$DRY_RUN" == "false" ]]; then
-        # Verify PostgreSQL LI pod exists before checking subscription
-        if ! kubectl get pod -n matrix matrix-postgresql-li-1 &>/dev/null; then
-            log_warn "PostgreSQL LI pod not ready yet - skipping replication check"
-            log_detail "Replication will be set up when sync-system-setup-replication job runs"
-        else
-            # Check if subscription already exists
-            local subscription_exists
-            subscription_exists=$(kubectl exec -n matrix matrix-postgresql-li-1 -- \
-                psql -U postgres -d synapse_li -tAc \
-                "SELECT COUNT(*) FROM pg_subscription WHERE subname='synapse_subscription';" 2>/dev/null || echo "0")
-
-            if [[ "$subscription_exists" == "0" ]]; then
-                log_info "Running replication setup job..."
-                local job_name="sync-setup-$(date +%s)"
-                if ! kubectl create job --from=job/sync-system-setup-replication \
-                    "$job_name" -n matrix 2>/dev/null; then
-                    log_warn "Could not create replication setup job"
-                    log_detail "The sync-system-setup-replication job template may not exist yet"
-                    log_detail "Replication will be set up when sync-system pods start"
-                else
-                    # Wait for job with timeout
-                    local job_timeout=300
-                    if kubectl wait --for=condition=complete "job/$job_name" \
-                        -n matrix --timeout="${job_timeout}s" 2>/dev/null; then
-                        log_success "Replication setup completed"
-                    else
-                        log_warn "Replication setup job timed out - may need manual verification"
-                        log_detail "Check job status: kubectl logs job/$job_name -n matrix"
-                    fi
-                fi
-            else
-                log_info "Replication subscription already exists - skipping setup"
-            fi
-        fi
-    fi
+    # NOTE: Sync system is built into synapse-li
+    # No separate sync deployment needed
+    # Sync is configured via synapse-li settings and triggered via Synapse Admin LI
+    log_info "Sync system is built into synapse-li - no separate deployment needed"
 
     # Deploy Synapse LI
     log_info "Deploying Synapse LI..."

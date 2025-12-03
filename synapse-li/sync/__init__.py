@@ -1,14 +1,20 @@
 """
 LI Sync System
 
-This package provides synchronization functionality for keeping the hidden LI instance
-in sync with the main production instance.
+This package provides synchronization functionality for keeping the LI instance
+database in sync with the main production instance using pg_dump/pg_restore.
 
 Components:
-- checkpoint: Track sync progress using file-based checkpoints
+- checkpoint: Track sync progress and statistics
 - lock: Prevent concurrent sync operations
-- monitor_replication: Monitor PostgreSQL replication status
-- sync_task: Main orchestration for database and media synchronization
+- sync_task: Main orchestration for database synchronization
+
+Per CLAUDE.md:
+- Uses pg_dump/pg_restore for full database synchronization
+- Each sync completely overwrites the LI database
+- LI uses shared MinIO for media (no media sync needed)
+- Sync interval configurable via Kubernetes CronJob
+- Manual sync trigger available from synapse-admin-li
 """
 
 from .checkpoint import SyncCheckpoint

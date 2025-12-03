@@ -56,7 +56,7 @@ spec:
       wal_buffers: "16MB"
       min_wal_size: "1GB"
       max_wal_size: "4GB"
-      wal_level: "logical"  # Required for LI instance logical replication
+      wal_level: "replica"  # CloudNativePG uses streaming replication; LI sync uses pg_dump/pg_restore
       max_wal_senders: "10"
       max_replication_slots: "10"
 

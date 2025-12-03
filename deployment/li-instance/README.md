@@ -12,14 +12,14 @@ The LI instance is a **completely independent, isolated Matrix homeserver** that
 - ✅ **Operational independence** - LI has own database, Redis, and reverse proxy
 - ✅ **Own reverse proxy** - Dedicated nginx-li handles all LI traffic
 - ✅ **Shared MinIO** - Uses main MinIO for media (read-only access)
-- ✅ Read-only database (enforced at PostgreSQL level)
+- ✅ **Writable database** - LI admin can reset user passwords for lawful access
+- ✅ **pg_dump/pg_restore sync** - Periodic sync from main (configurable interval + manual trigger)
 - ✅ Infinite message retention (including soft-deleted messages)
 - ✅ Isolated from federation network
 - ✅ **key_vault in LI network** - stores encrypted E2EE recovery keys
-- ✅ Real-time data replication via PostgreSQL logical replication
 - ✅ Real-time media access via S3 API to main MinIO (no sync lag)
 - ✅ Separate web interfaces (Element, Synapse Admin)
-- ✅ Network isolation (organization's responsibility)
+- ✅ **Manual sync trigger** - via Synapse Admin LI
 
 **⚠️ CRITICAL WARNING FOR LI ADMINISTRATORS**:
 - Media files are stored in **main MinIO** (shared with main instance)
@@ -37,7 +37,6 @@ The LI instance is a **completely independent, isolated Matrix homeserver** that
 **key_vault Access Model** (per CLAUDE.md section 3.3):
 - **Synapse main (main network)**: Can STORE recovery keys when users set up E2EE
 - **LI admin (LI network)**: Can RETRIEVE recovery keys for lawful intercept
-- **All other access**: BLOCKED by NetworkPolicy
 
 ## Architecture
 
@@ -49,7 +48,7 @@ The LI instance is a **completely independent, isolated Matrix homeserver** that
 │  │    Main      │   │    Main      │────────┐          │
 │  └──────┬───────┘   └──────────────┘        │          │
 │         │                                    │          │
-│         │ PostgreSQL Logical Replication     │ Store    │
+│         │  pg_dump (periodic sync)           │ Store    │
 └─────────┼────────────────────────────────────┼──────────┘
           │                                    │ Recovery
           │                                    │ Keys
@@ -57,8 +56,9 @@ The LI instance is a **completely independent, isolated Matrix homeserver** that
 ┌─────────────────────────────────────────────────────────┐
 │                   SYNC SYSTEM                           │
 │  ┌──────────────────────────────────────────────────┐  │
-│  │      PostgreSQL Logical Replication               │  │
-│  │         (Real-time database sync)                 │  │
+│  │    pg_dump/pg_restore (periodic database sync)    │  │
+│  │    - CronJob: Configurable interval (default 6h)  │  │
+│  │    - Manual trigger: via Synapse Admin LI API     │  │
 │  └──────────────────────┬───────────────────────────┘  │
 │                         │                              │
 │  Media: LI accesses main MinIO directly (shared bucket) │
@@ -80,13 +80,13 @@ The LI instance is a **completely independent, isolated Matrix homeserver** that
 │  ┌──────────────┐ ┌──────────────┐ ┌────────────┐     │
 │  │   Synapse    │ │  Element     │ │  Synapse   │     │
 │  │      LI      │ │  Web LI      │ │  Admin LI  │     │
-│  │  (read-only) │ │              │ │            │     │
+│  │  (writable)  │ │              │ │ +sync API  │     │
 │  └──────┬───────┘ └──────────────┘ └────────────┘     │
 │         │                                              │
 │  ┌──────┴───────┐                   ┌────────────┐     │
 │  │  PostgreSQL  │                   │ key_vault  │     │
 │  │      LI      │ ───S3 API───▶     │  (E2EE     │     │
-│  │  (read-only) │   Main MinIO      │  Recovery) │     │
+│  │  (writable)  │   Main MinIO      │  Recovery) │     │
 │  └──────────────┘                   └────────────┘     │
 │                                                         │
 │  ⭐ LI works independently even if main is down ⭐     │
@@ -201,32 +201,30 @@ kubectl apply -f 03-synapse-admin-li/deployment.yaml
 
 **Access**: https://admin-li.example.com (DIFFERENT domain from main)
 
-### 4. Sync System (04-sync-system/)
+### 4. Sync System (built into synapse-li)
 
 **Bridge between main and LI** for data replication.
 
-**Components**:
-- **PostgreSQL Logical Replication**: Real-time database sync (main → LI PostgreSQL)
-- **Setup Job**: One-time configuration of replication
+**IMPORTANT**: The sync system is built into the synapse-li application. No separate deployment needed.
+
+**Components** (in synapse-li repo):
+- `synapse-li/sync/sync_task.py` - Main sync orchestration
+- `synapse-li/sync/checkpoint.py` - Sync progress tracking
+- `synapse-li/sync/lock.py` - Concurrent sync prevention
+
+**Features**:
+- **Periodic sync**: Configurable interval (default 6 hours)
+- **Manual sync**: "Sync Now" button in Synapse Admin LI interface
+- **Lock mechanism**: Prevents concurrent syncs
+- **Checkpoint tracking**: Records last sync time and status
 
 **Data Flow**:
-- **Database**: Main PostgreSQL → (logical replication) → LI PostgreSQL
+- **Database**: Main PostgreSQL → (pg_dump/pg_restore) → LI PostgreSQL
 - **Media**: LI Synapse → (S3 API) → Main MinIO (synapse-media) - no sync needed
 
-**Deployment**:
-
-**WHERE:** Run from your **management node**
-
-```bash
-# Apply NetworkPolicy first
-kubectl apply -f ../infrastructure/04-networking/sync-system-networkpolicy.yaml
-
-# Deploy sync system
-kubectl apply -f 04-sync-system/deployment.yaml
-
-# Run setup job (one time)
-kubectl create job --from=job/sync-system-setup-replication sync-setup-$(date +%s) -n matrix
-```
+**Usage**:
+- Manual sync: Click "Sync Now" in Synapse Admin LI
+- Check status: View sync status page in Synapse Admin LI
 
 ### 5. key_vault (05-key-vault/)
 
@@ -240,7 +238,7 @@ kubectl create job --from=job/sync-system-setup-replication sync-setup-$(date +%
 - Simple deployment (no external database dependency)
 - Data persisted on PVC (1Gi, supports millions of keys)
 
-**Access Model** (enforced by NetworkPolicy):
+**Access Model** (network isolation is org's responsibility per CLAUDE.md 7.4):
 
 | Actor | Action | Allowed |
 |-------|--------|---------|
@@ -260,7 +258,7 @@ kubectl create job --from=job/sync-system-setup-replication sync-setup-$(date +%
 **Security**:
 - Recovery keys encrypted with RSA 2048-bit before storage
 - RSA private key stored as Kubernetes Secret
-- NetworkPolicy strictly limits access
+- Network isolation is organization's responsibility (per CLAUDE.md 7.4)
 - SQLite database on persistent volume with fsGroup security
 
 **Deployment**:
@@ -554,43 +552,35 @@ kubectl create secret tls nginx-li-wildcard-tls \
 
 ## Security & Isolation
 
-### NetworkPolicies (Phase 1)
+### Network Isolation (Organization's Responsibility)
 
-Three critical policies enforce LI isolation:
+Per CLAUDE.md section 7.4, network isolation is the organization's responsibility.
 
-**1. key-vault-access**:
-- **Ingress**: From Synapse main (STORE keys) AND LI admin (RETRIEVE keys)
-- **Effect**: Synapse main can store keys, LI admin can retrieve keys for E2EE recovery
-- **File**: `infrastructure/04-networking/networkpolicies.yaml`
+**Required Network Access:**
 
-**2. li-instance-isolation**:
-- **Applies to**: All pods with `matrix.instance: li`
-- **Egress**: LI PostgreSQL, **main MinIO** (shared), Redis LI, DNS
-- **Effect**: LI **CANNOT** access main PostgreSQL or main Redis
-- **Effect**: LI **CAN** access main MinIO for media (read-only in practice)
-- **File**: `infrastructure/04-networking/networkpolicies.yaml`
+| Component | Needs Access To | Purpose |
+|-----------|-----------------|---------|
+| Synapse main | key_vault | Store recovery keys |
+| key_vault | (none) | Uses local SQLite |
+| Synapse LI | LI PostgreSQL | Database queries |
+| Synapse LI | Main MinIO | Read media files |
+| LI admin | nginx-li | Access LI services |
+| Sync system | Main PostgreSQL, LI PostgreSQL | Database replication |
 
-**3. sync-system-access**:
-- **Applies to**: Pods with `app.kubernetes.io/name: sync-system`
-- **Egress**: Access to **BOTH** main and LI PostgreSQL
-- **Effect**: Sync system handles database replication only (no media sync)
-- **File**: `infrastructure/04-networking/sync-system-networkpolicy.yaml`
+**LI Instance Isolation:**
+- LI pods use label `matrix.instance: li`
+- LI should NOT access main PostgreSQL or main Redis
+- LI CAN access main MinIO for media (read-only in practice)
 
 ### Network-Level Access Control
 
-**IMPORTANT**: LI access control is enforced at the **network level**, not via IP whitelisting annotations.
+**IMPORTANT**: LI access control must be enforced at the **network level** by the organization.
 
 **How it works:**
-- **nginx-li LoadBalancer** is only accessible from the LI network
+- **nginx-li** serves LI services and is only accessible from the LI network
 - The organization configures their network infrastructure to restrict access to the LI network
-- Only authorized LI administrators can reach the nginx-li LoadBalancer IP
-- This is more secure than IP whitelisting because it operates at the network layer
-
-**nginx-li NetworkPolicies** (automatically applied):
-- `nginx-li-egress`: Allows nginx-li to reach LI services
-- `allow-from-nginx-li`: Allows LI services to receive traffic from nginx-li
-
-See: `infrastructure/04-networking/networkpolicies.yaml` (policies #17 and #18)
+- Only authorized LI administrators can reach the nginx-li endpoint
+- This is more secure than application-level controls because it operates at the network layer
 
 ### Authentication
 
@@ -666,10 +656,7 @@ kubectl label node <li-node-name> node-role.kubernetes.io/li=true
 kubectl get cluster -n matrix matrix-postgresql-li
 kubectl get tenant -n matrix matrix-minio  # Main MinIO for sync source
 
-# 2. Deploy sync system NetworkPolicy
-kubectl apply -f ../infrastructure/04-networking/sync-system-networkpolicy.yaml
-
-# 3. Deploy Redis LI (required for Synapse LI cache)
+# 2. Deploy Redis LI (required for Synapse LI cache)
 kubectl apply -f 00-redis-li/deployment.yaml
 
 # Wait for Redis LI to be ready
@@ -679,42 +666,25 @@ kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=redis,app.kuber
 # Main MinIO should already be deployed in Phase 1
 kubectl get pods -n matrix -l v1.min.io/tenant=matrix-minio
 
-# 5. Deploy sync system (syncs DB only - media uses main MinIO directly)
-kubectl apply -f 04-sync-system/deployment.yaml
-
-# 6. Run replication setup job (CRITICAL - must run once)
-# Store job name in variable to use consistently
-JOB_NAME="sync-setup-$(date +%s)"
-
-# Create the job
-kubectl create job --from=job/sync-system-setup-replication \
-  $JOB_NAME -n matrix
-
-# Wait for job to complete (using same job name)
-kubectl wait --for=condition=complete job/$JOB_NAME -n matrix --timeout=300s
-
-# Check replication status (using same job name)
-kubectl logs job/$JOB_NAME -n matrix
-
-# 7. Deploy Synapse LI
+# 5. Deploy Synapse LI (includes sync system)
 kubectl apply -f 01-synapse-li/deployment.yaml
 
 # Wait for Synapse LI to be ready
 kubectl wait --for=condition=ready pod/synapse-li-0 -n matrix --timeout=300s
 
-# 8. Deploy Element Web LI
+# 6. Deploy Element Web LI
 kubectl apply -f 02-element-web-li/deployment.yaml
 
-# 9. Deploy Synapse Admin LI
+# 7. Deploy Synapse Admin LI
 kubectl apply -f 03-synapse-admin-li/deployment.yaml
 
-# 10. Deploy key_vault (E2EE recovery key storage)
+# 8. Deploy key_vault (E2EE recovery key storage)
 kubectl apply -f 05-key-vault/deployment.yaml
 
 # Wait for key_vault to be ready
 kubectl wait --for=condition=ready pod/key-vault-0 -n matrix --timeout=300s
 
-# 11. Create TLS certificate secrets for nginx-li (REQUIRED)
+# 9. Create TLS certificate secrets for nginx-li (REQUIRED)
 # See "TLS Certificates for nginx-li" section below for options
 # Example using self-signed certificates:
 openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
@@ -741,7 +711,7 @@ openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
 kubectl create secret tls nginx-li-keyvault-tls \
   --cert=keyvault-tls.crt --key=keyvault-tls.key -n matrix
 
-# 12. Deploy nginx-li (LI reverse proxy - CRITICAL for independence)
+# 10. Deploy nginx-li (LI reverse proxy - CRITICAL for independence)
 kubectl apply -f 06-nginx-li/deployment.yaml
 
 # Wait for nginx-li to be ready
@@ -750,14 +720,17 @@ kubectl wait --for=condition=available deployment/nginx-li -n matrix --timeout=1
 # Get the nginx-li LoadBalancer IP (use for DNS configuration)
 kubectl get svc nginx-li -n matrix
 
-# 13. Create Django superuser for key_vault
+# 11. Create Django superuser for key_vault
 kubectl exec -it -n matrix key-vault-0 -- \
   python manage.py createsuperuser \
   --username keyvault-admin \
   --email admin@example.com
 # (You will be prompted to enter a password interactively)
 
-# 14. Verify all components
+# 12. Trigger initial database sync (CRITICAL - populates LI database)
+kubectl exec -n matrix synapse-li-0 -- python3 /sync/sync_task.py
+
+# 13. Verify all components
 kubectl get pods -n matrix -l matrix.instance=li
 kubectl get svc nginx-li -n matrix
 ```
@@ -766,29 +739,24 @@ kubectl get svc nginx-li -n matrix
 
 **WHERE:** Run all verification commands from your **management node**
 
-### Check PostgreSQL Replication
+### Check Database Sync Status
 
-**Note:** These commands execute SQL queries on PostgreSQL pods to verify replication status
+**Note:** The sync system uses pg_dump/pg_restore to periodically copy the main database to LI.
 
 ```bash
-# Check replication on main
+# Check sync status from synapse-li pod
+kubectl exec -n matrix synapse-li-0 -- \
+  python3 /sync/sync_task.py --status
+
+# Check sync checkpoint file (if mounted)
+kubectl exec -n matrix synapse-li-0 -- \
+  cat /var/lib/synapse-li/sync_checkpoint.json
+
+# Compare user counts between main and LI (should match after sync)
 kubectl exec -n matrix matrix-postgresql-1-0 -- \
-  psql -U postgres -d matrix -c \
-  "SELECT * FROM pg_publication;"
-
-# Check subscription on LI
+  psql -U postgres -d matrix -c "SELECT COUNT(*) FROM users;"
 kubectl exec -n matrix matrix-postgresql-li-1-0 -- \
-  psql -U postgres -d matrix_li -c \
-  "SELECT subname, subenabled, subslotname FROM pg_subscription;"
-
-# Check replication lag
-kubectl exec -n matrix matrix-postgresql-li-1-0 -- \
-  psql -U postgres -d matrix_li -c \
-  "SELECT
-    subname,
-    pg_size_pretty(pg_wal_lsn_diff(latest_end_lsn, received_lsn)) AS lag
-  FROM pg_subscription_rel
-  JOIN pg_subscription ON subrelid = srrelid;"
+  psql -U postgres -d matrix_li -c "SELECT COUNT(*) FROM users;"
 ```
 
 ### Test LI Access
@@ -815,16 +783,21 @@ curl -u admin:password https://admin-li.example.com
 
 ## Data Flow
 
-### Database Replication
+### Database Sync
 
-**PostgreSQL Logical Replication** (real-time):
-1. Main writes to `matrix` database
-2. PostgreSQL creates WAL records
-3. Logical replication streams changes to LI
-4. LI applies changes to `matrix_li` database
-5. **Lag**: < 1 second under normal load
+**pg_dump/pg_restore** (periodic):
+1. CronJob runs at configurable interval (default every 6 hours)
+2. `pg_dump` extracts full main database
+3. `pg_restore` overwrites LI database
+4. LI admin password changes are overwritten on sync
+5. **Sync interval**: Configurable via CronJob schedule
 
-**Tables Replicated**:
+**Manual Sync Trigger**:
+- Click "Sync Now" in Synapse Admin LI interface
+- Available via Synapse Admin LI interface
+- At most one sync runs at a time (file lock)
+
+**All Tables Synced**:
 - `events` - All messages (including deleted)
 - `users` - User accounts
 - `rooms` - Room metadata
@@ -854,20 +827,21 @@ LI Synapse → S3 API → Main MinIO (synapse-media)
 
 ### Metrics
 
-Both Synapse LI and sync system expose Prometheus metrics:
+Synapse LI exposes Prometheus metrics:
 
 ```promql
 # Synapse LI health
 up{job="synapse-li"}
-
-# Replication lag (bytes)
-pg_replication_lag{cluster="matrix-postgresql-li"}
 
 # MinIO health (main MinIO used by LI)
 up{job="minio"}
 
 # LI Synapse S3 request latency (if instrumented)
 synapse_s3_request_duration_seconds{instance="synapse-li"}
+
+# Sync status: Check checkpoint file for last sync time/status
+# No built-in Prometheus metrics for pg_dump/pg_restore sync
+# Consider custom metrics or log monitoring
 ```
 
 ### Logs
@@ -876,40 +850,44 @@ synapse_s3_request_duration_seconds{instance="synapse-li"}
 # Synapse LI logs
 kubectl logs -n matrix synapse-li-0 -f
 
-# Sync system logs (latest job)
-kubectl logs -n matrix -l app.kubernetes.io/component=media-sync --tail=100
+# Sync system logs (check synapse-li pod)
+kubectl exec -n matrix synapse-li-0 -- cat /var/log/sync.log 2>/dev/null || echo "Check sync output above"
 
-# PostgreSQL replication logs
-kubectl logs -n matrix matrix-postgresql-li-1-0 | grep replication
+# LI PostgreSQL logs
+kubectl logs -n matrix matrix-postgresql-li-1-0
 ```
 
 ## Troubleshooting
 
-### PostgreSQL replication not working
+### Database sync not working
+
+**Sync uses pg_dump/pg_restore** to copy the main database to LI. If sync fails:
 
 ```bash
-# Check publication on main
-kubectl exec -n matrix matrix-postgresql-1-0 -- \
-  psql -U postgres -d matrix -c \
-  "SELECT * FROM pg_publication WHERE pubname = 'matrix_li_publication';"
+# Check sync status
+kubectl exec -n matrix synapse-li-0 -- python3 /sync/sync_task.py --status
 
-# Check subscription on LI
-kubectl exec -n matrix matrix-postgresql-li-1-0 -- \
-  psql -U postgres -d matrix_li -c \
-  "SELECT * FROM pg_subscription WHERE subname = 'matrix_li_subscription';"
+# Check sync checkpoint file
+kubectl exec -n matrix synapse-li-0 -- cat /var/lib/synapse-li/sync_checkpoint.json
 
-# Check replication slot
-kubectl exec -n matrix matrix-postgresql-1-0 -- \
-  psql -U postgres -d matrix -c \
-  "SELECT * FROM pg_replication_slots;"
+# Check if sync lock is held (stuck sync)
+kubectl exec -n matrix synapse-li-0 -- ls -la /var/lib/synapse-li/sync.lock
 
-# Reset subscription (if needed)
-kubectl exec -n matrix matrix-postgresql-li-1-0 -- \
-  psql -U postgres -d matrix_li -c \
-  "DROP SUBSCRIPTION IF EXISTS matrix_li_subscription;"
+# Manually trigger sync
+kubectl exec -n matrix synapse-li-0 -- python3 /sync/sync_task.py
 
-# Re-run setup job
-kubectl create job --from=job/sync-system-setup-replication sync-reset-$(date +%s) -n matrix
+# Check main PostgreSQL connectivity from LI
+kubectl exec -n matrix synapse-li-0 -- \
+  psql -h matrix-postgresql-rw.matrix.svc.cluster.local \
+       -U synapse -d matrix -c "SELECT 1;"
+
+# Check LI PostgreSQL connectivity
+kubectl exec -n matrix synapse-li-0 -- \
+  psql -h matrix-postgresql-li-rw.matrix.svc.cluster.local \
+       -U synapse_li -d matrix_li -c "SELECT 1;"
+
+# If sync is stuck, remove lock file (CAUTION: only if no sync is running)
+kubectl exec -n matrix synapse-li-0 -- rm -f /var/lib/synapse-li/sync.lock
 ```
 
 ### Media access issues (LI uses main MinIO)
@@ -927,24 +905,25 @@ kubectl exec -n matrix -it \
   $(kubectl get pods -n matrix -l v1.min.io/tenant=matrix-minio -o name | head -1) -- \
   mc ls minio/synapse-media --summarize
 
-# Check NetworkPolicy allows LI access to main MinIO
-kubectl get networkpolicy minio-access -n matrix -o yaml | grep -A10 "matrix.instance: li"
+# Verify LI can access main MinIO
+kubectl exec -n matrix synapse-li-0 -- curl -s http://minio.matrix.svc.cluster.local:9000/minio/health/live
 ```
 
 ### LI instance can't access key_vault (expected)
 
 This is **correct behavior**. LI instance should **NEVER** access key_vault.
+Network isolation must be configured by the organization (per CLAUDE.md 7.4).
 
 ```bash
-# Verify NetworkPolicy blocks access
+# Verify LI cannot access key_vault (organization must enforce this)
 kubectl exec -n matrix synapse-li-0 -- \
   curl -v http://key-vault.matrix.svc.cluster.local:8000/health
-# Should fail with connection timeout or refused
+# Should fail with connection timeout or refused if network isolation is configured correctly
 ```
 
 ### Users can't login to LI
 
-**Cause**: Signing key not accessible or replication not complete.
+**Cause**: Signing key not accessible or database sync not complete.
 
 ```bash
 # Verify signing key secret exists (Synapse LI uses MAIN signing key)
@@ -956,11 +935,11 @@ kubectl get secret synapse-secrets -n matrix -o yaml | grep signing.key
 kubectl describe pod synapse-li-0 -n matrix | grep -A5 "signing-key"
 # Should show volume mounted from synapse-secrets
 
-# Check users table is replicated
+# Check users table is synced (after sync completes)
 kubectl exec -n matrix matrix-postgresql-li-1-0 -- \
   psql -U synapse_li -d matrix_li -c \
   "SELECT COUNT(*) FROM users;"
-# Should match main instance user count
+# Should match main instance user count after sync
 ```
 
 **Note**: Synapse LI is configured to use the main Synapse's signing key directly (from `synapse-secrets`). This eliminates the need for manual key copying and ensures authentication always works.
@@ -1274,18 +1253,15 @@ postgresql:
 
 ## Security Best Practices
 
-1. **IP Whitelisting**: Configure on ALL LI Ingresses
-2. **Authentication**: Enable htpasswd on Synapse Admin
-3. **TLS**: Use Let's Encrypt certificates (automatic)
-4. **Network Isolation**: Verify NetworkPolicies are applied
-5. **Read-Only**: Verify PostgreSQL `default_transaction_read_only: on`
-6. **Key Isolation**: Verify LI cannot access key_vault
-7. **Monitoring**: Set up alerts for replication lag
-8. **Backups**: Enable CloudNativePG backups for LI cluster
+1. **Authentication**: Enable htpasswd on Synapse Admin
+2. **TLS**: Use Let's Encrypt certificates (automatic)
+3. **Network Isolation**: Organization controls access to LI network
+4. **Sync Monitoring**: Set up alerts for sync job failures
+5. **Backups**: Enable CloudNativePG backups for LI cluster
 
 ## References
 
-- [PostgreSQL Logical Replication](https://www.postgresql.org/docs/16/logical-replication.html)
+- [PostgreSQL pg_dump](https://www.postgresql.org/docs/16/app-pgdump.html)
 - [CloudNativePG Documentation](https://cloudnative-pg.io/documentation/)
 - [Synapse Admin](https://github.com/Awesome-Technologies/synapse-admin)
 - [Matrix Specification](https://spec.matrix.org/)

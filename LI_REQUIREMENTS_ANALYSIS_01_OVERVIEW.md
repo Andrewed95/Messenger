@@ -77,7 +77,7 @@ The LI system consists of two separate deployments:
 | **Element X Android** | element-x-android | element-x-android | Android client |
 | **Synapse Admin** | synapse-admin | synapse-admin-li | Admin panel (LI version has sync + decryption) |
 | **Key Storage** | - | key_vault (Django) | Stores encrypted recovery keys |
-| **Sync Service** | - | synapse-li (Celery) | Syncs main→hidden instance |
+| **Sync Service** | - | synapse-li (pg_dump/pg_restore) | Syncs main→hidden instance database |
 
 **Network Isolation**:
 - key_vault is deployed in the HIDDEN INSTANCE network (matrix-li namespace)
@@ -98,8 +98,8 @@ The LI system consists of two separate deployments:
 8. key_vault stores encrypted payload (checks hash for deduplication)
 
 **Admin Investigation Flow (Hidden Instance)**:
-1. Admin clicks sync button in synapse-admin-li
-2. Celery task syncs database + media from main instance
+1. Admin triggers database sync (via synapse-admin-li or CronJob)
+2. pg_dump/pg_restore copies database from main to LI (media uses shared MinIO)
 3. Admin resets target user's password in synapse-li
 4. Admin retrieves user's latest encrypted recovery key from key_vault (via synapse-admin-li decrypt tab)
 5. Admin decrypts key in browser using private key
@@ -977,32 +977,35 @@ private suspend fun createRecovery(): Result<RecoveryKey> {
 
 The hidden instance (synapse-li, element-web-li, synapse-admin-li, key_vault) must stay in sync with the main instance. Sync is:
 - **One-way**: Main → Hidden (changes in hidden instance do NOT affect main)
+- **Full replacement**: Each sync completely overwrites the LI database
 - **On-demand**: Triggered by admin clicking sync button in synapse-admin-li
-- **Incremental**: Only sync data since last successful sync
+- **Scheduled**: Automatic sync via Kubernetes CronJob (configurable interval)
+- **Locked**: File-based lock prevents concurrent syncs
 - **Robust**: Failed syncs don't break future syncs
 
-### 6.2 Sync Strategy (Based on Deployment Architecture)
+### 6.2 Sync Strategy (Based on CLAUDE.md Requirements)
 
-From the deployment review, the main instance uses:
-- **PostgreSQL**: CloudNativePG with synchronous replication
-- **Media**: MinIO distributed object storage
+Per CLAUDE.md section 3.3 and 7.2:
+- **Database**: pg_dump/pg_restore for full database synchronization
+- **Media**: LI uses shared main MinIO directly (no media sync needed)
 
-**Recommended Sync Approach**:
-
-1. **Database**: PostgreSQL Logical Replication
-2. **Media**: rclone S3-to-S3 sync
+**Key Points**:
+- Each sync **completely overwrites** the LI database with a fresh copy from main
+- Any changes made in LI (such as password resets) are **lost after the next sync**
+- LI uses the **same MinIO bucket** as main for media (read-only access in practice)
+- Sync interval is configurable via Kubernetes CronJob
 
 ### 6.3 Sync Checkpoint Tracking (File-Based)
 
 **Important**: To avoid Synapse database migrations, we use file-based checkpoint storage instead of Django models.
 
-**File**: `synapse-li/sync/checkpoint.py` (NEW FILE)
+**File**: `synapse-li/sync/checkpoint.py`
 
 ```python
 """
-File-based sync checkpoint tracking.
+File-based sync checkpoint tracking for pg_dump/pg_restore synchronization.
 
-Uses JSON file to avoid modifying Synapse database schema.
+Uses JSON file to track sync progress and statistics.
 """
 
 import json
@@ -1017,7 +1020,7 @@ CHECKPOINT_FILE = Path('/var/lib/synapse-li/sync_checkpoint.json')
 
 
 class SyncCheckpoint:
-    """Tracks last successful sync position using JSON file."""
+    """Tracks sync progress and statistics using JSON file."""
 
     def __init__(self):
         self.file_path = CHECKPOINT_FILE
@@ -1029,11 +1032,14 @@ class SyncCheckpoint:
     def _initialize(self):
         """Create initial checkpoint file."""
         initial_data = {
-            'pg_lsn': '0/0',
-            'last_media_sync_ts': datetime.now().isoformat(),
             'last_sync_at': None,
+            'last_sync_status': 'never',
+            'last_dump_size_mb': None,
+            'last_duration_seconds': None,
+            'last_error': None,
             'total_syncs': 0,
-            'failed_syncs': 0
+            'failed_syncs': 0,
+            'created_at': datetime.now().isoformat()
         }
         self._write(initial_data)
         logger.info("LI: Initialized sync checkpoint file")
@@ -1048,7 +1054,7 @@ class SyncCheckpoint:
             raise
 
     def _write(self, data: dict):
-        """Write checkpoint to file."""
+        """Write checkpoint to file atomically."""
         try:
             # Write to temp file first, then atomic rename
             temp_file = self.file_path.with_suffix('.tmp')
@@ -1056,7 +1062,7 @@ class SyncCheckpoint:
                 json.dump(data, f, indent=2)
             temp_file.replace(self.file_path)
 
-            logger.debug(f"LI: Updated checkpoint file")
+            logger.debug("LI: Updated checkpoint file")
         except Exception as e:
             logger.error(f"LI: Failed to write checkpoint file: {e}")
             raise
@@ -1065,27 +1071,37 @@ class SyncCheckpoint:
         """Get current checkpoint data."""
         return self._read()
 
-    def update_checkpoint(self, pg_lsn: str, media_ts: str):
+    def update_checkpoint(self, dump_size_mb: float, duration_seconds: float):
         """Update checkpoint after successful sync."""
         data = self._read()
-        data['pg_lsn'] = pg_lsn
-        data['last_media_sync_ts'] = media_ts
         data['last_sync_at'] = datetime.now().isoformat()
+        data['last_sync_status'] = 'success'
+        data['last_dump_size_mb'] = dump_size_mb
+        data['last_duration_seconds'] = duration_seconds
+        data['last_error'] = None
         data['total_syncs'] += 1
         self._write(data)
 
         logger.info(
-            f"LI: Sync checkpoint updated - LSN: {pg_lsn}, "
+            f"LI: Sync checkpoint updated - "
+            f"dump size: {dump_size_mb:.2f} MB, "
+            f"duration: {duration_seconds:.1f}s, "
             f"total syncs: {data['total_syncs']}"
         )
 
-    def mark_failed(self):
+    def mark_failed(self, error_message: str = None):
         """Mark sync as failed."""
         data = self._read()
+        data['last_sync_status'] = 'failed'
+        data['last_error'] = error_message
         data['failed_syncs'] += 1
         self._write(data)
 
-        logger.warning(f"LI: Sync marked as failed - total failures: {data['failed_syncs']}")
+        logger.warning(
+            f"LI: Sync marked as failed - "
+            f"error: {error_message}, "
+            f"total failures: {data['failed_syncs']}"
+        )
 ```
 
 ### 6.4 Sync Lock Mechanism
@@ -1164,298 +1180,222 @@ class SyncLock:
             self.release()
 ```
 
-### 6.5 Celery Sync Task
+### 6.5 Main Sync Task (pg_dump/pg_restore)
 
-**File**: `synapse-li/sync/tasks.py` (NEW FILE)
+**File**: `synapse-li/sync/sync_task.py`
 
 ```python
+#!/usr/bin/env python3
 """
-Celery task for syncing main instance → hidden instance.
+LI: Main sync task that performs full database synchronization using pg_dump/pg_restore.
 
-Uses PostgreSQL logical replication and rclone for media.
+This script:
+1. Acquires a lock to prevent concurrent syncs
+2. Performs pg_dump from main PostgreSQL database
+3. Performs pg_restore to LI PostgreSQL database (full replacement)
+4. Updates checkpoint after successful sync
+
+IMPORTANT: Each sync completely overwrites the LI database with a fresh copy from main.
+Any changes made in LI (such as password resets) are lost after the next sync.
+
+Per CLAUDE.md section 3.3:
+- Uses pg_dump/pg_restore for full database synchronization
+- Sync interval is configurable via Kubernetes CronJob
+- Manual sync trigger available from synapse-admin-li
+- File lock prevents concurrent syncs
+- LI uses shared MinIO for media (no media sync needed)
 """
 
-import subprocess
 import logging
-from celery import shared_task
+import os
+import subprocess
+import sys
 from datetime import datetime
-from .checkpoint import SyncCheckpoint
-from .lock import SyncLock
+from pathlib import Path
+
+from checkpoint import SyncCheckpoint
+from lock import SyncLock
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 
 logger = logging.getLogger(__name__)
 
+# Environment variables for database connections
+MAIN_DB_HOST = os.environ.get('MAIN_DB_HOST', 'matrix-postgresql-rw.matrix.svc.cluster.local')
+MAIN_DB_PORT = os.environ.get('MAIN_DB_PORT', '5432')
+MAIN_DB_NAME = os.environ.get('MAIN_DB_NAME', 'matrix')
+MAIN_DB_USER = os.environ.get('MAIN_DB_USER', 'synapse')
+MAIN_DB_PASSWORD = os.environ.get('MAIN_DB_PASSWORD', '')
 
-@shared_task(bind=True)
-def sync_instance(self):
-    """
-    Sync main instance → hidden instance.
+LI_DB_HOST = os.environ.get('LI_DB_HOST', 'matrix-postgresql-li-rw.matrix.svc.cluster.local')
+LI_DB_PORT = os.environ.get('LI_DB_PORT', '5432')
+LI_DB_NAME = os.environ.get('LI_DB_NAME', 'matrix_li')
+LI_DB_USER = os.environ.get('LI_DB_USER', 'synapse_li')
+LI_DB_PASSWORD = os.environ.get('LI_DB_PASSWORD', '')
 
-    Steps:
-    1. Acquire lock (prevent concurrent syncs)
-    2. Get checkpoint (last sync position)
-    3. Monitor PostgreSQL logical replication
-    4. Sync media files via rclone
-    5. Update checkpoint
-    6. Release lock
-    """
-    task_id = self.request.id
-    logger.info(f"LI: Sync task {task_id} started")
+DUMP_DIR = Path('/var/lib/synapse-li/sync')
+DUMP_FILE = DUMP_DIR / 'main_db_dump.sql'
+
+
+def pg_dump_main() -> bool:
+    """Perform pg_dump from main PostgreSQL database."""
+    logger.info(f"LI: Starting pg_dump from main database ({MAIN_DB_HOST})")
+
+    DUMP_DIR.mkdir(parents=True, exist_ok=True)
+
+    env = os.environ.copy()
+    env['PGPASSWORD'] = MAIN_DB_PASSWORD
+
+    cmd = [
+        'pg_dump',
+        '-h', MAIN_DB_HOST,
+        '-p', MAIN_DB_PORT,
+        '-U', MAIN_DB_USER,
+        '-d', MAIN_DB_NAME,
+        '--clean',
+        '--if-exists',
+        '--no-owner',
+        '--no-privileges',
+        '-f', str(DUMP_FILE)
+    ]
+
+    try:
+        subprocess.run(cmd, env=env, capture_output=True, text=True,
+                      check=True, timeout=3600)
+
+        dump_size = DUMP_FILE.stat().st_size
+        logger.info(f"LI: pg_dump completed ({dump_size / 1024 / 1024:.2f} MB)")
+        return True
+
+    except subprocess.TimeoutExpired:
+        raise RuntimeError("pg_dump timed out")
+    except subprocess.CalledProcessError as e:
+        raise RuntimeError(f"pg_dump failed: {e.stderr}")
+
+
+def pg_restore_li() -> bool:
+    """Perform pg_restore to LI PostgreSQL database (full replacement)."""
+    logger.info(f"LI: Starting pg_restore to LI database ({LI_DB_HOST})")
+
+    env = os.environ.copy()
+    env['PGPASSWORD'] = LI_DB_PASSWORD
+
+    cmd = [
+        'psql',
+        '-h', LI_DB_HOST,
+        '-p', LI_DB_PORT,
+        '-U', LI_DB_USER,
+        '-d', LI_DB_NAME,
+        '-f', str(DUMP_FILE),
+        '--quiet',
+        '--single-transaction'
+    ]
+
+    try:
+        subprocess.run(cmd, env=env, capture_output=True, text=True,
+                      check=True, timeout=7200)
+
+        logger.info("LI: pg_restore completed successfully")
+        return True
+
+    except subprocess.TimeoutExpired:
+        raise RuntimeError("pg_restore timed out")
+    except subprocess.CalledProcessError as e:
+        if "FATAL" in (e.stderr or ""):
+            raise RuntimeError(f"pg_restore failed: {e.stderr}")
+        logger.warning(f"LI: pg_restore completed with warnings: {e.stderr}")
+        return True
+
+
+def run_sync() -> dict:
+    """Execute full sync process using pg_dump/pg_restore."""
+    logger.info("LI: Starting database sync task")
 
     lock = SyncLock()
     checkpoint_mgr = SyncCheckpoint()
+    start_time = datetime.now()
 
     try:
-        # Acquire lock
         with lock.lock():
-            logger.info(f"LI: Sync task {task_id} acquired lock")
+            # Step 1: pg_dump from main
+            pg_dump_main()
+            dump_size = DUMP_FILE.stat().st_size / 1024 / 1024
 
-            # Get checkpoint
-            checkpoint = checkpoint_mgr.get_checkpoint()
-            last_lsn = checkpoint['pg_lsn']
-            last_media_ts = checkpoint['last_media_sync_ts']
+            # Step 2: pg_restore to LI
+            pg_restore_li()
 
-            logger.info(
-                f"LI: Starting sync from LSN {last_lsn}, "
-                f"media timestamp {last_media_ts}"
-            )
+            # Step 3: Cleanup and update checkpoint
+            DUMP_FILE.unlink(missing_ok=True)
+            duration = (datetime.now() - start_time).total_seconds()
+            checkpoint_mgr.update_checkpoint(dump_size, duration)
 
-            # Monitor PostgreSQL logical replication
-            new_lsn = monitor_postgresql_replication(last_lsn)
-
-            # Sync media files
-            new_media_ts = sync_media_files(last_media_ts)
-
-            # Update checkpoint
-            checkpoint_mgr.update_checkpoint(new_lsn, new_media_ts)
-
-            logger.info(f"LI: Sync task {task_id} completed successfully")
-
-            return {
-                'status': 'success',
-                'task_id': task_id,
-                'new_lsn': new_lsn,
-                'new_media_ts': new_media_ts
-            }
+            return {'status': 'success', 'dump_size_mb': dump_size,
+                    'duration_seconds': duration}
 
     except RuntimeError as e:
-        # Lock already held
         error_msg = str(e)
-        logger.warning(f"LI: Sync task {task_id} skipped: {error_msg}")
-
-        return {
-            'status': 'skipped',
-            'task_id': task_id,
-            'reason': error_msg
-        }
-
-    except Exception as e:
-        # Sync failed
-        error_msg = str(e)
-        logger.error(f"LI: Sync task {task_id} failed: {error_msg}", exc_info=True)
-
-        # Mark checkpoint as failed
-        checkpoint_mgr.mark_failed()
-
-        # Release lock if held
-        if lock.is_locked():
-            lock.release()
-
-        return {
-            'status': 'failed',
-            'task_id': task_id,
-            'error': error_msg
-        }
+        if "Sync already in progress" in error_msg:
+            return {'status': 'skipped', 'reason': error_msg}
+        checkpoint_mgr.mark_failed(error_msg)
+        return {'status': 'failed', 'error': error_msg}
 
 
-def monitor_postgresql_replication(from_lsn: str) -> str:
-    """
-    Monitor PostgreSQL logical replication status.
-
-    Returns current LSN position.
-
-    Note: Logical replication runs continuously via PostgreSQL subscription.
-    This function just monitors the status.
-    """
-    logger.info(f"LI: Monitoring PostgreSQL replication from LSN {from_lsn}")
-
-    # Query replication lag
-    cmd = [
-        'psql',
-        '-h', 'synapse-postgres-li-rw.matrix-li.svc.cluster.local',
-        '-U', 'synapse',
-        '-d', 'synapse',
-        '-t',  # Tuples only
-        '-c', "SELECT confirmed_flush_lsn FROM pg_subscription WHERE subname='hidden_instance_sub'"
-    ]
-
-    result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-
-    # Extract LSN from output
-    current_lsn = result.stdout.strip()
-
-    if current_lsn:
-        logger.info(f"LI: PostgreSQL replication at LSN {current_lsn}")
-        return current_lsn
+if __name__ == "__main__":
+    if len(sys.argv) > 1 and sys.argv[1] == '--status':
+        import json
+        status = SyncCheckpoint().get_checkpoint()
+        print(json.dumps(status, indent=2))
     else:
-        logger.warning(f"LI: Could not get current LSN, using previous: {from_lsn}")
-        return from_lsn
-
-
-def sync_media_files(since_ts: str) -> str:
-    """
-    Sync media files from main MinIO to hidden MinIO using rclone.
-
-    Returns new timestamp after sync.
-    """
-    logger.info(f"LI: Syncing media files since {since_ts}")
-
-    cmd = [
-        'rclone',
-        'sync',                                    # One-way sync
-        'main-minio:synapse-media',                # Source
-        'hidden-minio:synapse-media-li',           # Destination
-        '--transfers', '4',                        # Parallel transfers
-        '--checkers', '8',                         # Parallel checks
-        '--min-age', since_ts,                     # Only newer files
-        '--progress',
-        '--log-file', '/var/log/rclone-sync.log',
-        '--log-level', 'INFO'
-    ]
-
-    result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-
-    logger.info(f"LI: Media sync completed: {result.stdout}")
-
-    return datetime.now().isoformat()
+        result = run_sync()
+        print(f"Sync result: {result['status']}")
 ```
 
-### 6.6 Django REST API Endpoints
+**Note**: Media sync is NOT needed because LI uses the shared main MinIO bucket directly (per CLAUDE.md section 7.5).
 
-**File**: `synapse-li/sync/views.py` (NEW FILE)
+### 6.6 Sync Trigger Methods
 
-```python
-from rest_framework.views import APIView
-from rest_framework.response import Response
-from rest_framework import status
-from .tasks import sync_instance
-from .checkpoint import SyncCheckpoint
-import logging
+The sync can be triggered in multiple ways:
 
-logger = logging.getLogger(__name__)
+**1. Kubernetes CronJob (Automatic)**
 
-
-class TriggerSyncView(APIView):
-    """
-    POST /api/v1/sync/trigger
-
-    Trigger sync task (manual or periodic).
-    Returns task_id for status checking.
-    """
-
-    def post(self, request):
-        logger.info("LI: Sync triggered via API")
-
-        # Trigger Celery task
-        task = sync_instance.delay()
-
-        logger.info(f"LI: Sync task submitted with ID {task.id}")
-
-        return Response({
-            'task_id': task.id,
-            'status': 'submitted'
-        }, status=status.HTTP_202_ACCEPTED)
-
-
-class SyncStatusView(APIView):
-    """
-    GET /api/v1/sync/status/<task_id>
-
-    Check status of sync task.
-    """
-
-    def get(self, request, task_id):
-        from celery.result import AsyncResult
-
-        task = AsyncResult(task_id)
-
-        response_data = {
-            'task_id': task_id,
-            'status': task.state,
-        }
-
-        if task.state == 'SUCCESS':
-            response_data['result'] = task.result
-        elif task.state == 'FAILURE':
-            response_data['error'] = str(task.info)
-
-        logger.debug(f"LI: Sync status query for task {task_id}: {task.state}")
-
-        return Response(response_data)
-
-
-class SyncConfigView(APIView):
-    """
-    POST /api/v1/sync/config
-
-    Configure periodic sync frequency.
-
-    Body:
-    {
-        "syncs_per_day": 24  // 1-24
-    }
-    """
-
-    def post(self, request):
-        syncs_per_day = request.data.get('syncs_per_day', 1)
-
-        if not (1 <= syncs_per_day <= 24):
-            return Response({
-                'error': 'syncs_per_day must be between 1 and 24'
-            }, status=status.HTTP_400_BAD_REQUEST)
-
-        # Update Celery Beat schedule
-        from django_celery_beat.models import PeriodicTask, IntervalSchedule
-
-        # Calculate interval in hours
-        interval_hours = 24 // syncs_per_day
-
-        # Get or create interval schedule
-        schedule, created = IntervalSchedule.objects.get_or_create(
-            every=interval_hours,
-            period=IntervalSchedule.HOURS
-        )
-
-        # Update periodic task
-        periodic_task, created = PeriodicTask.objects.get_or_create(
-            name='sync_instance_periodic'
-        )
-        periodic_task.interval = schedule
-        periodic_task.task = 'sync.tasks.sync_instance'
-        periodic_task.enabled = True
-        periodic_task.save()
-
-        logger.info(
-            f"LI: Sync frequency updated to {syncs_per_day} times per day "
-            f"(every {interval_hours} hours)"
-        )
-
-        return Response({
-            'syncs_per_day': syncs_per_day,
-            'interval_hours': interval_hours
-        })
+```yaml
+# deployment/li-instance/04-sync-system/cronjob.yaml
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: li-database-sync
+  namespace: matrix
+spec:
+  schedule: "0 */6 * * *"  # Every 6 hours (configurable)
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: sync
+            image: postgres:16-alpine
+            command: ["python3", "/sync/sync_task.py"]
+            envFrom:
+            - secretRef:
+                name: sync-system-secrets
+          restartPolicy: OnFailure
 ```
 
-**File**: `synapse-li/sync/urls.py` (NEW FILE)
+**2. Manual Trigger from synapse-admin-li**
 
-```python
-from django.urls import path
-from .views import TriggerSyncView, SyncStatusView, SyncConfigView
+The admin interface includes a "Sync Now" button that executes the sync task via kubectl exec.
 
-urlpatterns = [
-    path('api/v1/sync/trigger', TriggerSyncView.as_view(), name='trigger_sync'),
-    path('api/v1/sync/status/<str:task_id>', SyncStatusView.as_view(), name='sync_status'),
-    path('api/v1/sync/config', SyncConfigView.as_view(), name='sync_config'),
-]
+**3. Direct Command**
+
+```bash
+# From synapse-li pod
+kubectl exec -n matrix synapse-li-0 -- python3 /sync/sync_task.py
+
+# Check status
+kubectl exec -n matrix synapse-li-0 -- python3 /sync/sync_task.py --status
 ```
 
 ### 6.7 synapse-admin-li Sync Button
@@ -1471,14 +1411,14 @@ import { useNotify } from 'react-admin';
 
 const SyncButton = () => {
     const [syncing, setSyncing] = useState(false);
-    const [taskId, setTaskId] = useState<string | null>(null);
     const notify = useNotify();
 
-    // LI: Trigger sync
+    // LI: Trigger sync via backend API
     const handleSync = async () => {
         setSyncing(true);
 
         try {
+            // Call sync API endpoint (triggers pg_dump/pg_restore)
             const response = await fetch('/api/v1/sync/trigger', {
                 method: 'POST',
             });
@@ -1488,45 +1428,23 @@ const SyncButton = () => {
             }
 
             const data = await response.json();
-            setTaskId(data.task_id);
 
-            // LI: Poll status
-            pollSyncStatus(data.task_id);
+            if (data.status === 'success') {
+                notify(`Sync completed! Dump size: ${data.dump_size_mb?.toFixed(2)} MB`, { type: 'success' });
+            } else if (data.status === 'skipped') {
+                notify(`Sync skipped: ${data.reason}`, { type: 'warning' });
+            } else {
+                notify(`Sync failed: ${data.error}`, { type: 'error' });
+            }
         } catch (error) {
-            notify('Sync failed to start', { type: 'error' });
+            notify('Sync request failed', { type: 'error' });
+        } finally {
             setSyncing(false);
         }
     };
 
-    // LI: Poll sync status
-    const pollSyncStatus = async (taskId: string) => {
-        const interval = setInterval(async () => {
-            try {
-                const response = await fetch(`/api/v1/sync/status/${taskId}`);
-                const data = await response.json();
-
-                if (data.status === 'SUCCESS') {
-                    notify('Sync completed successfully', { type: 'success' });
-                    setSyncing(false);
-                    setTaskId(null);
-                    clearInterval(interval);
-                } else if (data.status === 'FAILURE') {
-                    notify(`Sync failed: ${data.error}`, { type: 'error' });
-                    setSyncing(false);
-                    setTaskId(null);
-                    clearInterval(interval);
-                }
-            } catch (error) {
-                notify('Failed to check sync status', { type: 'error' });
-                setSyncing(false);
-                setTaskId(null);
-                clearInterval(interval);
-            }
-        }, 5000);  // Poll every 5 seconds
-    };
-
     return (
-        <Tooltip title={syncing ? "Syncing in progress..." : "Sync from main instance"}>
+        <Tooltip title={syncing ? "Syncing in progress..." : "Sync database from main instance"}>
             <span>
                 <IconButton
                     color="inherit"
@@ -1545,73 +1463,84 @@ const SyncButton = () => {
 // <SyncButton />  // Place next to logout/theme/refresh buttons
 ```
 
-### 6.8 Periodic Sync Configuration UI
+### 6.8 Sync Status Display
 
-**File**: `synapse-admin-li/src/components/SyncSettings.tsx` (NEW FILE)
+**File**: `synapse-admin-li/src/components/SyncStatus.tsx` (NEW FILE)
 
 ```typescript
 /**
- * LI: Sync Settings Component
+ * LI: Sync Status Component
  *
- * Allows admin to configure periodic sync frequency.
+ * Displays last sync information from checkpoint file.
  */
 
-import { Card, CardContent, TextField, Button, Typography, Box } from '@mui/material';
-import { useState } from 'react';
-import { useNotify } from 'react-admin';
+import { Card, CardContent, Typography, Box, Chip } from '@mui/material';
+import { useState, useEffect } from 'react';
 
-export const SyncSettings = () => {
-    const [syncsPerDay, setSyncsPerDay] = useState(1);
-    const notify = useNotify();
+interface SyncCheckpoint {
+    last_sync_at: string | null;
+    last_sync_status: string;
+    last_dump_size_mb: number | null;
+    last_duration_seconds: number | null;
+    total_syncs: number;
+    failed_syncs: number;
+}
 
-    const handleSave = async () => {
-        try {
-            const response = await fetch('/api/v1/sync/config', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ syncs_per_day: syncsPerDay }),
-            });
+export const SyncStatus = () => {
+    const [checkpoint, setCheckpoint] = useState<SyncCheckpoint | null>(null);
 
-            if (!response.ok) {
-                throw new Error('Failed to update sync config');
-            }
+    useEffect(() => {
+        // Fetch sync status on mount
+        fetch('/api/v1/sync/status')
+            .then(res => res.json())
+            .then(setCheckpoint)
+            .catch(console.error);
+    }, []);
 
-            notify('Sync configuration updated', { type: 'success' });
-        } catch (error) {
-            notify('Failed to update sync config', { type: 'error' });
-        }
-    };
+    if (!checkpoint) return null;
 
     return (
         <Card>
             <CardContent>
                 <Typography variant="h6" gutterBottom>
-                    Periodic Sync Configuration
-                </Typography>
-                <Typography variant="body2" color="textSecondary" paragraph>
-                    Configure how many times per day the hidden instance syncs from the main instance.
+                    Database Sync Status
                 </Typography>
 
-                <Box mt={2} mb={2}>
-                    <TextField
-                        label="Syncs per day"
-                        type="number"
-                        value={syncsPerDay}
-                        onChange={(e) => setSyncsPerDay(parseInt(e.target.value))}
-                        inputProps={{ min: 1, max: 24 }}
-                        helperText="1 = once daily, 24 = every hour"
-                        fullWidth
+                <Box display="flex" gap={1} mb={2}>
+                    <Chip
+                        label={checkpoint.last_sync_status}
+                        color={checkpoint.last_sync_status === 'success' ? 'success' : 'error'}
                     />
                 </Box>
 
-                <Button variant="contained" color="primary" onClick={handleSave}>
-                    Save Configuration
-                </Button>
+                {checkpoint.last_sync_at && (
+                    <Typography variant="body2">
+                        Last sync: {new Date(checkpoint.last_sync_at).toLocaleString()}
+                    </Typography>
+                )}
+
+                {checkpoint.last_dump_size_mb && (
+                    <Typography variant="body2">
+                        Dump size: {checkpoint.last_dump_size_mb.toFixed(2)} MB
+                    </Typography>
+                )}
+
+                {checkpoint.last_duration_seconds && (
+                    <Typography variant="body2">
+                        Duration: {checkpoint.last_duration_seconds.toFixed(1)} seconds
+                    </Typography>
+                )}
+
+                <Typography variant="body2" color="textSecondary" mt={1}>
+                    Total syncs: {checkpoint.total_syncs} | Failed: {checkpoint.failed_syncs}
+                </Typography>
             </CardContent>
         </Card>
     );
 };
 ```
+
+**Note**: Sync frequency is configured via Kubernetes CronJob schedule, not via UI. Edit the CronJob spec to change the interval.
 
 ---
 
@@ -1627,10 +1556,17 @@ export const SyncSettings = () => {
 2. **RSA Encryption**: Hardcoded public key in both element-web and element-x-android
 3. **Synapse Proxy**: Validates tokens, forwards to key_vault (only main synapse can access hidden instance)
 4. **Client Changes**: Both element-web & element-x-android send encrypted recovery keys ONLY on successful operations with 5-retry logic
-5. **Sync System**: Celery-based with file-based locking/checkpoints, incremental PostgreSQL logical replication + rclone media sync, on-demand + periodic
+5. **Sync System**: pg_dump/pg_restore based with file-based locking/checkpoints, full database replacement, on-demand + CronJob scheduled
+
+### Sync System Details (Per CLAUDE.md)
+- **Database**: pg_dump/pg_restore for full synchronization (each sync completely overwrites LI database)
+- **Media**: LI uses shared main MinIO directly (no media sync needed)
+- **Trigger**: Manual via synapse-admin-li "Sync Now" button or automatic via Kubernetes CronJob
+- **Lock**: File-based fcntl lock prevents concurrent syncs
+- **Checkpoint**: JSON file tracks sync status, dump size, duration, success/failure counts
 
 ### Minimal Code Changes
-- New files for core logic (LIKeyCapture.ts, LIKeyCapture.kt, li_proxy.py, etc.)
+- New files for core logic (LIKeyCapture.ts, LIKeyCapture.kt, li_proxy.py, sync_task.py, etc.)
 - Existing files modified with `// LI:` or `# LI:` comments for easy tracking
 - Clean separation for upstream compatibility
 - No Synapse database schema changes (file-based sync tracking)
@@ -1643,7 +1579,7 @@ export const SyncSettings = () => {
 ### Network Security
 - key_vault in hidden instance network
 - Only main Synapse can access key_vault
-- Network policies enforce isolation
+- Network isolation is organization's responsibility (per CLAUDE.md 7.4)
 
 ### Next Steps
 See [Part 2: Soft Delete & Deleted Messages](LI_REQUIREMENTS_ANALYSIS_02_SOFT_DELETE.md)

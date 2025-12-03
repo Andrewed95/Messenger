@@ -116,7 +116,7 @@ spec:
         app.kubernetes.io/name: element-web
         app.kubernetes.io/component: webclient
         app.kubernetes.io/version: "v1.11.96"
-        matrix.instance: li  # CRITICAL label for NetworkPolicy (allow-from-nginx-li)
+        matrix.instance: li  # LI instance label for pod identification and network isolation
 
     spec:
       securityContext:

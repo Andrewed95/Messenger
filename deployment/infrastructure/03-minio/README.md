@@ -579,7 +579,7 @@ kubectl cp matrix/$POD:/tmp/backup ./local-backup/
 
 1. **Access Control**: Root credentials in secret, application credentials separate
 2. **TLS**: Auto-generated certificates (requestAutoCert: true)
-3. **Network Policies**: See `../04-networking/networkpolicies.yaml`
+3. **Network Isolation**: Organization's responsibility (per CLAUDE.md 7.4)
 4. **Bucket Policies**: Default is private (no public access)
 5. **Encryption at Rest**: Not enabled by default (add KES if required)
 

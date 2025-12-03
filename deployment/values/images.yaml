@@ -114,8 +114,8 @@ key_vault:
   imagePullPolicy: IfNotPresent
 
 sync_system:
-  # Sync system for LI PostgreSQL logical replication setup
-  # Uses postgres image for replication configuration
+  # Sync system for LI database using pg_dump/pg_restore
+  # Uses postgres image for database synchronization
   image: postgres:16-alpine
   imagePullPolicy: IfNotPresent
 

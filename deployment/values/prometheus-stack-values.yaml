@@ -170,17 +170,17 @@ grafana:
 
   # Ingress for Grafana
   ingress:
-    enabled: false  # Enable for web access
-    # annotations:
-    #   # Uses letsencrypt-prod for initial deployment (per CLAUDE.md 4.5)
-    #   cert-manager.io/cluster-issuer: letsencrypt-prod
-    #   nginx.ingress.kubernetes.io/whitelist-source-range: "10.0.0.0/8"
-    # hosts:
-    #   - grafana.CHANGE_TO_YOUR_DOMAIN
-    # tls:
-    #   - secretName: grafana-tls
-    #     hosts:
-    #       - grafana.CHANGE_TO_YOUR_DOMAIN
+    enabled: true
+    ingressClassName: nginx
+    annotations:
+      # Uses letsencrypt-prod for initial deployment (per CLAUDE.md 4.5)
+      cert-manager.io/cluster-issuer: letsencrypt-prod
+    hosts:
+      - grafana.example.com  # CHANGE_TO_YOUR_DOMAIN
+    tls:
+      - secretName: grafana-tls
+        hosts:
+          - grafana.example.com  # CHANGE_TO_YOUR_DOMAIN
 
   # Data sources
   datasources:

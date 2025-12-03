@@ -1,24 +1,34 @@
 # LI Sync System
 
-This directory contains the synchronization system for keeping the hidden LI instance in sync with the main production instance.
+This directory contains the synchronization system for keeping the LI instance database in sync with the main production instance using **pg_dump/pg_restore**.
 
 ## Overview
 
-The sync system maintains data consistency between:
+The sync system maintains database consistency between:
 - **Main Instance**: Production Synapse server with PostgreSQL and MinIO
-- **Hidden Instance**: LI-enabled Synapse server (synapse-li) with replicated PostgreSQL and MinIO
+- **LI Instance**: Lawful Intercept Synapse server (synapse-li) with its own PostgreSQL
+
+Per CLAUDE.md section 3.3 and 7.2:
+- Uses **pg_dump/pg_restore** for full database synchronization
+- Each sync **completely overwrites** the LI database with a fresh copy from main
+- Any changes made in LI (such as password resets) are **lost after the next sync**
+- LI uses **shared MinIO** for media (no media sync needed)
+- Sync interval is configurable via Kubernetes CronJob
+- Manual sync trigger available from synapse-admin-li
 
 ## Components
 
 ### 1. `checkpoint.py`
-File-based checkpoint tracking to record the last successful sync position.
+File-based checkpoint tracking to record sync progress and statistics.
 
 **Storage**: `/var/lib/synapse-li/sync_checkpoint.json`
 
 **Fields**:
-- `pg_lsn`: PostgreSQL LSN (Log Sequence Number) of last sync
-- `last_media_sync_ts`: Timestamp of last media sync
 - `last_sync_at`: When sync last completed
+- `last_sync_status`: 'success', 'failed', or 'never'
+- `last_dump_size_mb`: Size of database dump in MB
+- `last_duration_seconds`: Total sync duration
+- `last_error`: Error message from last failed sync
 - `total_syncs`: Total successful syncs
 - `failed_syncs`: Total failed syncs
 
@@ -27,90 +37,58 @@ File-based locking mechanism to prevent concurrent sync operations.
 
 **Lock File**: `/var/lib/synapse-li/sync.lock`
 
-Uses `fcntl` for atomic file locking.
+Uses `fcntl` for atomic file locking. At any time, there must be **at most one sync process** in progress.
 
-### 3. `monitor_replication.py`
-Monitors PostgreSQL logical replication status and health.
-
-**Functions**:
-- `monitor_postgresql_replication(from_lsn)`: Get current replication LSN
-- `check_replication_health()`: Check replication lag and status
-
-**Usage**:
-```bash
-python3 monitor_replication.py
-```
-
-### 4. `sync_media.sh`
-Shell script for syncing media files using rclone.
-
-**Requirements**:
-- rclone installed and configured
-- `/etc/rclone/rclone.conf` with `main-s3` and `hidden-s3` remotes
-
-**Usage**:
-```bash
-./sync_media.sh [--since TIMESTAMP]
-```
-
-### 5. `sync_task.py`
+### 3. `sync_task.py`
 Main orchestration script that:
-1. Acquires sync lock
-2. Checks PostgreSQL replication health
-3. Syncs media files
+1. Acquires sync lock (prevents concurrent syncs)
+2. Performs pg_dump from main PostgreSQL
+3. Performs pg_restore to LI PostgreSQL (full replacement)
 4. Updates checkpoint
 
 **Usage**:
 ```bash
+# Run sync
 python3 sync_task.py
+
+# Check sync status
+python3 sync_task.py --status
 ```
 
 ## Prerequisites
 
-### PostgreSQL Logical Replication
+### PostgreSQL Access
 
-The main PostgreSQL instance must have logical replication enabled:
+The sync system requires access to both databases:
 
-```sql
--- On main instance
-CREATE PUBLICATION synapse_pub FOR ALL TABLES;
+1. **Main PostgreSQL** (read access for pg_dump)
+2. **LI PostgreSQL** (write access for pg_restore)
 
--- On hidden instance
-CREATE SUBSCRIPTION hidden_instance_sub
-CONNECTION 'host=postgres-rw.matrix.svc.cluster.local port=5432 dbname=synapse user=synapse password=xxx'
-PUBLICATION synapse_pub;
-```
+### Required Tools
 
-### rclone Configuration
-
-Create `/etc/rclone/rclone.conf`:
-
-```ini
-[main-s3]
-type = s3
-provider = Minio
-env_auth = false
-access_key_id = <MAIN_ACCESS_KEY>
-secret_access_key = <MAIN_SECRET_KEY>
-endpoint = http://minio.matrix.svc.cluster.local:9000
-
-[hidden-s3]
-type = s3
-provider = Minio
-env_auth = false
-access_key_id = <HIDDEN_ACCESS_KEY>
-secret_access_key = <HIDDEN_SECRET_KEY>
-endpoint = http://minio.matrix-li.svc.cluster.local:9000
-```
+The synapse-li container must have these tools installed:
+- `pg_dump` (PostgreSQL client tools)
+- `psql` (PostgreSQL client)
 
 ### Environment Variables
 
-The sync scripts use these environment variables:
+Required environment variables:
 
-- `SYNAPSE_DB_HOST`: PostgreSQL host (default: `synapse-postgres-li-rw.matrix-li.svc.cluster.local`)
-- `SYNAPSE_DB_USER`: PostgreSQL user (default: `synapse`)
-- `SYNAPSE_DB_NAME`: PostgreSQL database (default: `synapse`)
-- `SYNAPSE_DB_PASSWORD`: PostgreSQL password (required)
+```bash
+# Main PostgreSQL (source)
+MAIN_DB_HOST=matrix-postgresql-rw.matrix.svc.cluster.local
+MAIN_DB_PORT=5432
+MAIN_DB_NAME=matrix
+MAIN_DB_USER=synapse
+MAIN_DB_PASSWORD=<password>
+
+# LI PostgreSQL (destination)
+LI_DB_HOST=matrix-postgresql-li-rw.matrix.svc.cluster.local
+LI_DB_PORT=5432
+LI_DB_NAME=matrix_li
+LI_DB_USER=synapse_li
+LI_DB_PASSWORD=<password>
+```
 
 ## Running the Sync
 
@@ -118,93 +96,62 @@ The sync scripts use these environment variables:
 
 ```bash
 cd /home/user/Messenger/synapse-li/sync
-export SYNAPSE_DB_PASSWORD="<password>"
+export MAIN_DB_PASSWORD="<main_password>"
+export LI_DB_PASSWORD="<li_password>"
 python3 sync_task.py
 ```
 
-### Automated Sync (Cron)
+### Kubernetes CronJob
 
-Add to crontab:
+In production, sync is triggered by a Kubernetes CronJob defined in the deployment manifests.
 
-```cron
-# Sync every hour
-0 * * * * cd /path/to/synapse-li/sync && SYNAPSE_DB_PASSWORD="xxx" /usr/bin/python3 sync_task.py >> /var/log/synapse-li/sync-cron.log 2>&1
-```
+Default schedule: Every 6 hours (configurable)
 
-### Celery-Based Sync (Optional)
+### Manual Trigger from synapse-admin-li
 
-For more sophisticated scheduling, use Celery:
-
-1. Create `celeryconfig.py`:
-
-```python
-from celery import Celery
-from celery.schedules import crontab
-
-app = Celery('synapse_li_sync')
-
-app.conf.beat_schedule = {
-    'sync-every-hour': {
-        'task': 'sync_task.run_sync',
-        'schedule': crontab(minute=0),  # Every hour
-    },
-}
-
-app.conf.timezone = 'UTC'
-```
-
-2. Run Celery:
-
-```bash
-celery -A celeryconfig beat --loglevel=info &
-celery -A celeryconfig worker --loglevel=info &
-```
+The sync can be triggered manually from the synapse-admin-li interface via a "Sync Now" button.
 
 ## Monitoring
 
 ### Check Sync Status
 
 ```bash
+# View checkpoint file
 cat /var/lib/synapse-li/sync_checkpoint.json
+
+# Get status via sync_task.py
+python3 sync_task.py --status
 ```
 
-### Check Replication Health
+### Check Lock Status
 
 ```bash
-python3 monitor_replication.py
-```
-
-### View Sync Logs
-
-```bash
-tail -f /var/log/synapse-li/media-sync.log
+# Check if sync is currently running
+ls -la /var/lib/synapse-li/sync.lock
 ```
 
 ## Troubleshooting
 
-### Replication Lag Too High
+### pg_dump Fails
 
-If replication lag exceeds 100 MB:
+If pg_dump fails:
 
-1. Check network connectivity between main and hidden instances
-2. Check PostgreSQL replication slot is active:
-   ```sql
-   SELECT * FROM pg_replication_slots WHERE slot_name = 'hidden_instance_sub';
+1. Check network connectivity to main PostgreSQL
+2. Verify credentials and permissions:
+   ```bash
+   psql -h $MAIN_DB_HOST -U $MAIN_DB_USER -d $MAIN_DB_NAME -c "SELECT 1"
    ```
-3. Restart PostgreSQL subscription if needed:
-   ```sql
-   ALTER SUBSCRIPTION hidden_instance_sub DISABLE;
-   ALTER SUBSCRIPTION hidden_instance_sub ENABLE;
-   ```
+3. Check available disk space for dump file
+4. Review error message in checkpoint file
 
-### Media Sync Failures
+### pg_restore Fails
 
-If media sync fails:
+If pg_restore fails:
 
-1. Check rclone configuration: `rclone lsd main-s3:` and `rclone lsd hidden-s3:`
-2. Verify network access to both MinIO instances
-3. Check MinIO credentials and bucket permissions
-4. Review logs: `/var/log/synapse-li/media-sync.log`
+1. Check network connectivity to LI PostgreSQL
+2. Verify credentials and permissions
+3. Check if LI database exists
+4. Review error message in checkpoint file
 
 ### Lock File Issues
 
@@ -212,33 +159,40 @@ If sync is stuck with lock held:
 
 1. Check if sync process is actually running: `ps aux | grep sync_task`
 2. If not running, manually remove lock: `rm /var/lib/synapse-li/sync.lock`
-3. Restart sync
+3. Investigate why previous sync didn't release lock (check logs)
+
+### Sync Takes Too Long
+
+For large databases, sync may take significant time:
+
+1. Monitor progress via logs
+2. Consider increasing timeout values in `sync_task.py`
+3. Ensure adequate network bandwidth between database servers
+4. Consider running sync during low-usage periods
 
 ## Security Considerations
 
-1. **Network Isolation**: Only the hidden instance should be able to access main instance's PostgreSQL and MinIO
-2. **Credentials**: Store database and MinIO credentials securely (Kubernetes secrets, vault, etc.)
-3. **Audit Logs**: All sync operations are logged with `LI:` prefix for audit trail
-4. **One-Way Sync**: Sync is always main → hidden, never the reverse
+1. **Credentials**: Store database credentials securely (Kubernetes secrets)
+2. **Audit Logs**: All sync operations are logged with `LI:` prefix for audit trail
+3. **One-Way Sync**: Sync is always main → LI, never the reverse
+4. **Full Replacement**: Each sync completely replaces LI database - any local changes are lost
 
-## Performance Tuning
+## Media Storage
 
-### Replication
+Per CLAUDE.md section 7.5, the LI instance uses **shared MinIO** for media:
 
-Adjust PostgreSQL settings:
-
-```sql
-ALTER SUBSCRIPTION hidden_instance_sub SET (streaming = on);
-```
-
-### Media Sync
-
-Adjust rclone parameters in `sync_media.sh`:
-
-- `--transfers`: Number of parallel file transfers (default: 4)
-- `--checkers`: Number of parallel file checkers (default: 8)
-- `--bwlimit`: Bandwidth limit (e.g., `10M` for 10 MB/s)
+- LI Synapse connects directly to main MinIO
+- No media sync is needed
+- Media is read-only for LI in practice
+- LI admins must NOT delete or modify media files (affects main instance)
 
 ## Integration with synapse-admin-li
 
-The sync system can be triggered from synapse-admin-li via a sync button. See the main LI requirements documentation for details on the admin interface integration.
+The sync system can be triggered from synapse-admin-li via a "Sync Now" button.
+
+The synapse-admin-li interface:
+1. Calls the sync API endpoint
+2. Displays sync status (running, last sync time, errors)
+3. Shows progress during sync operation
+
+See the synapse-admin-li documentation for details on the admin interface integration.

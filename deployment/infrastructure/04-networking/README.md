@@ -2,137 +2,78 @@
 
 ## Overview
 
-This directory contains networking configuration for security, ingress, and TLS management.
+This directory contains networking configuration for ingress routing and TLS management.
 
 **Components:**
-1. **NetworkPolicies** - Zero-trust security isolation
-2. **Ingress Controller** - HTTP/HTTPS routing
-3. **Cert-Manager** - Automatic TLS certificate management
+1. **Ingress Controller** - HTTP/HTTPS routing
+2. **Cert-Manager** - Automatic TLS certificate management
+
+**Note:** Network isolation is the organization's responsibility per CLAUDE.md section 7.4. This solution does not implement network-level isolation. The organization must provide a private network or appropriate access controls to isolate the LI instance.
 
 ## Architecture
 
-### Zero-Trust Security Model
-
-**Default Deny All** → Explicitly allow required traffic only
+### Traffic Flow
 
 ```
-┌──────────────────────────────────────────────┐
-│  Default: ALL traffic denied                 │
-└──────────────────────────────────────────────┘
-                    ↓
-┌──────────────────────────────────────────────┐
-│  NetworkPolicies define allowed paths:       │
-│  ✓ Synapse → PostgreSQL, Redis, MinIO       │
-│  ✓ Synapse main → key_vault (LI)            │
-│  ✓ key_vault uses SQLite (no external DB)   │
-│  ✓ LI Instance → LI PostgreSQL only         │
-│  ✓ LI Instance → Main MinIO (shared media)  │
-│  ✗ LI Instance ⇏ Main PostgreSQL/Redis      │
-│  ✗ key_vault ⇏ External access              │
-└──────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                       Internet                               │
+└────────────────────────────┬────────────────────────────────┘
+                             │
+                             ▼
+                  ┌──────────────────┐
+                  │  NGINX Ingress   │
+                  │   Controller     │
+                  │   (NodePort)     │
+                  └────────┬─────────┘
+                           │
+         ┌─────────────────┴─────────────────┐
+         │                                   │
+         ▼                                   ▼
+┌─────────────────┐               ┌─────────────────┐
+│  Main Instance  │               │   LI Instance   │
+│                 │               │   (Separate     │
+│ - matrix.ex.com │               │    network)     │
+│ - chat.ex.com   │               │                 │
+│ - admin.ex.com  │               │ - chat-li.ex.com│
+│ - grafana.ex.com│               │ - admin-li.ex.com│
+│                 │               │ - keyvault.ex.com│
+│                 │               │ - matrix.ex.com │
+│                 │               │   (DNS override)|
+└─────────────────┘               └─────────────────┘
 ```
 
-### Critical Security Policies
+### Required Access Paths
 
-**1. key_vault Isolation** (MOST IMPORTANT for LI compliance)
-- ONLY accessible from Synapse main instance (for storing recovery keys)
-- Also accessible from Synapse Admin LI and nginx-li (for LI admin retrieval)
-- Uses SQLite internally (NO external database connections)
-- Egress: DNS only (for internal Kubernetes service resolution)
-- CANNOT be accessed from external networks (network isolation is org's responsibility)
+The following connectivity must be available (organization ensures this):
 
-**2. LI Instance Isolation**
-- CANNOT access main instance PostgreSQL or Redis
-- Can ONLY access LI PostgreSQL (replicated from main)
-- Can access Main MinIO for media (shared bucket, read-only in practice)
-  - Per CLAUDE.md 7.5: LI uses main MinIO directly for media access
-  - WARNING: LI admins must NOT modify/delete media (affects main instance)
+**Main Instance:**
+- Synapse → PostgreSQL, Redis, MinIO
+- Synapse main → key_vault (for storing recovery keys)
+- LiveKit → Redis
+- All services → DNS resolution
 
-**3. Database Access Control**
-- Each database has explicit allow list
-- No default access
-- Separate policies for main and LI PostgreSQL
+**LI Instance:**
+- Synapse LI → LI PostgreSQL (replicated from main)
+- Synapse LI → Main MinIO (shared media access per CLAUDE.md 7.5)
+- All LI services run on single server (CLAUDE.md 7.1)
+
+**Cross-Instance:**
+- Database sync: Main PostgreSQL → LI PostgreSQL
+- Recovery keys: Synapse main → key_vault (write)
+- Media: Synapse LI → Main MinIO (read)
 
 ## Components
 
-### 1. NetworkPolicies (networkpolicies.yaml + sync-system-networkpolicy.yaml)
-
-**Total: 25+ NetworkPolicy objects** (includes sync-system policies)
-
-#### Global Policies
-
-1. **default-deny-all**
-   - Denies all ingress and egress by default
-   - Foundation of zero-trust model
-
-2. **allow-dns**
-   - Allows all pods to resolve DNS
-   - Required for service discovery
-
-#### Database Policies
-
-3. **postgresql-access**
-   - Allows: Synapse main, key_vault
-   - Blocks: LI instance, external access
-   - Ports: 5432 (PostgreSQL), 8000 (metrics)
-
-4. **postgresql-li-access**
-   - Allows: Synapse LI, sync system
-   - Blocks: Main instance, external access
-   - Ensures LI data separation
-
-#### Cache Policies
-
-5. **redis-access**
-   - Allows: Synapse, LiveKit (NOT key_vault - uses SQLite)
-   - Ports: 6379 (Redis), 26379 (Sentinel)
-   - Enables worker replication and sessions
-
-#### Storage Policies
-
-6. **minio-access**
-   - Allows: Synapse, PostgreSQL, sync system
-   - Ports: 9000 (S3 API), 9090 (Console)
-   - Media storage and backups
-
-#### Critical Isolation Policies
-
-7. **key-vault-isolation** ⭐ CRITICAL
-   - Ingress: ONLY from Synapse main
-   - Egress: ONLY to PostgreSQL and Redis
-   - Prevents unauthorized key access
-   - Core LI compliance requirement
-
-8. **li-instance-isolation** ⭐ IMPORTANT
-   - Prevents LI from accessing main resources
-   - Ensures data separation
-   - Admin access only via ingress
-
-#### Application Policies
-
-9. **synapse-main-egress**
-   - Broad egress for federation
-   - Access to all internal services
-   - HTTPS to external Matrix servers
-
-10. **allow-from-ingress**
-    - Pods labeled `app.kubernetes.io/expose: "true"`
-    - Allows ingress controller access
-
-11. **allow-prometheus-scraping**
-    - Pods labeled `prometheus.io/scrape: "true"`
-    - Allows metrics collection
-
-### 2. Ingress Controller (ingress-install.yaml)
+### 1. Ingress Controller (ingress-install.yaml)
 
 **NGINX Ingress Controller**
 
 **Why NGINX:**
-- ✅ Mature and stable
-- ✅ High performance
-- ✅ WebSocket support (required for Matrix sync)
-- ✅ Long timeout support
-- ✅ Well documented
+- Mature and stable
+- High performance
+- WebSocket support (required for Matrix sync)
+- Long timeout support (for /sync long-polling)
+- Well documented
 
 **Installation:**
 
@@ -152,7 +93,7 @@ kubectl wait --for=condition=Available deployment/ingress-nginx-controller -n in
 - WebSocket: Enabled
 - TLS: TLSv1.2, TLSv1.3 only
 
-### 3. Cert-Manager (cert-manager-install.yaml)
+### 2. Cert-Manager (cert-manager-install.yaml)
 
 **Automatic TLS Certificate Management**
 
@@ -172,11 +113,25 @@ Certificate renewal after deployment is the organization's responsibility.
 ```bash
 kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.14.0/cert-manager.yaml
 
-# Verify installation
+# Wait for pods
+kubectl wait --for=condition=Ready pod -l app.kubernetes.io/instance=cert-manager -n cert-manager --timeout=5m
+
+# Edit cert-manager-install.yaml - change email
+# Then apply ClusterIssuers
+kubectl apply -f cert-manager-install.yaml
+```
+
+**Verification:**
+```bash
+# Check cert-manager pods
 kubectl get pods -n cert-manager
 
-# Create ClusterIssuers
-kubectl apply -f cert-manager-install.yaml
+# Check ClusterIssuers
+kubectl get clusterissuer
+
+# Test certificate creation
+kubectl get certificate test-certificate -n matrix
+kubectl describe certificate test-certificate -n matrix
 ```
 
 ## Deployment
@@ -185,35 +140,7 @@ kubectl apply -f cert-manager-install.yaml
 
 **WORKING DIRECTORY:** `deployment/infrastructure/04-networking/`
 
-### Prerequisites
-
-1. **Kubernetes cluster** with network plugin that supports NetworkPolicies
-   - Calico (recommended)
-   - Cilium
-   - Weave Net
-   - **NOT** Flannel (no NetworkPolicy support)
-
-2. **Check network plugin:**
-```bash
-kubectl get pods -n kube-system | grep -E "calico|cilium|weave"
-```
-
-### Step 1: Apply NetworkPolicies
-
-```bash
-kubectl apply -f networkpolicies.yaml
-```
-
-**Verification:**
-```bash
-# List all NetworkPolicies
-kubectl get networkpolicies -n matrix
-
-# Describe specific policy
-kubectl describe networkpolicy key-vault-isolation -n matrix
-```
-
-### Step 2: Install Ingress Controller
+### Step 1: Install Ingress Controller
 
 ```bash
 # Install NGINX Ingress
@@ -237,7 +164,7 @@ kubectl get svc -n ingress-nginx
 
 Expected: Service type NodePort with ports 80:30080, 443:30443
 
-### Step 3: Install Cert-Manager
+### Step 2: Install Cert-Manager
 
 **WHAT:** Install automated TLS certificate management
 
@@ -263,50 +190,13 @@ kubectl get pods -n cert-manager
 # Check ClusterIssuers
 kubectl get clusterissuer
 
-# Test certificate creation
-kubectl get certificate test-certificate -n matrix
-kubectl describe certificate test-certificate -n matrix
+# Test certificate creation (optional)
+kubectl get certificate -n matrix
 ```
 
 ## Validation
 
 **WHERE:** Run all validation commands from your **management node**
-
-### Test NetworkPolicies
-
-**Test 1: key_vault isolation**
-```bash
-# Should SUCCEED (from Synapse main)
-kubectl run test-synapse --rm -it --image=curlimages/curl \
-  --labels="app.kubernetes.io/name=synapse,matrix.instance=main" \
-  -n matrix -- curl http://key-vault:8000/health
-
-# Should FAIL (from random pod)
-kubectl run test-random --rm -it --image=curlimages/curl \
-  -n matrix -- curl http://key-vault:8000/health --max-time 5
-```
-
-Expected: First succeeds, second times out (blocked by NetworkPolicy)
-
-**Test 2: LI instance isolation**
-```bash
-# Should FAIL (LI trying to access main PostgreSQL)
-kubectl run test-li --rm -it --image=postgres:16 \
-  --labels="matrix.instance=li" \
-  -n matrix -- psql -h matrix-postgresql-rw -U postgres --command "SELECT 1"
-```
-
-Expected: Connection timeout/refused
-
-**Test 3: PostgreSQL access control**
-```bash
-# Should SUCCEED (Synapse accessing PostgreSQL)
-kubectl run test-synapse-db --rm -it --image=postgres:16 \
-  --labels="app.kubernetes.io/name=synapse,matrix.instance=main" \
-  -n matrix -- psql -h matrix-postgresql-rw -U synapse -d matrix --command "SELECT version();"
-```
-
-Expected: Success, shows PostgreSQL version
 
 ### Test Ingress
 
@@ -334,11 +224,11 @@ spec:
 
 **Test:**
 ```bash
-# Get ingress IP
-INGRESS_IP=$(kubectl get svc ingress-nginx-controller -n ingress-nginx -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+# Get ingress IP (for NodePort, use node IP)
+kubectl get nodes -o wide
 
-# Test HTTP
-curl -H "Host: test.example.com" http://$INGRESS_IP/
+# Test HTTP (replace NODE_IP with actual node IP)
+curl -H "Host: test.example.com" http://NODE_IP:30080/
 ```
 
 ### Test Cert-Manager
@@ -348,44 +238,18 @@ curl -H "Host: test.example.com" http://$INGRESS_IP/
 kubectl get certificate -n matrix
 
 # Describe for details
-kubectl describe certificate test-certificate -n matrix
+kubectl describe certificate <cert-name> -n matrix
 
 # Check if secret created
-kubectl get secret test-tls -n matrix
+kubectl get secret <cert-name>-tls -n matrix
 
-# View certificate
-kubectl get secret test-tls -n matrix -o jsonpath='{.data.tls\.crt}' | base64 -d | openssl x509 -text -noout
+# View certificate details
+kubectl get secret <cert-name>-tls -n matrix -o jsonpath='{.data.tls\.crt}' | base64 -d | openssl x509 -text -noout
 ```
 
 ## Troubleshooting
 
 **WHERE:** Run all troubleshooting commands from your **management node**
-
-### NetworkPolicies Not Working
-
-**Problem:** Traffic still allowed when it should be blocked
-
-**Diagnosis:**
-```bash
-# Check if network plugin supports NetworkPolicies
-kubectl get pods -n kube-system | grep -E "calico|cilium|weave"
-
-# Check NetworkPolicy exists
-kubectl get networkpolicy -n matrix
-
-# Describe policy
-kubectl describe networkpolicy <policy-name> -n matrix
-```
-
-**Common Causes:**
-- Flannel CNI (doesn't support NetworkPolicies)
-- Misspelled labels in selectors
-- Policy not applied
-
-**Solution:**
-- Use Calico/Cilium/Weave instead of Flannel
-- Verify label selectors match pod labels
-- Re-apply policies
 
 ### Ingress Not Routing Traffic
 
@@ -410,6 +274,7 @@ kubectl logs -n ingress-nginx deployment/ingress-nginx-controller
 - Wrong ingressClassName
 - Service doesn't exist
 - Wrong backend port
+- DNS not pointing to ingress IP
 
 ### Cert-Manager Not Issuing Certificates
 
@@ -436,62 +301,15 @@ kubectl get order,challenge -n matrix
 - Rate limit hit (use staging for testing)
 - Firewall blocking port 80 (HTTP-01 challenge)
 
-## Security Best Practices
+## TLS Best Practices
 
-### 1. NetworkPolicy Guidelines
-
-✅ **DO:**
-- Start with default-deny-all
-- Explicitly allow only required traffic
-- Use specific port numbers
-- Label pods consistently
-- Test policies before production
-
-❌ **DON'T:**
-- Allow broad namespace access
-- Use wildcards in selectors
-- Skip testing
-- Leave policies undefined
-
-### 2. key_vault Protection
-
-**CRITICAL:** This is the most important security policy
-
-✅ **Ensure:**
-- Only Synapse main can access
-- No external network access
-- NetworkPolicy always applied
-- Regular audit of access logs
-
-🚨 **Monitor:**
-
-**Note:** Regularly verify key_vault security from your management node
-
-```bash
-# Check key_vault access logs
-kubectl logs -n matrix deployment/key-vault | grep "LI:"
-
-# Verify NetworkPolicy is active
-kubectl get networkpolicy key-vault-isolation -n matrix
-```
-
-### 3. LI Instance Separation
-
-✅ **Ensure:**
-- Separate PostgreSQL cluster
-- Separate namespace labels
-- NetworkPolicy blocks main access
-- Regular compliance audits
-
-### 4. TLS Best Practices
-
-✅ **DO:**
+**DO:**
 - Use TLSv1.2 minimum (prefer TLSv1.3)
-- Rotate certificates before expiry
 - Monitor certificate expiration
 - Use strong ciphers only
+- Test with Let's Encrypt staging before production
 
-❌ **DON'T:**
+**DON'T:**
 - Use self-signed in production (unless internal/isolated)
 - Allow SSLv3, TLS1.0, TLS1.1
 - Ignore expiration warnings
@@ -499,24 +317,6 @@ kubectl get networkpolicy key-vault-isolation -n matrix
 ## Monitoring
 
 **WHERE:** Run all monitoring commands from your **management node**
-
-### NetworkPolicy Compliance
-
-**Tools:**
-- **Cilium Hubble** - Visual network flow monitoring
-- **Calico Enterprise** - Policy visualization
-
-**Manual Verification:**
-
-**Note:** These commands test network connectivity to verify policies are working
-
-```bash
-# Test connectivity matrix
-for POD in synapse key-vault postgresql; do
-  echo "Testing $POD..."
-  kubectl exec -n matrix $POD -- curl -s -m 2 http://key-vault:8000/health || echo "Blocked ✓"
-done
-```
 
 ### Ingress Metrics
 
@@ -538,19 +338,15 @@ done
 
 ## Scaling Considerations
 
-| CCU Range | Ingress Replicas | NetworkPolicy Impact | Notes |
-|-----------|------------------|----------------------|-------|
-| 100 | 1 | Minimal | Single ingress pod OK |
-| 1,000 | 2 | Low | Add redundancy |
-| 5,000 | 3 | Medium | Distribute across nodes |
-| 10,000 | 5 | Medium | Monitor conntrack table |
-| 20,000 | 7+ | High | Consider node-local ingress |
-
-**Note:** NetworkPolicies have minimal performance impact with modern CNIs (Calico, Cilium)
+| CCU Range | Ingress Replicas | Notes |
+|-----------|------------------|-------|
+| 100 | 1 | Single ingress pod OK |
+| 1,000 | 2 | Add redundancy |
+| 5,000 | 3 | Distribute across nodes |
+| 10,000 | 5 | Monitor conntrack table |
+| 20,000 | 7+ | Consider node-local ingress |
 
 ## References
 
-- [Kubernetes NetworkPolicies](https://kubernetes.io/docs/concepts/services-networking/network-policies/)
 - [NGINX Ingress Controller](https://kubernetes.github.io/ingress-nginx/)
 - [Cert-Manager Documentation](https://cert-manager.io/docs/)
-- [Calico NetworkPolicy](https://docs.tigera.io/calico/latest/network-policy/)

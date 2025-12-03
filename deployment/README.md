@@ -46,7 +46,7 @@ Complete production-grade Matrix Synapse homeserver deployment on Kubernetes, su
 - **HA Database**: CloudNativePG with synchronous replication
 - **Distributed Storage**: MinIO with EC:4 erasure coding
 - **Redis Sentinel**: Automatic failover for caching
-- **Zero-trust Security**: 25+ NetworkPolicies with strict isolation
+- **Group Calls**: LiveKit SFU + coturn for video/voice
 
 ---
 
@@ -61,7 +61,7 @@ deployment/
 │   ├── 01-postgresql/           # CloudNativePG (main + LI clusters)
 │   ├── 02-redis/                # Redis Sentinel (HA caching)
 │   ├── 03-minio/                # MinIO distributed object storage
-│   └── 04-networking/           # NetworkPolicies, Ingress, TLS
+│   └── 04-networking/           # Ingress, TLS
 │
 ├── main-instance/               ← Phase 2: Main Matrix Instance
 │   ├── 01-synapse/              # Synapse main process
@@ -69,15 +69,14 @@ deployment/
 │   ├── 02-workers/              # 9 worker types (synchrotron, generic, media, event-persister, etc.)
 │   ├── 03-haproxy/              # Intelligent load balancer
 │   ├── 04-livekit/              # Video/voice calling (Helm reference)
-│   └── 06-coturn/               # TURN/STUN NAT traversal
-│   # NOTE: Sygnal (push notifications) not included - requires external Apple/Google servers
+│   └── 06-coturn/               # TURN/STUN NAT traversal (peer-to-peer calls)
 │
 ├── li-instance/                 ← Phase 3: Lawful Intercept
 │   ├── 00-redis-li/             # Isolated Redis for LI (no HA required)
-│   ├── 01-synapse-li/           # Read-only Synapse instance
+│   ├── 01-synapse-li/           # Writable Synapse instance (for password resets)
 │   ├── 02-element-web-li/       # LI web client (shows deleted messages)
-│   ├── 03-synapse-admin-li/     # Admin interface for forensics
-│   ├── 04-sync-system/          # PostgreSQL logical replication
+│   ├── 03-synapse-admin-li/     # Admin interface for forensics + sync trigger
+│   ├── 04-sync-system/          # Sync documentation (sync built into synapse-li)
 │   ├── 05-key-vault/            # E2EE recovery key storage (SQLite)
 │   └── 06-nginx-li/             # ⭐ Independent reverse proxy (works when main is down)
 │
@@ -145,10 +144,11 @@ See `docs/SCALING-GUIDE.md` for detailed requirements.
 
 **📖 REQUIRED Reading (follow in order):**
 
-1. **`docs/00-WORKSTATION-SETUP.md`** ← Set up kubectl, helm, and required tools on your workstation
-2. **`docs/00-KUBERNETES-INSTALLATION-DEBIAN-OVH.md`** ← Set up Kubernetes cluster (assumes VMs are provided)
-3. **`docs/SCALING-GUIDE.md`** ← Determine resource requirements for your scale (100 CCU to 20K CCU)
-4. **THIS README** ← Complete all deployment phases below
+1. **`BIGPICTURE.md`** ← Understand what you're building and how components fit together
+2. **`docs/SCALING-GUIDE.md`** ← Determine resource requirements for your scale (100 CCU to 20K CCU)
+3. **`docs/00-WORKSTATION-SETUP.md`** ← Set up kubectl, helm, and required tools on your workstation
+4. **`docs/00-KUBERNETES-INSTALLATION-DEBIAN-OVH.md`** ← Set up Kubernetes cluster (assumes VMs are provided)
+5. **THIS README** ← Complete all deployment phases below
 
 **📚 OPTIONAL Reference (read as needed):**
 - `docs/CONFIGURATION-REFERENCE.md` - Deep dive into all configuration parameters (if you need more details than Step 6 above)
@@ -216,9 +216,8 @@ main-instance/01-synapse/secrets.yaml              # 12 secrets
 li-instance/01-synapse-li/deployment.yaml          # 7 secrets
 li-instance/05-key-vault/deployment.yaml           # 3 secrets (DJANGO_SECRET_KEY, API_KEY, RSA_PRIVATE_KEY)
 main-instance/06-coturn/deployment.yaml            # 2 secrets
-# NOTE: Sygnal (push) not included - requires external Apple/Google servers
 infrastructure/03-minio/secrets.yaml               # 2 secrets
-li-instance/04-sync-system/deployment.yaml         # 1 secret (S3_SECRET_KEY only; DB passwords from CloudNativePG)
+# NOTE: Sync system is built into synapse-li - no additional secrets needed
 ```
 
 **HOW TO EDIT each file:**
@@ -241,6 +240,7 @@ Replace example domains with your actual domains.
 | **Main** | Synapse homeserver | `matrix.example.com` | Matrix server_name (user IDs: @user:matrix.example.com) |
 | **Main** | Element Web | `chat.example.com` | Main web client |
 | **Main** | coturn | `turn.example.com` | TURN/STUN server for calls |
+| **Main** | Grafana monitoring | `grafana.example.com` | Monitoring dashboards |
 | **LI** | Synapse LI | `matrix.example.com` | **SAME as main** (required for user login) |
 | **LI** | Element Web LI | `chat-li.example.com` | **DIFFERENT** - LI admin web client |
 | **LI** | Synapse Admin LI | `admin-li.example.com` | **DIFFERENT** - LI forensics interface |
@@ -401,6 +401,7 @@ ed25519 a_long ed25519_key_string_here
 matrix.example.com         → <main-ingress-external-ip>  # Synapse homeserver
 chat.example.com           → <main-ingress-external-ip>  # Element Web (main)
 turn.example.com           → <turn-external-ip>           # TURN server
+grafana.example.com        → <main-ingress-external-ip>  # Monitoring dashboard
 ```
 
 **LI Instance DNS Records:**
@@ -533,10 +534,6 @@ kubectl wait --for=condition=Ready tenant/matrix-minio -n matrix --timeout=600s
 
 **Deploy Networking:**
 ```bash
-# NetworkPolicies (zero-trust security)
-kubectl apply -f infrastructure/04-networking/networkpolicies.yaml
-kubectl apply -f infrastructure/04-networking/sync-system-networkpolicy.yaml
-
 # NGINX Ingress Controller
 helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
 helm install ingress-nginx ingress-nginx/ingress-nginx \
@@ -559,8 +556,8 @@ kubectl apply -f infrastructure/04-networking/cert-manager-install.yaml
 kubectl get cluster -n matrix                    # PostgreSQL clusters
 kubectl get statefulset redis -n matrix          # Redis
 kubectl get tenant matrix-minio -n matrix        # MinIO
-kubectl get networkpolicies -n matrix            # Security policies
 kubectl get pods -n ingress-nginx                # Ingress controller
+kubectl get clusterissuer                        # TLS certificate issuers
 ```
 
 ---
@@ -613,16 +610,13 @@ kubectl wait --for=condition=Available deployment/haproxy -n matrix --timeout=30
 # Element Web
 kubectl apply -f main-instance/02-element-web/deployment.yaml
 
-# coturn (TURN/STUN)
+# coturn (TURN/STUN for peer-to-peer calls)
 kubectl apply -f main-instance/06-coturn/deployment.yaml
-
-# NOTE: Sygnal (push) not deployed - requires external Apple/Google servers
-# Clients will use /sync endpoint for real-time updates (no push notifications)
 
 # NOTE: key_vault is deployed in Phase 3 (LI Instance) - it resides in LI network
 ```
 
-**5. Deploy LiveKit (Optional - Video/Voice):**
+**5. Deploy LiveKit (Group Video/Voice Calls):**
 ```bash
 helm repo add livekit https://helm.livekit.io
 helm install livekit livekit/livekit-stack \
@@ -655,26 +649,15 @@ kubectl exec -n matrix synapse-main-0 -- curl http://localhost:8008/health
 - Works even if main instance is down (only sync stops)
 - See `li-instance/README.md` for complete LI architecture details
 
-**1. Deploy Sync System (PostgreSQL Replication):**
-```bash
-# Run from your management node in the deployment directory:
-# Deploy sync system components
-kubectl apply -f li-instance/04-sync-system/deployment.yaml
+**1. Sync System (built into synapse-li):**
 
-# Run replication setup (ONE TIME ONLY)
-# Store job name in variable to use consistently
-JOB_NAME="sync-setup-$(date +%s)"
+The sync system is built into the synapse-li application. No separate deployment needed.
 
-# Create the job
-kubectl create job --from=job/sync-system-setup-replication \
-  $JOB_NAME -n matrix
+- **Periodic sync**: Configured in synapse-li settings (default: every 6 hours)
+- **Manual sync**: Use the "Sync Now" button in Synapse Admin LI interface
+- **Sync method**: pg_dump/pg_restore for full database synchronization
 
-# Wait for setup to complete (using same job name)
-kubectl wait --for=condition=complete job/$JOB_NAME -n matrix --timeout=300s
-
-# Check replication status (using same job name)
-kubectl logs job/$JOB_NAME -n matrix
-```
+After deploying synapse-li in step 2, verify sync is working via Synapse Admin LI.
 
 **2. Deploy Synapse LI:**
 ```bash
@@ -768,16 +751,8 @@ kubectl get svc nginx-li -n matrix
 # Check key_vault is responding
 kubectl exec -n matrix key-vault-0 -- python -c "import socket; s=socket.socket(); s.settimeout(3); s.connect(('localhost', 8000)); print('OK'); s.close()"
 
-# Check replication lag (CRITICAL - should be < 5 seconds)
-kubectl exec -n matrix matrix-postgresql-li-1-0 -- \
-  psql -U postgres -d matrix_li -c "
-  SELECT
-    subname,
-    received_lsn,
-    latest_end_lsn,
-    pg_wal_lsn_diff(latest_end_lsn, received_lsn) AS lag_bytes
-  FROM pg_subscription_rel
-  JOIN pg_subscription ON subrelid = srrelid;"
+# Check sync status via Synapse Admin LI interface
+# Navigate to admin-li.example.com and check the sync status page
 ```
 
 **📝 LI Admin DNS Configuration:**
@@ -1006,14 +981,6 @@ Replace `example.com` with your actual domain in:
 - `main-instance/02-element-web/deployment.yaml`
 - `li-instance/02-element-web-li/deployment.yaml`
 
-### **5. Verify NetworkPolicies**
-
-Check all NetworkPolicies are applied:
-```bash
-kubectl get networkpolicies -n matrix
-# Should show 25+ policies
-```
-
 ---
 
 ## 📊 Resource Requirements
@@ -1154,11 +1121,12 @@ curl https://matrix.example.com/_matrix/client/versions
 
 **5. Monitoring:**
 ```bash
-# Prometheus: Check all targets are UP
-http://localhost:9090/targets
-
 # Grafana: View dashboards
-http://localhost:3000/dashboards
+https://grafana.example.com
+
+# Or via port-forward if Ingress not configured:
+kubectl port-forward -n monitoring svc/prometheus-grafana 3000:80
+# Open: http://localhost:3000
 ```
 
 **6. Antivirus:**
@@ -1280,13 +1248,12 @@ kubectl exec -it -n matrix key-vault-0 -- \
 
 **Workers not connecting:**
 - Check HAProxy is running: `kubectl get deployment haproxy -n matrix`
-- Check NetworkPolicies: `kubectl get networkpolicies -n matrix`
 - Check worker logs: `kubectl logs <worker-pod> -n matrix`
 
-**LI replication lag:**
-- Check replication status (see Phase 3 verification above)
-- Check sync system logs: `kubectl logs <sync-system-pod> -n matrix`
-- Check PostgreSQL replication delay: See LI verification commands in Phase 3
+**LI sync issues:**
+- Check sync status via Synapse Admin LI interface
+- Check synapse-li logs: `kubectl logs -n matrix deployment/synapse-li`
+- Verify LI PostgreSQL connectivity from synapse-li pod
 
 **Antivirus not scanning:**
 - Check ClamAV is running: `kubectl get daemonset clamav -n matrix`

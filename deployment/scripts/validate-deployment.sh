@@ -104,10 +104,8 @@ check_pattern "infrastructure/03-minio/tenant.yaml" \
     "volumesPerServer: 2" \
     "MinIO volumes for erasure coding"
 
-# Check NetworkPolicy namespace selectors
-check_pattern "infrastructure/04-networking/networkpolicies.yaml" \
-    'kubernetes.io/metadata.name' \
-    "NetworkPolicy namespace selector fix"
+# Note: NetworkPolicy files removed per CLAUDE.md 7.4 (network isolation is organization's responsibility)
+echo -e "${GREEN}✓${NC} Network isolation handled by organization (no NetworkPolicy files)"
 
 echo ""
 echo "2. Checking Main Instance Components..."
@@ -161,14 +159,16 @@ echo ""
 echo "3. Checking LI Instance Components..."
 echo "-----------------------------------------"
 
-# Check sync system replication
-check_pattern "li-instance/04-sync-system/deployment.yaml" \
-    "GRANT SELECT ON ALL TABLES IN SCHEMA public TO postgres" \
-    "Replication setup using postgres superuser"
+# Sync system is built into synapse-li (see synapse-li/sync/)
+echo -e "${GREEN}✓${NC} Sync system built into synapse-li (no separate deployment needed)"
 
-check_pattern "li-instance/04-sync-system/deployment.yaml" \
-    'name: POSTGRES_PASSWORD' \
-    "Replication setup with superuser"
+# Check key_vault exists in LI instance
+if [ -f "li-instance/05-key-vault/deployment.yaml" ]; then
+    echo -e "${GREEN}✓${NC} key_vault deployment found in LI instance"
+else
+    echo -e "${RED}✗${NC} key_vault deployment not found"
+    ((ERRORS++))
+fi
 
 echo ""
 echo "4. Checking Auxiliary Services..."

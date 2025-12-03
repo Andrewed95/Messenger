@@ -329,61 +329,29 @@ kubectl describe backup <backup-name> -n matrix
 kubectl logs -n matrix matrix-postgresql-1 -c barman-cloud-wal-archive
 ```
 
-## Logical Replication Setup (Main → LI)
+## LI Database Synchronization
 
-**Note**: The sync system handles this automatically, but manual setup is documented below for reference
+The LI database is synchronized from the main database using **pg_dump/pg_restore**.
 
-**WHERE:** Run SQL commands from your **management node** using kubectl exec
+Per CLAUDE.md section 3.3 and 7.2:
+- Uses pg_dump/pg_restore for **full database synchronization**
+- Each sync **completely overwrites** the LI database with a fresh copy from main
+- Any changes made in LI (such as password resets) are **lost after the next sync**
+- Sync interval is configurable via Kubernetes CronJob
+- Manual sync trigger available from synapse-admin-li interface
 
-### On Main Cluster
+**Sync Process:**
+1. pg_dump exports the main database to a SQL file
+2. pg_restore (via psql) imports the dump into LI database
+3. File-based lock prevents concurrent sync operations
 
-**HOW:** Connect to the main PostgreSQL cluster and execute SQL:
-
-```bash
-# Run from management node:
-kubectl exec -n matrix matrix-postgresql-1 -- psql -U postgres -d matrix -c "
-CREATE PUBLICATION matrix_li_pub FOR ALL TABLES;
-SELECT pg_create_logical_replication_slot('matrix_li_slot', 'pgoutput');
-"
-```
-
-**SQL commands executed on main cluster:**
-```sql
--- Create publication for all tables
-CREATE PUBLICATION matrix_li_pub FOR ALL TABLES;
-
--- Create replication slot
-SELECT pg_create_logical_replication_slot('matrix_li_slot', 'pgoutput');
-```
-
-### On LI Cluster
-
-**HOW:** Connect to the LI PostgreSQL cluster and execute SQL:
-
-```bash
-# Run from management node:
-kubectl exec -n matrix matrix-postgresql-li-1 -- psql -U postgres -d matrix_li -c "
-CREATE SUBSCRIPTION matrix_li_sub
-    CONNECTION 'host=matrix-postgresql-rw port=5432 dbname=matrix user=synapse password=xxx'
-    PUBLICATION matrix_li_pub
-    WITH (copy_data = true, create_slot = false, slot_name = 'matrix_li_slot');
-"
-```
-
-**SQL command executed on LI cluster:**
-```sql
--- Create subscription
-CREATE SUBSCRIPTION matrix_li_sub
-    CONNECTION 'host=matrix-postgresql-rw port=5432 dbname=matrix user=synapse password=xxx'
-    PUBLICATION matrix_li_pub
-    WITH (copy_data = true, create_slot = false, slot_name = 'matrix_li_slot');
-```
+See `deployment/li-instance/04-synapse-li-sync/` for the sync CronJob configuration.
 
 ## Security Considerations
 
 1. **SSL/TLS**: Enabled by default, certificates managed by CloudNativePG
 2. **Password Encryption**: SCRAM-SHA-256 enforced
-3. **Network Policies**: See `../04-networking/networkpolicies.yaml`
+3. **Network Isolation**: Organization's responsibility (per CLAUDE.md 7.4)
 4. **Superuser Access**: Limited to CloudNativePG operator
 5. **Application Users**: Created with minimal required privileges
 

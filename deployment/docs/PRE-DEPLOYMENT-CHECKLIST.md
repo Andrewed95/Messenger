@@ -473,20 +473,17 @@ The deployer generates all secrets and credentials during deployment using the p
   - [ ] Both `access-key`/`secret-key` and `CONSOLE_ACCESS_KEY`/`CONSOLE_SECRET_KEY`
 
 ### 4. Networking
-- [ ] **NetworkPolicy namespace selectors fixed:**
-  ```yaml
-  namespaceSelector:
-    matchExpressions:
-      - key: kubernetes.io/metadata.name
-        operator: In
-        values: ["kube-system"]  # or ["ingress-nginx"]
-  ```
-- [ ] **Verify all 25+ NetworkPolicies:**
-  - [ ] DNS access (`allow-dns`)
-  - [ ] Database access policies
-  - [ ] key_vault isolation
-  - [ ] LI instance isolation
-  - [ ] Ingress access
+- [ ] **Ingress controller configured:**
+  - [ ] NGINX Ingress installed and running
+  - [ ] IngressClass configured
+- [ ] **TLS certificates:**
+  - [ ] cert-manager installed
+  - [ ] ClusterIssuer configured (letsencrypt-prod)
+  - [ ] Certificates generated for domains
+- [ ] **Network isolation (organization's responsibility per CLAUDE.md 7.4):**
+  - [ ] LI network isolated from main network
+  - [ ] key_vault accessible only from authorized sources
+  - [ ] Firewall/network policies configured by organization
 
 ## ✅ Phase 2: Main Instance Components
 
@@ -524,10 +521,10 @@ The deployer generates all secrets and credentials during deployment using the p
   - [ ] Uses local SQLite file (no external database)
   - [ ] Data persisted on PVC (1Gi)
   - [ ] Automatic migrations on startup
-- [ ] **Network access controlled (NetworkPolicy):**
+- [ ] **Network access controlled (organization's responsibility per CLAUDE.md 7.4):**
   - [ ] Synapse main can STORE keys (cross-network access)
   - [ ] LI admin can RETRIEVE keys (within LI network)
-  - [ ] All other access blocked
+  - [ ] Organization configures network isolation
 - [ ] **Deployed on LI Server:**
   - [ ] key_vault runs on LI server nodes (nodeSelector)
   - [ ] Located in `li-instance/05-key-vault/`
@@ -1271,249 +1268,148 @@ for worker in synchrotron generic media; do
 done
 ```
 
-### 4. Replication Status and Validation
+### 4. Database Sync Status and Validation
 
-#### 4.1 Verify Replication Configuration
+**Note:** LI database sync uses **pg_dump/pg_restore** (not PostgreSQL logical replication).
+Per CLAUDE.md section 3.3 and 7.2:
+- Uses pg_dump/pg_restore for full database synchronization
+- Each sync completely overwrites the LI database with a fresh copy from main
+- Sync interval configurable via CronJob (default: 6 hours)
+- Manual sync trigger available via Synapse Admin LI
 
-**Check Publication on Main Cluster:**
+#### 4.1 Verify Sync Status
+
+**Check Sync Checkpoint:**
 ```bash
-# Verify publication exists
-kubectl exec -it matrix-postgresql-1 -n matrix -- \
-  psql -U postgres -d synapse -c \
-  "SELECT pubname, schemaname, tablename
-   FROM pg_publication_tables
-   WHERE pubname = 'synapse_publication';"
+# Check sync status from synapse-li pod
+kubectl exec -n matrix synapse-li-0 -- python3 /sync/sync_task.py --status
 
-# Should show all Synapse tables listed
-# If empty, publication not created correctly
-```
-
-**Check Subscription on LI Cluster:**
-```bash
-# Verify subscription exists and is active
-kubectl exec -it matrix-postgresql-li-1 -n matrix -- \
-  psql -U postgres -d synapse_li -c \
-  "SELECT subname, subenabled, pid IS NOT NULL as active,
-          latest_end_lsn, received_lsn
-   FROM pg_stat_subscription;"
+# Or check checkpoint file directly
+kubectl exec -n matrix synapse-li-0 -- cat /var/lib/synapse-li/sync_checkpoint.json
 
 # Expected output:
-#      subname        | subenabled | active | latest_end_lsn | received_lsn
-# --------------------+------------+--------+----------------+--------------
-#  synapse_subscription |     t     |   t    |   0/3A5F2E8   |  0/3A5F2E8
-#
-# subenabled: Should be 't' (true)
-# active: Should be 't' (worker process running)
-# LSN values: Should be present and advancing
+# {
+#   "last_sync_at": "2025-01-15T10:30:00",
+#   "last_sync_status": "success",
+#   "last_dump_size_mb": 1234.56,
+#   "last_duration_seconds": 180.5,
+#   "total_syncs": 42,
+#   "failed_syncs": 0
+# }
 ```
 
-#### 4.2 Validate Replication Credentials
+#### 4.2 Verify Database Connectivity
 
-**Critical: Verify Correct User is Used**
-
-The sync-system **must** use the existing `synapse` user created by CloudNativePG, NOT create a new user.
-
-**Check Main Cluster User:**
+**Check Main PostgreSQL Connectivity from Synapse LI:**
 ```bash
-# List database users
-kubectl exec -it matrix-postgresql-1 -n matrix -- \
-  psql -U postgres -c "\du"
+# Test connection to main database
+kubectl exec -n matrix synapse-li-0 -- \
+  psql -h matrix-postgresql-rw.matrix.svc.cluster.local \
+       -U synapse -d matrix -c "SELECT 1;"
 
-# Should see:
-#                                    List of roles
-#  Role name |                         Attributes
-# -----------+------------------------------------------------------------
-#  postgres  | Superuser, Create role, Create DB, Replication, Bypass RLS
-#  streaming_replica | Replication
-#  synapse   |
-
-# Verify synapse user password matches app secret
-kubectl get secret matrix-postgresql-app -n matrix -o jsonpath='{.data.password}' | base64 -d
-echo ""
+# Should return:
+#  ?column?
+# ----------
+#         1
 ```
 
-**Verify Replication Connection Credentials:**
+**Check LI PostgreSQL Connectivity:**
 ```bash
-# Check sync-system job uses correct CloudNativePG superuser secrets
-kubectl get job sync-system-setup-replication -n matrix -o yaml | \
-  grep -A 3 "POSTGRES_PASSWORD\|LI_POSTGRES_PASSWORD"
+# Test connection to LI database
+kubectl exec -n matrix synapse-li-0 -- \
+  psql -h matrix-postgresql-li-rw.matrix.svc.cluster.local \
+       -U synapse_li -d matrix_li -c "SELECT 1;"
 
-# Should see references to CloudNativePG-managed secrets:
-# - name: matrix-postgresql-superuser (for main cluster)
-# - name: matrix-postgresql-li-superuser (for LI cluster)
-
-# Verify connection info from sync-system-secrets:
-kubectl get secret sync-system-secrets -n matrix -o yaml | \
-  grep -E "MAIN_DB_HOST|MAIN_DB_NAME|LI_DB_HOST|LI_DB_NAME"
+# Should return:
+#  ?column?
+# ----------
+#         1
 ```
+#### 4.3 Validate Data Sync
 
-**Test Replication Connection from LI to Main:**
-```bash
-# Get postgres superuser password (required for replication)
-POSTGRES_PASSWORD=$(kubectl get secret matrix-postgresql-superuser -n matrix \
-  -o jsonpath='{.data.password}' | base64 -d)
-
-# Test connection from LI cluster to main cluster using postgres user
-kubectl exec -it matrix-postgresql-li-1 -n matrix -- \
-  psql "postgresql://postgres:${POSTGRES_PASSWORD}@matrix-postgresql-rw.matrix.svc.cluster.local:5432/matrix" \
-  -c "SELECT current_user, current_database();"
-
-# Expected output:
-#  current_user | current_database
-# --------------+------------------
-#  postgres     | matrix
-```
-
-#### 4.3 Check Replication Lag
-
-**Monitor Replication Lag:**
-```bash
-# Detailed replication status
-kubectl exec -it matrix-postgresql-li-1 -n matrix -- \
-  psql -U postgres -d synapse_li -c "
-SELECT
-  subname,
-  pid,
-  pg_size_pretty(pg_wal_lsn_diff(latest_end_lsn, received_lsn)) AS receive_lag,
-  pg_size_pretty(pg_wal_lsn_diff(received_lsn, last_msg_send_time)) AS apply_lag,
-  last_msg_send_time,
-  last_msg_receipt_time
-FROM pg_stat_subscription;"
-```
-
-**Expected Replication Lag:**
-- **Healthy:** receive_lag < 1MB, apply_lag < 1 second
-- **Warning:** receive_lag 1-10MB, apply_lag 1-5 seconds
-- **Critical:** receive_lag > 10MB, apply_lag > 10 seconds
-
-**Common Lag Causes:**
-1. Network issues between main and LI clusters
-2. High write load on main cluster
-3. Insufficient resources on LI cluster
-4. Replication slot not advancing (check `pg_replication_slots`)
-
-#### 4.4 Validate Data Replication
-
-**Test Data Sync:**
+**Test Data Counts Match:**
 ```bash
 # Count users on main cluster
 MAIN_USER_COUNT=$(kubectl exec -it matrix-postgresql-1 -n matrix -- \
-  psql -U synapse -d synapse -t -c "SELECT COUNT(*) FROM users;")
+  psql -U synapse -d matrix -t -c "SELECT COUNT(*) FROM users;")
 
-# Count users on LI cluster (should match after initial sync)
+# Count users on LI cluster (should match after sync)
 LI_USER_COUNT=$(kubectl exec -it matrix-postgresql-li-1 -n matrix -- \
-  psql -U synapse_li -d synapse_li -t -c "SELECT COUNT(*) FROM users;")
+  psql -U synapse_li -d matrix_li -t -c "SELECT COUNT(*) FROM users;")
 
 echo "Main cluster users: $MAIN_USER_COUNT"
 echo "LI cluster users: $LI_USER_COUNT"
 
-# Difference should be 0 or very small (new users during check)
+# Counts should match exactly after sync completes
 ```
 
-**Check Recent Events are Replicated:**
+**Check Recent Events are Synced:**
 ```bash
 # Get latest event on main
 kubectl exec -it matrix-postgresql-1 -n matrix -- \
-  psql -U synapse -d synapse -c \
-  "SELECT event_id, received_ts, room_id FROM events
-   ORDER BY received_ts DESC LIMIT 5;"
+  psql -U synapse -d matrix -c \
+  "SELECT event_id, received_ts FROM events ORDER BY received_ts DESC LIMIT 5;"
 
-# Check same events exist on LI (wait a few seconds for replication)
+# Check same events exist on LI (after sync)
 kubectl exec -it matrix-postgresql-li-1 -n matrix -- \
-  psql -U synapse_li -d synapse_li -c \
-  "SELECT event_id, received_ts, room_id FROM events
-   ORDER BY received_ts DESC LIMIT 5;"
+  psql -U synapse_li -d matrix_li -c \
+  "SELECT event_id, received_ts FROM events ORDER BY received_ts DESC LIMIT 5;"
 
-# Event IDs should match
+# Event IDs should match after sync completes
 ```
 
-#### 4.5 Replication Error Troubleshooting
+#### 4.4 Sync Error Troubleshooting
 
-**Check for Replication Errors:**
+**Check for Sync Errors:**
 ```bash
-# Check subscription worker errors
-kubectl exec -it matrix-postgresql-li-1 -n matrix -- \
-  psql -U postgres -d synapse_li -c \
-  "SELECT * FROM pg_stat_subscription WHERE pid IS NULL;"
+# Check sync status
+kubectl exec -n matrix synapse-li-0 -- python3 /sync/sync_task.py --status
 
-# If any rows returned, subscription worker is not running
+# Check for stuck lock file
+kubectl exec -n matrix synapse-li-0 -- ls -la /var/lib/synapse-li/sync.lock
+
+# If lock exists but no sync is running, remove it:
+kubectl exec -n matrix synapse-li-0 -- rm -f /var/lib/synapse-li/sync.lock
 ```
 
-**Check PostgreSQL Logs for Replication Issues:**
+**Common Error: "pg_dump failed"**
+```
+Solution: Check connectivity to main PostgreSQL:
+
+kubectl exec -n matrix synapse-li-0 -- \
+  psql -h matrix-postgresql-rw.matrix.svc.cluster.local \
+       -U synapse -d matrix -c "SELECT 1;"
+
+Verify credentials are correct in sync configuration.
+```
+
+**Common Error: "pg_restore failed"**
+```
+Solution: Check LI PostgreSQL is accessible:
+
+kubectl exec -n matrix synapse-li-0 -- \
+  psql -h matrix-postgresql-li-rw.matrix.svc.cluster.local \
+       -U synapse_li -d matrix_li -c "SELECT 1;"
+
+Check disk space on LI PostgreSQL PV.
+```
+
+**Manually Trigger Sync:**
 ```bash
-# Main cluster logs (publication side)
-kubectl logs matrix-postgresql-1 -n matrix | grep -i "publication\|replication"
-
-# LI cluster logs (subscription side)
-kubectl logs matrix-postgresql-li-1 -n matrix | grep -i "subscription\|replication"
+kubectl exec -n matrix synapse-li-0 -- python3 /sync/sync_task.py
 ```
 
-**Common Error: "password authentication failed for user"**
-```
-Solution: Verify sync-system uses CloudNativePG superuser secrets:
+#### 4.5 Sync Health Checklist
 
-kubectl get job sync-system-setup-replication -n matrix -o yaml | \
-  grep -A 3 "POSTGRES_PASSWORD"
+Before considering sync healthy:
 
-Should reference:
-  valueFrom:
-    secretKeyRef:
-      name: matrix-postgresql-superuser
-      key: password
-
-Note: Logical replication requires superuser (postgres) credentials,
-not the application user (synapse). CloudNativePG auto-creates these
-secrets when enableSuperuserAccess: true is set in the Cluster spec.
-```
-
-**Common Error: "publication does not exist"**
-```
-Solution: Create publication manually:
-
-kubectl exec -it matrix-postgresql-1 -n matrix -- \
-  psql -U postgres -d matrix -c \
-  "CREATE PUBLICATION matrix_li_publication FOR ALL TABLES;"
-```
-
-**Common Error: "could not create replication slot"**
-```
-Solution: Check max_replication_slots:
-
-kubectl exec -it matrix-postgresql-1 -n matrix -- \
-  psql -U postgres -c "SHOW max_replication_slots;"
-
-# Should be >= 10
-# If not, increase in PostgreSQL configuration
-```
-
-#### 4.6 Replication Health Checklist
-
-Before considering replication healthy:
-
-- [ ] Publication exists on main cluster with all Synapse tables
-- [ ] Subscription exists on LI cluster and is enabled
-- [ ] Subscription worker process is running (pid IS NOT NULL)
-- [ ] Replication lag < 1MB receive lag, < 1 second apply lag
-- [ ] User counts match between main and LI (within acceptable delta)
-- [ ] Recent events are visible on both clusters
-- [ ] No authentication errors in logs
-- [ ] Replication slot is active on main cluster
-- [ ] Network connectivity between clusters is stable
-
-**Check Replication Slot:**
-```bash
-kubectl exec -it matrix-postgresql-1 -n matrix -- \
-  psql -U postgres -c \
-  "SELECT slot_name, slot_type, active, restart_lsn
-   FROM pg_replication_slots;"
-
-# Should show:
-#      slot_name       | slot_type | active | restart_lsn
-# ---------------------+-----------+--------+-------------
-#  synapse_subscription | logical   |   t    | 0/3A5F000
-#
-# active should be 't' (true)
-```
+- [ ] Sync checkpoint shows `last_sync_status: success`
+- [ ] No sync lock file when sync is not running
+- [ ] User counts match between main and LI
+- [ ] Events are visible on LI after sync
+- [ ] Sync duration is reasonable (< 30 minutes for typical DBs)
+- [ ] No pg_dump/pg_restore errors in logs
+- [ ] CronJob is scheduled (if using automatic sync)
 
 ## 🐛 Troubleshooting
 
@@ -1524,9 +1420,10 @@ kubectl exec -it matrix-postgresql-1 -n matrix -- \
    - Verify secrets are created
    - Check init containers completed
 
-2. **NetworkPolicy blocking traffic**
-   - Verify namespace labels: `kubectl get ns kube-system --show-labels`
-   - Check policy matches: `kubectl describe networkpolicy -n matrix`
+2. **Network connectivity issues**
+   - Network isolation is organization's responsibility (CLAUDE.md 7.4)
+   - Verify services can reach each other within cluster
+   - Check firewall rules if using external databases
 
 3. **Database connection failures**
    - Verify PostgreSQL clusters are ready
@@ -1538,10 +1435,11 @@ kubectl exec -it matrix-postgresql-1 -n matrix -- \
    - Check bucket creation
    - Validate credentials format
 
-5. **LI replication not working**
-   - Check publication exists on main
-   - Verify subscription on LI
-   - Check network connectivity between clusters
+5. **LI sync not working**
+   - Check pg_dump connectivity to main database
+   - Verify pg_restore can write to LI database
+   - Check sync checkpoint file for errors
+   - Manually trigger sync to test
 
 ## 📋 Final Checklist
 
@@ -1552,7 +1450,7 @@ Before considering deployment complete:
 - [ ] Synapse federation tester passes
 - [ ] Element Web accessible and functional
 - [ ] Media upload/download working
-- [ ] PostgreSQL replication active (if using LI)
+- [ ] LI database sync working (if using LI)
 - [ ] Monitoring dashboards showing metrics
 - [ ] Backup procedures tested
 - [ ] Security scan completed

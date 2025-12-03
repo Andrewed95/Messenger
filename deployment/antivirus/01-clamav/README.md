@@ -224,18 +224,14 @@ kubectl delete pod <clamav-pod> -n matrix
   - ClusterIP Service (internal cluster traffic)
   - Localhost (pod network)
 
-### Network Policies
+### Network Access
 
-ClamAV is subject to the `antivirus-access` NetworkPolicy:
+ClamAV requires the following network access (organization ensures this per CLAUDE.md 7.4):
 
 ```yaml
-# Allows:
+# Required access:
 - Content Scanner → ClamAV (port 3310)
-- ClamAV → internet (virus DB updates)
-
-# Denies:
-- External traffic → ClamAV
-- ClamAV → other Matrix services
+- ClamAV → internet (virus DB updates) - Note: Out of scope per CLAUDE.md 4.4
 ```
 
 ### Container Security

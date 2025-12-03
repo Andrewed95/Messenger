@@ -59,7 +59,6 @@ Automated deployment and validation scripts for Matrix/Synapse infrastructure.
 - ✅ Pod health and readiness
 - ✅ Service endpoints
 - ✅ Ingress configuration
-- ✅ NetworkPolicy enforcement
 - ✅ PodDisruptionBudgets
 - ✅ PostgreSQL cluster health
 - ✅ MinIO tenant status
@@ -174,7 +173,7 @@ kubectl exec -n matrix synapse-main-0 -- \
 | Insufficient resources | Cluster too small | See `../docs/SCALING-GUIDE.md` |
 | Pod won't start | Missing dependencies | Check logs, ensure Phase 1 complete |
 | Ingress no IP | LoadBalancer pending | Check cloud LB or deploy MetalLB |
-| NetworkPolicy blocks traffic | Misconfiguration | Review `../infrastructure/04-networking/` |
+| Service unreachable | Network connectivity | Check service endpoints, DNS |
 
 ## Advanced Usage
 

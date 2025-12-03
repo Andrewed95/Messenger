@@ -1,7 +1,8 @@
 ---
 # CloudNativePG Cluster for LI Instance
-# Read-only replica using logical replication from main instance
+# Writable database synchronized from main via pg_dump/pg_restore
 # Configured for lawful intercept with infinite message retention
+# LI admin can modify data (e.g., reset passwords) - changes overwritten on next sync
 apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
 metadata:
@@ -86,8 +87,10 @@ spec:
       ssl: "on"
       password_encryption: "scram-sha-256"
 
-      # Read-only mode (prevents accidental writes)
-      default_transaction_read_only: "on"
+      # LI database is WRITABLE (not read-only)
+      # LI admin needs to reset user passwords for lawful intercept
+      # Changes in LI are overwritten by next sync (pg_dump/pg_restore)
+      # default_transaction_read_only: "off" is the default, no need to set
 
   # Bootstrap configuration
   bootstrap:
@@ -97,8 +100,8 @@ spec:
       encoding: UTF8
       localeCollate: C
       localeCType: C
-      # Note: Logical replication will be configured separately
-      # The sync system will populate this database
+      # Note: Database populated via pg_dump/pg_restore from main
+      # See deployment/li-instance/04-synapse-li-sync/ for sync CronJob
 
   # Monitoring configuration
   monitoring:

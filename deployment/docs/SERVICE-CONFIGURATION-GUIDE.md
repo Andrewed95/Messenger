@@ -191,7 +191,7 @@ initContainers:
 **Access Model:**
 - Synapse main (main network): Can STORE recovery keys
 - LI admin (LI network): Can RETRIEVE keys via Django admin panel
-- All other access: BLOCKED by NetworkPolicy
+- All other access: Blocked by network isolation (organization's responsibility per CLAUDE.md 7.4)
 
 **IMPORTANT:** You must provide a pre-built key_vault Django application image.
 

@@ -301,9 +301,6 @@ kubectl exec -n matrix synapse-main-0 -- curl -v http://127.0.0.1:9093/health
 kubectl run -n matrix tmp-test --rm -it --image=curlimages/curl -- \
   curl http://synapse-main-0.synapse-main.matrix.svc.cluster.local:9093/health
 
-# Check NetworkPolicy allows replication
-kubectl describe networkpolicy -n matrix
-
 # Verify Redis is accessible
 kubectl exec -n matrix <worker-pod> -- \
   redis-cli -h redis.matrix.svc.cluster.local -a "$REDIS_PASSWORD" ping
@@ -389,7 +386,7 @@ Workers are allowed to:
 - Connect to main process replication endpoint (port 9093)
 - Be accessed by HAProxy/Ingress (client-facing workers only)
 
-Enforced by Phase 1 NetworkPolicies.
+Network isolation is the organization's responsibility (per CLAUDE.md 7.4).
 
 ### Worker Isolation
 

@@ -202,8 +202,9 @@ curl http://localhost:9090/_synapse/metrics
    E2EE recovery keys are stored in key_vault service (deployed in Phase 2.4).
 
 3. **Network Isolation**:
-   - key_vault is ONLY accessible from Synapse main (enforced by NetworkPolicy)
-   - LI instance CANNOT access main resources (enforced by NetworkPolicy)
+   - key_vault should ONLY be accessible from Synapse main
+   - LI instance should NOT access main resources
+   - Network isolation is the organization's responsibility (per CLAUDE.md 7.4)
 
 ## Worker Support
 
@@ -362,10 +363,10 @@ kubectl run -n matrix tmp-s3 --rm -it --image=amazon/aws-cli -- \
    - Never commit secrets to git
    - Rotate secrets regularly
 
-2. **Network Policies**:
+2. **Network Access**:
    - Synapse main can access: PostgreSQL, Redis, MinIO, key_vault
    - Synapse main can be accessed by: Ingress, HAProxy, workers
-   - Enforced by Phase 1 NetworkPolicies
+   - Network isolation is the organization's responsibility (per CLAUDE.md 7.4)
 
 3. **TLS**:
    - Internal traffic uses unencrypted HTTP (within cluster)

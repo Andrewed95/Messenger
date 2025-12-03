@@ -249,11 +249,14 @@ cnpg_pg_stat_database_blks_hit / (cnpg_pg_stat_database_blks_hit + cnpg_pg_stat_
 ### LI Sync System
 
 ```promql
-# Replication lag (CRITICAL - PostgreSQL logical replication)
-cnpg_pg_replication_lag{cnpg_io_cluster="matrix-postgresql-li"}
+# LI sync uses pg_dump/pg_restore (no replication lag metric)
+# Monitor via sync checkpoint file or custom metrics
 
 # MinIO health (LI uses main MinIO directly)
 up{job="minio"}
+
+# LI PostgreSQL health
+up{job="postgresql-li"}
 ```
 
 ## Log Queries (LogQL)

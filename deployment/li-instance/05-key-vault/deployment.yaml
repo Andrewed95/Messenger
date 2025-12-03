@@ -9,7 +9,7 @@
 # ACCESS MODEL:
 # - Synapse main (main network): Can STORE recovery keys (when users set up E2EE)
 # - LI admin (LI network): Can RETRIEVE recovery keys (for lawful intercept workflow)
-# - All other access: BLOCKED by NetworkPolicy
+# - Network isolation is the organization's responsibility (per CLAUDE.md 7.4)
 #
 # DATABASE: SQLite (local file storage)
 # - Low I/O requirements (only stores recovery keys)
@@ -25,7 +25,7 @@
 #
 # SECURITY:
 # - Located in LI network (isolated from main users)
-# - Synapse main has specific NetworkPolicy access for storing keys
+# - Organization ensures network isolation per CLAUDE.md 7.4
 # - LI admin can retrieve keys from within LI network
 # - RSA 2048-bit encryption for recovery keys
 # - Private key stored securely, needed to decrypt recovery keys
@@ -90,7 +90,7 @@ data:
     SECRET_KEY = os.environ['DJANGO_SECRET_KEY']
     DEBUG = False
     # Restrict to Kubernetes service names used by Synapse to access key_vault
-    # NetworkPolicy provides additional layer of protection (only Synapse main can access)
+    # Network isolation is the organization's responsibility (per CLAUDE.md 7.4)
     ALLOWED_HOSTS = [
         'key-vault',                                    # Short service name
         'key-vault.matrix',                             # Namespace-qualified
@@ -412,7 +412,7 @@ metadata:
   annotations:
     description: |
       key_vault service in LI network.
-      Access controlled by NetworkPolicy:
+      Access model (network isolation is org's responsibility):
       - Synapse main (main network): Can STORE keys
       - LI admin (LI network): Can RETRIEVE keys
 spec:

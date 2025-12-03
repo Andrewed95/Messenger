@@ -17,7 +17,7 @@ data:
     port 6379
     # protected-mode yes is the secure default. Password authentication is
     # configured via requirepass (added by init container from Secret).
-    # Network isolation is enforced by Kubernetes NetworkPolicies.
+    # Network isolation is the organization's responsibility (per CLAUDE.md 7.4).
     protected-mode yes
 
     # General

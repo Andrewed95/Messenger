@@ -15,25 +15,14 @@ This document sets up the **management node** - the machine from which you will 
 
 ---
 
-## Choosing Your Management Node
+## Management Node Requirements
 
-**You have several options:**
+**The management node is a dedicated server provided by the organization.**
 
-### Option 1: Dedicated Management Server (RECOMMENDED for Production)
-- A separate server/VM provided by the customer
 - Used only for cluster management
 - Keeps management traffic separate from cluster workload
-- **Example**: Bastion host, jump server, or dedicated ops server
-
-### Option 2: Kubernetes Control-Plane Node
-- Install tools directly on one of the Kubernetes master nodes
-- Simpler - no additional machine needed
-- **Tradeoff**: Management tools run on cluster infrastructure
-
-### Option 3: Operator's Workstation
-- Your local laptop/desktop
-- Manage cluster remotely over network
-- **Requires**: VPN or network access to customer infrastructure
+- Example: Bastion host, jump server, or dedicated ops server
+- Must have network access to Kubernetes API server
 
 ---
 
@@ -163,15 +152,6 @@ git --version
 After your Kubernetes cluster is initialized (following `00-KUBERNETES-INSTALLATION-DEBIAN-OVH.md`), you need to configure kubectl on your **management node** to access the cluster.
 
 ### 2.1 Copy kubeconfig from Control Plane
-
-**If your management node IS the control-plane node:**
-```bash
-# Kubeconfig is already available at:
-cat ~/.kube/config
-# No copying needed - kubectl will work immediately
-```
-
-**If your management node IS NOT the control-plane node:**
 
 **On the Kubernetes control plane node:**
 

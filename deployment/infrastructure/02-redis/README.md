@@ -479,7 +479,7 @@ maxmemory 4gb
 ## Security Considerations
 
 1. **Password Protection**: Enabled via `requirepass` and `masterauth`
-2. **Network Policies**: See `../04-networking/networkpolicies.yaml`
+2. **Network Isolation**: Organization's responsibility (per CLAUDE.md 7.4)
 3. **No External Access**: ClusterIP only, no LoadBalancer/NodePort
 4. **TLS**: Currently disabled (add if required)
 

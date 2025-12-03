@@ -39,7 +39,7 @@ data:
 
       # Replication endpoint for workers (internal only)
       # SECURITY: Binds to all pod interfaces since workers connect via Kubernetes DNS.
-      # Network isolation is enforced by NetworkPolicies (infrastructure/04-networking/).
+      # Network isolation is the organization's responsibility (per CLAUDE.md 7.4).
       # The worker_replication_secret provides authentication for replication traffic.
       - port: 9093
         type: http
@@ -243,7 +243,7 @@ data:
       enabled: true
 
       # key_vault service URL (Django service storing RSA-encrypted keys)
-      # Only main Synapse can access this service (enforced by NetworkPolicy: key-vault-isolation)
+      # Only main Synapse should access this service (network isolation is org's responsibility)
       # DO NOT change unless key_vault deployed on different host/port
       key_vault_url: "http://key-vault.matrix.svc.cluster.local:8000"
 
@@ -278,8 +278,7 @@ data:
     # To enable federation later:
     # 1. Change to null (allow all) or list specific domains: ["trusted.example.com"]
     # 2. Ensure TLS certificates cover federation endpoints
-    # 3. Review NetworkPolicies for federation egress traffic
-    # 4. Update DNS SRV records for .well-known delegation
+    # 3. Update DNS SRV records for .well-known delegation
     federation_domain_whitelist: []
 
     # Verify TLS certificates when federation is enabled

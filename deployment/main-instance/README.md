@@ -410,11 +410,11 @@ kubectl get events -n matrix --sort-by='.lastTimestamp'
 - **Internal**: Unencrypted HTTP within cluster (trusted network)
 - **Federation**: TLS on port 8448 (standard Matrix federation)
 
-### Network Policies
-- Enforced by Phase 1 NetworkPolicies
-- HAProxy can access: Synapse main, all workers
-- Workers can access: PostgreSQL, Redis, MinIO
-- Element Web: Isolated, no backend access
+### Network Access
+Network isolation is the organization's responsibility (per CLAUDE.md 7.4).
+- HAProxy needs access to: Synapse main, all workers
+- Workers need access to: PostgreSQL, Redis, MinIO
+- Element Web: Serves static files only
 
 ### Secrets Management
 - All secrets in Kubernetes Secrets
@@ -428,14 +428,13 @@ After deploying the main instance:
 1. **Phase 2.4**: Deploy supporting services
    - LiveKit (video/voice calling)
    - coturn (TURN/STUN server)
-   - NOTE: Sygnal (push) not included - requires external servers
    - key_vault (E2EE recovery key storage - CRITICAL for LI)
 
 2. **Phase 3**: Deploy LI instance
-   - Synapse LI (read-only instance)
+   - Synapse LI (writable instance for password resets)
    - Element Web LI (with deleted message display)
-   - Synapse Admin LI (forensics interface)
-   - Sync system (PostgreSQL logical replication)
+   - Synapse Admin LI (forensics interface + sync trigger)
+   - Sync system (built into synapse-li)
 
 3. **Phase 4**: Deploy monitoring stack
    - Prometheus + Alertmanager

@@ -1,14 +1,14 @@
 # Synapse LI (Lawful Intercept) Instance Configuration
-# ⭐ READ-ONLY instance for law enforcement access ⭐
+# ⭐ Writable instance for law enforcement access ⭐
 #
 # Key Differences from Main Instance:
-# - Read-only database (enforced by PostgreSQL)
+# - Writable database (LI admin can reset user passwords)
+# - Changes overwritten on next sync (pg_dump/pg_restore)
 # - No federation (no outbound connections)
-# - No registration or user management
+# - No registration (users synced from main)
 # - No worker support (single process only)
 # - Separate PostgreSQL cluster (matrix-postgresql-li)
 # - Shared MinIO bucket (synapse-media - same as main, read-only access)
-# - NO access to key_vault (enforced by NetworkPolicy)
 # - Displays ALL messages including soft-deleted (redaction_retention_period: null synced from main)
 
 # CRITICAL: Both server_name and public_baseurl MUST match main instance
@@ -49,7 +49,7 @@ database:
     port: 5432
     sslmode: require
     cp_min: 5
-    cp_max: 20  # Lower than main (read-only workload)
+    cp_max: 20  # Lower than main (LI has fewer concurrent users)
 
 # ==================== REDIS ====================
 
@@ -91,7 +91,7 @@ forgotten_room_retention_period: null
 
 # NO recovery key module for LI instance
 # Recovery keys are ONLY stored on main instance via key_vault
-# LI cannot access key_vault (enforced by NetworkPolicy)
+# LI cannot access key_vault (enforced by organization's network isolation per CLAUDE.md 7.4)
 
 # ==================== FEDERATION ====================
 
@@ -119,15 +119,16 @@ trusted_key_servers:
 # ==================== REGISTRATION & USERS ====================
 
 # CRITICAL: NO registration on LI instance
-# Users are synced from main database via logical replication
+# Users are synced from main database via pg_dump/pg_restore
 enable_registration: false
 enable_registration_without_verification: false
 
-# Disable password changes (read-only)
+# LI admin can reset user passwords for lawful intercept
+# Password changes are overwritten on next sync
 enable_set_displayname: false
 enable_set_avatar_url: false
 enable_3pid_changes: false
-enable_password_reset: false
+enable_password_reset: true  # Enable for LI admin to reset passwords
 
 # User directory (read-only)
 user_directory:
