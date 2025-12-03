@@ -52,6 +52,7 @@ spec:
   selector:
     app.kubernetes.io/name: synapse
     app.kubernetes.io/component: homeserver
+    app.kubernetes.io/instance: main
   ports:
     - name: http
       port: 8008
@@ -77,6 +78,7 @@ spec:
   selector:
     app.kubernetes.io/name: synapse
     app.kubernetes.io/component: homeserver
+    app.kubernetes.io/instance: main
   ports:
     - name: http
       port: 8008
@@ -97,10 +99,13 @@ metadata:
   labels:
     app.kubernetes.io/name: synapse
     app.kubernetes.io/component: metrics
+    app.kubernetes.io/instance: main
 spec:
   type: ClusterIP
   selector:
     app.kubernetes.io/name: synapse
+    app.kubernetes.io/component: homeserver
+    app.kubernetes.io/instance: main
   ports:
     - name: metrics
       port: 9090

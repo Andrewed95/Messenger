@@ -17,9 +17,20 @@
     "integrations_rest_url": "",
     "integrations_widgets_urls": [],
 
+    "jitsi": null,
+
     "default_country_code": "US",
-    "show_labs_settings": false,
-    "features": {},
+    "show_labs_settings": true,
+    "features": {
+        "feature_pinning": "labs",
+        "feature_custom_status": "labs",
+        "feature_custom_tags": "labs",
+        "feature_state_counters": "labs",
+        "feature_mjolnir": "labs",
+        "feature_dm_verification": "labs",
+        "feature_presence_in_room_list": "labs",
+        "feature_custom_themes": "labs"
+    },
     "default_theme": "light",
 
     "room_directory": {
@@ -34,11 +45,11 @@
 
     "setting_defaults": {
         "breadcrumbs": true,
-        "UIFeature.urlPreviews": false,
+        "UIFeature.urlPreviews": true,
         "UIFeature.feedback": false,
         "UIFeature.voip": true,
-        "UIFeature.widgets": false,
-        "UIFeature.flair": false,
+        "UIFeature.widgets": true,
+        "UIFeature.flair": true,
         "UIFeature.communities": false,
         "UIFeature.advancedSettings": true,
         "UIFeature.shareQrCode": true,
@@ -47,7 +58,7 @@
 
     "element_call": {
         "url": "https://livekit.example.com",
-        "use_exclusively": true,
+        "use_exclusively": false,
         "participant_limit": 50,
         "brand": "Video Call"
     }

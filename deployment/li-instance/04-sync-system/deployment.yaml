@@ -1,37 +1,43 @@
-# Sync System for LI Instance
+# LI Database Sync System
 # ============================================================================
 #
-# IMPORTANT: The sync system is BUILT INTO synapse-li
-#
-# The synapse-li repository contains the sync implementation:
-# - synapse-li/sync/sync_task.py   - Main sync orchestration
-# - synapse-li/sync/checkpoint.py  - Sync progress tracking
-# - synapse-li/sync/lock.py        - Concurrent sync prevention
-#
-# Features:
-# - Periodic sync via synapse-li's built-in scheduler
-# - Manual sync trigger via synapse-admin-li button
+# Per CLAUDE.md section 3.3:
+# - Uses pg_dump/pg_restore for full database synchronization
+# - Sync interval is configurable via Kubernetes CronJob
+# - Manual sync trigger available from synapse-admin-li
 # - File lock prevents concurrent syncs
-# - Checkpoint tracking for sync status
 #
-# NO ADDITIONAL DEPLOYMENT IS NEEDED for sync functionality.
-# Sync is part of the synapse-li deployment (01-synapse-li/).
+# Deployment Files:
+# - cronjob.yaml  - Kubernetes CronJob for periodic sync (APPLY THIS FILE)
 #
-# Configuration:
-# - Sync interval: Configured in synapse-li's settings
-# - Manual sync: Button in synapse-admin-li interface
+# Implementation:
+# - CronJob runs every 6 hours by default (configurable in cronjob.yaml)
+# - Uses pg_dump to export main database
+# - Uses psql to import dump into LI database (full replacement)
+# - File lock prevents concurrent sync operations
+# - Checkpoint file tracks sync history and status
 #
-# Media:
-# - Media sync is NOT needed - LI uses main MinIO directly via S3 API
+# Media Sync:
+# - NOT needed - LI uses main MinIO directly via S3 API (shared storage)
 #
-# Database Sync Method:
-# - pg_dump/pg_restore for full database synchronization
-# - LI database is writable (for password resets)
-# - Password changes are overwritten on next sync
+# Manual Sync:
+# - Trigger via synapse-admin-li "Sync Now" button
+# - Or create a Job manually: kubectl create job --from=cronjob/synapse-li-database-sync manual-sync-$(date +%s)
+#
+# Monitoring:
+# - Check CronJob status: kubectl get cronjob synapse-li-database-sync -n matrix
+# - Check recent Jobs: kubectl get jobs -n matrix -l app.kubernetes.io/name=sync-system
+# - View logs: kubectl logs -n matrix -l app.kubernetes.io/component=database-sync
 #
 # ============================================================================
 #
-# This file is intentionally minimal - the sync system is part of synapse-li.
-# See LI_IMPLEMENTATION.md in the project root for implementation details.
+# To deploy:
+#   kubectl apply -f cronjob.yaml
+#
+# To change schedule (edit cronjob.yaml spec.schedule):
+#   "0 */6 * * *"  - Every 6 hours (default)
+#   "0 */4 * * *"  - Every 4 hours
+#   "0 */12 * * *" - Every 12 hours
+#   "0 0 * * *"    - Daily at midnight
 #
 # ============================================================================

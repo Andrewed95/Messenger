@@ -1,0 +1,382 @@
+# LI Database Sync CronJob
+# ============================================================================
+#
+# Per CLAUDE.md section 3.3:
+# - Uses pg_dump/pg_restore for full database synchronization
+# - Sync interval is configurable via Kubernetes CronJob
+# - File lock prevents concurrent syncs
+#
+# This CronJob runs the sync_task.py script periodically to synchronize
+# the main PostgreSQL database to the LI PostgreSQL database.
+#
+# Configuration:
+# - Schedule: Default every 6 hours (configurable)
+# - Timeout: 3 hours max (pg_dump + pg_restore + cleanup)
+# - Concurrency: Forbid (only one sync at a time)
+#
+# ============================================================================
+
+---
+# ConfigMap containing the sync Python code
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: synapse-li-sync-scripts
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: sync-system
+    app.kubernetes.io/component: database-sync
+    matrix.instance: li
+data:
+  sync_task.py: |
+    #!/usr/bin/env python3
+    """
+    LI: Main sync task that performs full database synchronization using pg_dump/pg_restore.
+    See synapse-li/sync/sync_task.py for the full implementation with comments.
+    """
+    import logging
+    import os
+    import subprocess
+    import sys
+    import json
+    import fcntl
+    from datetime import datetime
+    from pathlib import Path
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+    logger = logging.getLogger(__name__)
+
+    # Environment variables for database connections
+    MAIN_DB_HOST = os.environ.get('MAIN_DB_HOST', 'matrix-postgresql-rw.matrix.svc.cluster.local')
+    MAIN_DB_PORT = os.environ.get('MAIN_DB_PORT', '5432')
+    MAIN_DB_NAME = os.environ.get('MAIN_DB_NAME', 'matrix')
+    MAIN_DB_USER = os.environ.get('MAIN_DB_USER', 'synapse')
+    MAIN_DB_PASSWORD = os.environ.get('MAIN_DB_PASSWORD', '')
+
+    LI_DB_HOST = os.environ.get('LI_DB_HOST', 'matrix-postgresql-li-rw.matrix.svc.cluster.local')
+    LI_DB_PORT = os.environ.get('LI_DB_PORT', '5432')
+    LI_DB_NAME = os.environ.get('LI_DB_NAME', 'matrix_li')
+    LI_DB_USER = os.environ.get('LI_DB_USER', 'synapse_li')
+    LI_DB_PASSWORD = os.environ.get('LI_DB_PASSWORD', '')
+
+    DUMP_DIR = Path('/var/lib/sync')
+    DUMP_FILE = DUMP_DIR / 'main_db_dump.sql'
+    LOCK_FILE = DUMP_DIR / 'sync.lock'
+    CHECKPOINT_FILE = DUMP_DIR / 'checkpoint.json'
+
+    class SyncLock:
+        def __init__(self):
+            self.lock_file = None
+
+        def acquire(self):
+            DUMP_DIR.mkdir(parents=True, exist_ok=True)
+            self.lock_file = open(LOCK_FILE, 'w')
+            try:
+                fcntl.flock(self.lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                return True
+            except BlockingIOError:
+                self.lock_file.close()
+                raise RuntimeError("Sync already in progress (lock held)")
+
+        def release(self):
+            if self.lock_file:
+                fcntl.flock(self.lock_file.fileno(), fcntl.LOCK_UN)
+                self.lock_file.close()
+
+        def __enter__(self):
+            self.acquire()
+            return self
+
+        def __exit__(self, *args):
+            self.release()
+
+    def update_checkpoint(status, dump_size_mb=None, duration_seconds=None, error=None):
+        checkpoint = {}
+        if CHECKPOINT_FILE.exists():
+            try:
+                checkpoint = json.loads(CHECKPOINT_FILE.read_text())
+            except:
+                pass
+
+        checkpoint['last_sync_at'] = datetime.now().isoformat()
+        checkpoint['last_sync_status'] = status
+
+        if status == 'success':
+            checkpoint['total_syncs'] = checkpoint.get('total_syncs', 0) + 1
+            checkpoint['last_dump_size_mb'] = dump_size_mb
+            checkpoint['last_duration_seconds'] = duration_seconds
+            checkpoint['last_error'] = None
+        else:
+            checkpoint['failed_syncs'] = checkpoint.get('failed_syncs', 0) + 1
+            checkpoint['last_error'] = error
+
+        CHECKPOINT_FILE.write_text(json.dumps(checkpoint, indent=2))
+
+    def pg_dump_main():
+        logger.info(f"Starting pg_dump from {MAIN_DB_HOST}:{MAIN_DB_PORT}/{MAIN_DB_NAME}")
+        DUMP_DIR.mkdir(parents=True, exist_ok=True)
+
+        env = os.environ.copy()
+        env['PGPASSWORD'] = MAIN_DB_PASSWORD
+
+        cmd = [
+            'pg_dump',
+            '-h', MAIN_DB_HOST,
+            '-p', MAIN_DB_PORT,
+            '-U', MAIN_DB_USER,
+            '-d', MAIN_DB_NAME,
+            '--clean', '--if-exists', '--no-owner', '--no-privileges',
+            '-f', str(DUMP_FILE)
+        ]
+
+        result = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=3600)
+        if result.returncode != 0:
+            raise RuntimeError(f"pg_dump failed: {result.stderr}")
+
+        if not DUMP_FILE.exists() or DUMP_FILE.stat().st_size == 0:
+            raise RuntimeError("pg_dump created empty dump file")
+
+        dump_size = DUMP_FILE.stat().st_size / 1024 / 1024
+        logger.info(f"pg_dump completed ({dump_size:.2f} MB)")
+        return dump_size
+
+    def pg_restore_li():
+        logger.info(f"Starting pg_restore to {LI_DB_HOST}:{LI_DB_PORT}/{LI_DB_NAME}")
+
+        env = os.environ.copy()
+        env['PGPASSWORD'] = LI_DB_PASSWORD
+
+        cmd = [
+            'psql',
+            '-h', LI_DB_HOST,
+            '-p', LI_DB_PORT,
+            '-U', LI_DB_USER,
+            '-d', LI_DB_NAME,
+            '-f', str(DUMP_FILE),
+            '--quiet', '--single-transaction'
+        ]
+
+        result = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=7200)
+        # psql may return non-zero for non-critical warnings
+        if result.returncode != 0 and ("FATAL" in result.stderr or "PANIC" in result.stderr):
+            raise RuntimeError(f"pg_restore failed: {result.stderr}")
+
+        logger.info("pg_restore completed")
+
+    def cleanup():
+        try:
+            if DUMP_FILE.exists():
+                DUMP_FILE.unlink()
+        except:
+            pass
+
+    def run_sync():
+        logger.info("LI: Starting database sync (pg_dump/pg_restore)")
+        start_time = datetime.now()
+
+        lock = SyncLock()
+        try:
+            with lock:
+                dump_size = pg_dump_main()
+                pg_restore_li()
+                cleanup()
+
+                duration = (datetime.now() - start_time).total_seconds()
+                update_checkpoint('success', dump_size, duration)
+
+                logger.info(f"Sync completed in {duration:.1f}s ({dump_size:.2f} MB)")
+                return {'status': 'success', 'dump_size_mb': dump_size, 'duration_seconds': duration}
+
+        except RuntimeError as e:
+            error_msg = str(e)
+            if "Sync already in progress" in error_msg:
+                logger.warning(f"Sync skipped: {error_msg}")
+                return {'status': 'skipped', 'reason': error_msg}
+            else:
+                logger.error(f"Sync failed: {error_msg}")
+                update_checkpoint('failed', error=error_msg)
+                cleanup()
+                return {'status': 'failed', 'error': error_msg}
+
+        except Exception as e:
+            error_msg = str(e)
+            logger.error(f"Sync failed: {error_msg}")
+            update_checkpoint('failed', error=error_msg)
+            cleanup()
+            return {'status': 'failed', 'error': error_msg}
+
+    if __name__ == "__main__":
+        if len(sys.argv) > 1 and sys.argv[1] == '--status':
+            if CHECKPOINT_FILE.exists():
+                print(CHECKPOINT_FILE.read_text())
+            else:
+                print('{"status": "never_run"}')
+            sys.exit(0)
+
+        result = run_sync()
+        sys.exit(0 if result['status'] in ['success', 'skipped'] else 1)
+
+---
+# CronJob for periodic database synchronization
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: synapse-li-database-sync
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: sync-system
+    app.kubernetes.io/component: database-sync
+    matrix.instance: li
+spec:
+  # Schedule: Every 6 hours by default
+  # Adjust based on organization requirements
+  # Examples:
+  #   "0 */6 * * *"  - Every 6 hours (default)
+  #   "0 */4 * * *"  - Every 4 hours
+  #   "0 */12 * * *" - Every 12 hours
+  #   "0 0 * * *"    - Daily at midnight
+  schedule: "0 */6 * * *"
+
+  # Prevent concurrent jobs
+  concurrencyPolicy: Forbid
+
+  # Keep last 3 successful and 3 failed jobs for debugging
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+
+  # Start deadline: 5 minutes grace period
+  startingDeadlineSeconds: 300
+
+  jobTemplate:
+    metadata:
+      labels:
+        app.kubernetes.io/name: sync-system
+        app.kubernetes.io/component: database-sync
+        matrix.instance: li
+    spec:
+      # Job timeout: 3 hours (pg_dump + pg_restore for large databases)
+      activeDeadlineSeconds: 10800
+
+      # Retry failed jobs up to 2 times
+      backoffLimit: 2
+
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: sync-system
+            app.kubernetes.io/component: database-sync
+            matrix.instance: li
+        spec:
+          # CLAUDE.md Section 7.1: All LI services must run on one server
+          nodeSelector:
+            node-role.kubernetes.io/li: "true"
+
+          # Tolerate LI node taints
+          tolerations:
+            - key: "dedicated"
+              operator: "Equal"
+              value: "li"
+              effect: "NoSchedule"
+
+          restartPolicy: OnFailure
+
+          containers:
+            - name: sync
+              # Python image with PostgreSQL client tools
+              # Alpine-based for small size, includes Python 3
+              image: python:3.11-alpine
+              imagePullPolicy: IfNotPresent
+
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  # Install PostgreSQL client tools
+                  apk add --no-cache postgresql16-client
+                  # Run sync script
+                  python3 /scripts/sync_task.py
+
+              env:
+                # Main PostgreSQL (source)
+                - name: MAIN_DB_HOST
+                  value: "matrix-postgresql-rw.matrix.svc.cluster.local"
+                - name: MAIN_DB_PORT
+                  value: "5432"
+                - name: MAIN_DB_NAME
+                  value: "matrix"
+                - name: MAIN_DB_USER
+                  value: "synapse"
+                - name: MAIN_DB_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: matrix-postgresql-app
+                      key: password
+
+                # LI PostgreSQL (destination)
+                - name: LI_DB_HOST
+                  value: "matrix-postgresql-li-rw.matrix.svc.cluster.local"
+                - name: LI_DB_PORT
+                  value: "5432"
+                - name: LI_DB_NAME
+                  value: "matrix_li"
+                - name: LI_DB_USER
+                  value: "synapse_li"
+                - name: LI_DB_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: matrix-postgresql-li-app
+                      key: password
+
+              volumeMounts:
+                - name: scripts
+                  mountPath: /scripts
+                  readOnly: true
+                - name: sync-data
+                  mountPath: /var/lib/sync
+
+              resources:
+                requests:
+                  memory: "256Mi"
+                  cpu: "100m"
+                limits:
+                  memory: "1Gi"
+                  cpu: "500m"
+
+          volumes:
+            - name: scripts
+              configMap:
+                name: synapse-li-sync-scripts
+                defaultMode: 0755
+            - name: sync-data
+              emptyDir:
+                sizeLimit: 10Gi
+
+---
+# Service for manual sync trigger (via HTTP endpoint)
+# This allows synapse-admin-li to trigger a sync via API call
+apiVersion: v1
+kind: Service
+metadata:
+  name: sync-system
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: sync-system
+    app.kubernetes.io/component: database-sync
+    matrix.instance: li
+spec:
+  type: ClusterIP
+  # Note: This service is for identification only
+  # Manual sync is triggered by creating a Job from the CronJob template
+  # See synapse-admin-li for the trigger implementation
+  selector:
+    app.kubernetes.io/name: sync-system
+    app.kubernetes.io/component: database-sync
+    matrix.instance: li
+  ports:
+    - name: metrics
+      port: 9090
+      targetPort: 9090
+      protocol: TCP
