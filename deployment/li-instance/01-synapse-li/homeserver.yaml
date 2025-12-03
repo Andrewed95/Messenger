@@ -112,7 +112,10 @@ registration_shared_secret: "${REGISTRATION_SECRET}"
 form_secret: "${FORM_SECRET}"
 signing_key_path: "/config/signing.key"
 
-# Use same trusted key servers as main (for signature verification)
+# Trusted key servers (for federation key verification)
+# NOTE: This setting is ONLY used when federation is enabled.
+# LI has federation disabled, so matrix.org is never contacted.
+# Safe to keep as-is for intranet deployments.
 trusted_key_servers:
   - server_name: "matrix.org"
 

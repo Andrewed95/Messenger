@@ -47,7 +47,8 @@ metadata:
     app.kubernetes.io/part-of: ingress-nginx
 data:
   # Client body size (for media uploads)
-  proxy-body-size: "100m"
+  # NOTE: proxy-body-size is NOT a valid NGINX ConfigMap directive
+  # Only client-max-body-size is used by NGINX Ingress Controller
   client-max-body-size: "100m"
 
   # Timeouts for long-lived connections (Matrix sync)

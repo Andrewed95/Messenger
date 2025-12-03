@@ -186,44 +186,52 @@ When you provide a command, file, or step:
   - Do **not** create separate architectures for “small”, “medium”, “large”.
 - Document clearly **which knobs** to change for scaling.
 
-4.3 **No external services**
+4.3 **Intranet/Air-gapped operation requirement**
 
-- The deployment will operate **without access to the public internet** after setup.
+- After initial deployment, the messenger **MUST work completely without internet access**.
+- The system will run in the organization's **intranet** with no external connectivity.
 - Therefore:
-  - Do **not** rely on any external SaaS or internet services.
+  - Do **not** rely on any external SaaS or internet services for core functionality.
   - Disable Matrix **bridges** and **integrations** by default on the backend.
-  - Any optional external features that depend on internet access must be **off by default** in configuration.
+  - All features that depend on internet access must be **off by default** in configuration.
+  - All inter-service communication happens within the internal network.
+- The deployment must ensure:
+  - All required container images are available in the organization's internal registry.
+  - All services can discover and communicate with each other via internal DNS.
+  - No external API calls, webhooks, or internet dependencies in normal operation.
+  - The messenger functions fully for messaging, calls, file sharing, and LI operations.
 
 4.4 **Internet-dependent maintenance is out of scope**
 
 - Both main and LI environments **must** be exposed over **HTTPS**.
 - The deployment solution covers: **Configure → Deploy → Update** (version upgrades).
-- After deployment, **any ongoing task that requires internet access is out of scope**, including but not limited to:
+- After deployment, **ongoing maintenance tasks that require internet access are the organization's responsibility**, including:
   - TLS certificate renewal (ACME, Let's Encrypt).
   - Antivirus definition updates (ClamAV freshclam).
   - Operating system or package updates.
   - Security patches that require downloading from the internet.
 - You **must not**:
   - Describe or document how to handle these internet-dependent maintenance tasks.
-  - Create "air-gapped" guides, workarounds, or procedures for offline operation.
-  - Add configuration options specifically for "air-gapped" or "offline" scenarios.
+  - Assume internet connectivity is available after initial deployment.
 - The organization's infrastructure team handles all ongoing internet-dependent maintenance.
-- The solution assumes: initial setup with internet → deploy → system works without internet → organization handles maintenance independently.
+- **Clarification**: Operational procedures (like air-gapped/secure key decryption for LI) are VALID and should be documented. The restriction is only on internet-dependent maintenance procedures.
 
-4.5 **TLS certificate initial setup**
+4.5 **TLS certificate setup**
 
-- During initial deployment (when internet access is available):
-  - Use **Let's Encrypt** with cert-manager for automatic TLS certificate provisioning.
-  - Configure `letsencrypt-prod` as the default ClusterIssuer for production certificates.
+- All services **must** be exposed over **HTTPS** with valid TLS certificates.
+- The deployment supports multiple TLS provisioning methods:
+  - **Let's Encrypt** (via cert-manager): For initial deployment when internet access is available.
+  - **Organization's internal CA**: For fully intranet deployments where the organization manages their own PKI.
+  - **Manual certificates**: Organization provides pre-generated certificates.
 - What to include:
-  - cert-manager installation and ClusterIssuer configuration.
-  - Ingress annotations for automatic certificate generation.
-  - Verification that certificates are issued successfully.
+  - cert-manager installation and ClusterIssuer configuration (for Let's Encrypt or CA issuers).
+  - Ingress annotations for certificate generation.
+  - Instructions for using organization-provided certificates.
+  - Verification that TLS is working correctly.
 - What NOT to include:
-  - Certificate renewal procedures (organization's responsibility after deployment).
-  - Alternative certificate provisioning methods (self-signed, manual, etc.).
+  - Certificate renewal procedures (organization's responsibility).
   - Troubleshooting for post-deployment certificate issues.
-- The initial Let's Encrypt certificates will be valid for 90 days; the organization handles renewal independently.
+- **Important for intranet deployments**: If Let's Encrypt cannot be used (no internet), the organization must provide certificates from their internal CA or generate them manually before deployment.
 
 4.6 **Images and registries are out of scope**
 

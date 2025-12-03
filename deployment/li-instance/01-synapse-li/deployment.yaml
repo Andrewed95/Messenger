@@ -100,6 +100,9 @@ data:
     form_secret: "${FORM_SECRET}"
     signing_key_path: "/config/signing.key"
 
+    # Trusted key servers (for federation key verification)
+    # NOTE: Only used when federation is enabled. LI has federation disabled,
+    # so matrix.org is never contacted. Safe for intranet deployments.
     trusted_key_servers:
       - server_name: "matrix.org"
 
@@ -109,7 +112,10 @@ data:
     enable_set_displayname: false
     enable_set_avatar_url: false
     enable_3pid_changes: false
-    enable_password_reset: false
+    # LI: Password reset ENABLED - Required for lawful intercept workflow
+    # LI admin must be able to reset user passwords to access E2EE messages
+    # See CLAUDE.md section 3.3 and LI_IMPLEMENTATION.md
+    enable_password_reset: true
 
     user_directory:
       enabled: true
@@ -284,16 +290,11 @@ spec:
           value: "li"
           effect: "NoSchedule"
 
-      # Prefer different nodes from main instance (additional preference, not required)
-      affinity:
-        podAntiAffinity:
-          preferredDuringSchedulingIgnoredDuringExecution:
-            - weight: 100
-              podAffinityTerm:
-                labelSelector:
-                  matchLabels:
-                    matrix.instance: main
-                topologyKey: kubernetes.io/hostname
+      # NOTE: Pod anti-affinity removed per CLAUDE.md Section 7.1:
+      # "All LI services must run on one server (the LI node)"
+      # The nodeSelector above already ensures LI runs on the designated node.
+      # Anti-affinity with main instance pods is unnecessary and could cause
+      # scheduling conflicts if the LI node is also used for main workloads.
 
       initContainers:
         - name: wait-for-postgres

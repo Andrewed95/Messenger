@@ -54,7 +54,7 @@ The monitoring stack provides comprehensive observability for:
 ### 1. Prometheus (`01-prometheus/`)
 - **Purpose**: Metrics collection and storage
 - **Port**: 9090
-- **Retention**: , 100GB
+- **Retention**: 30 days, 100GB
 - **Scrape Interval**: 30s
 - **Files**:
   - `servicemonitors.yaml`: 12 ServiceMonitors for all components
@@ -83,7 +83,7 @@ The monitoring stack provides comprehensive observability for:
 - **Purpose**: Log aggregation and querying
 - **Port**: 3100
 - **Storage**: 50Gi
-- **Retention**: 
+- **Retention**: 30 days
 - **Files**:
   - `README.md`: LogQL queries and troubleshooting
 

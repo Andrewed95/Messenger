@@ -322,7 +322,11 @@ data:
     form_secret: "${FORM_SECRET}"
     signing_key_path: "/config/signing.key"
 
-    # Trusted key servers for federation
+    # Trusted key servers (for federation key verification)
+    # NOTE: This setting is ONLY used when federation is enabled.
+    # With federation_domain_whitelist: [] (empty = federation disabled),
+    # Synapse never contacts matrix.org or any external server.
+    # Safe to keep as-is for intranet deployments.
     trusted_key_servers:
       - server_name: "matrix.org"
 

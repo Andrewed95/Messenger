@@ -25,7 +25,7 @@ This directory contains the PostgreSQL cluster configurations using [CloudNative
   - `matrix_authentication_service` - MAS database (optional, if MAS is deployed)
   - NOTE: key_vault uses SQLite (not PostgreSQL) per CLAUDE.md requirements
 
-**Failover Time**: 30-60 seconds automatic
+**Failover**: Automatic via synchronous replication
 
 ### LI Cluster (`matrix-postgresql-li`)
 - **Instances**: 1 (single instance - LI does not require HA per CLAUDE.md 3.4 & 7.1)
@@ -34,7 +34,7 @@ This directory contains the PostgreSQL cluster configurations using [CloudNative
 - **Databases**:
   - `matrix_li` - LI instance Synapse database (populated via sync)
 
-**Read-Only Mode**: Enabled by default to prevent accidental writes
+**Write Mode**: LI database is WRITABLE (required for password resets per CLAUDE.md 3.3)
 
 ## Prerequisites
 
@@ -164,14 +164,15 @@ database:
     user: synapse_li
     password: <from-secret>
     database: matrix_li
-    host: matrix-postgresql-li-ro  # Read-only service
+    host: matrix-postgresql-li-rw  # Read-write service (LI can reset passwords)
     port: 5432
     sslmode: require
     cp_min: 5
     cp_max: 10
 ```
 
-**Important**: LI instance uses read-only service since data comes from sync system.
+**Important**: LI instance uses read-write service because LI admin can reset user passwords.
+Data is synced from main via pg_dump/pg_restore (see section below).
 
 ## Backup & Restore
 
@@ -402,7 +403,7 @@ ORDER BY pg_total_relation_size(schemaname||'.'||tablename) DESC;
 |---------|---------------|-----------------|
 | PostgreSQL Type | StatefulSet | CloudNativePG Cluster |
 | HA | No (1 replica) | Yes (3 replicas with sync) |
-| Automatic Failover | No | Yes (30-60s) |
+| Automatic Failover | No | Yes (automatic) |
 | Backup/Restore | Manual | Automated (MinIO + PITR) |
 | Replication | None | Synchronous |
 | Scaling | Not supported | Supported (dynamic) |

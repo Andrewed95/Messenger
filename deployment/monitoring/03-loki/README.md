@@ -66,7 +66,7 @@ loki:
 
   config:
     limits_config:
-      retention_period: 720h  # 
+      retention_period: 720h  # 30 days
       ingestion_rate_mb: 10
       ingestion_burst_size_mb: 20
 
@@ -164,7 +164,7 @@ kubectl patch deployment <deployment-name> -n matrix -p '
 
 **Synapse LI logs**:
 ```logql
-{namespace="matrix", matrix_instance="li"}
+{namespace="matrix", app_kubernetes_io_instance="li"}
 ```
 
 ### Filtering Logs
@@ -419,7 +419,7 @@ kubectl exec -n monitoring loki-0 -- du -sh /data/loki
 loki:
   config:
     limits_config:
-      retention_period: 360h  # Reduce to 
+      retention_period: 360h  # 15 days
 ```
 
 **Increase storage**:

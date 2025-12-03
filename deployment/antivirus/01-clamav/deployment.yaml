@@ -12,6 +12,12 @@
 # - Port 3310 is NOT exposed via Service (security requirement)
 # - Only accessible via localhost or pod network
 # - Updated virus definitions every 6 hours
+#
+# INTRANET OPERATION:
+# - Initial deployment downloads virus definitions via freshclam
+# - After internet is cut, freshclam updates will fail (expected)
+# - The organization is responsible for ongoing virus definition updates
+# - ClamAV continues scanning with existing definitions until refreshed
 
 ---
 # ConfigMap for ClamAV configuration

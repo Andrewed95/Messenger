@@ -37,7 +37,7 @@ The Matrix Content Scanner is a **Python service** that intercepts media downloa
 │     ├─ Clean → Return media (200)                          │
 │     └─ Infected → Return error (403)                       │
 │                                                             │
-│  Cache: Remember scan results ( TTL)                 │
+│  Cache: Remember scan results (24-hour TTL)                 │
 └─────────────────────────┬───────────────────────────────────┘
                           │
                           ├─ ClamAV Service
@@ -160,7 +160,7 @@ proxy:
 ```yaml
 result_cache:
   type: memory     # In-memory cache (Redis NOT supported by matrix-content-scanner-python)
-  ttl: 3600        # 
+  ttl: 3600        # 1 hour (86400 for 24 hours in production)
   max_size: 10000  # 10,000 entries
 ```
 
@@ -405,7 +405,7 @@ rate(content_scanner_cache_hits_total[5m]) / rate(content_scanner_scans_total[5m
 ```
 
 **Solutions**:
-- Increase cache TTL (longer than )
+- Increase cache TTL (longer than default to reduce re-scans)
 - Use HAProxy consistent hashing to route same media to same scanner pod
 - Increase ClamAV resources
 - Scale Content Scanner horizontally
