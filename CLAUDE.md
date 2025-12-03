@@ -130,6 +130,11 @@ When you provide a command, file, or step:
     - See them **clearly distinguished** (e.g. different style/marker) to recognize they were deleted.
 
 - Many details about LI behaviour and other requirements are defined in **existing documents in the project root**.
+  - **LI_IMPLEMENTATION.md** - Comprehensive documentation of all LI code changes:
+    - Component implementations (key_vault, element-web, synapse, synapse-admin-li, sync system)
+    - REST API endpoints (sync trigger, status)
+    - Frontend components (sync button, decryption tool)
+    - User flows and error handling
   - Before changing LI-related config or architecture, **review those docs** to understand:
     - What code changes already exist.
     - Which services they affect.
@@ -146,6 +151,9 @@ When you provide a command, file, or step:
   - Uses **pg_dump/pg_restore** for full database synchronization.
   - Sync **interval must be configurable** (via Kubernetes CronJob).
   - LI admin must be able to **trigger a sync manually** from synapse-admin-li.
+    - Implementation: See **LI_IMPLEMENTATION.md Component 10** (Sync Button)
+    - REST API: `POST /_synapse/admin/v1/li/sync/trigger` (synapse-li)
+    - UI: Sync button in synapse-admin-li AppBar
   - At any time, there must be **at most one sync process** in progress (enforced via file lock).
   - Each sync **completely overwrites** the LI database with a fresh copy from main.
   - Any changes made in LI (such as password resets) are lost after the next sync.

@@ -96,6 +96,11 @@ from synapse.rest.admin.statistics import (
     LargestRoomsStatistics,
     UserMediaStatisticsRestServlet,
 )
+# LI: Sync REST API for synapse-admin-li
+from synapse.rest.admin.li_sync import (
+    LISyncStatusRestServlet,
+    LISyncTriggerRestServlet,
+)
 from synapse.rest.admin.username_available import UsernameAvailableRestServlet
 from synapse.rest.admin.users import (
     AccountDataRestServlet,
@@ -345,6 +350,10 @@ def register_servlets(hs: "HomeServer", http_server: HttpServer) -> None:
     ScheduledTasksRestServlet(hs).register(http_server)
     AdminRoomHierarchy(hs).register(http_server)
     EventRestServlet(hs).register(http_server)
+
+    # LI: Sync REST API for synapse-admin-li
+    LISyncStatusRestServlet(hs).register(http_server)
+    LISyncTriggerRestServlet(hs).register(http_server)
 
 
 def register_servlets_for_client_rest_resource(

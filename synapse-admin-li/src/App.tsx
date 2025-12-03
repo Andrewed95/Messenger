@@ -5,6 +5,7 @@ import { Admin, CustomRoutes, Resource, resolveBrowserLocale } from "react-admin
 import { Route } from "react-router-dom";
 
 import { ImportFeature } from "./components/ImportFeature";
+import { LILayout } from "./components/LILayout";  // LI: Custom layout with sync button
 import germanMessages from "./i18n/de";
 import englishMessages from "./i18n/en";
 import frenchMessages from "./i18n/fr";
@@ -58,6 +59,7 @@ const App = () => (
       authProvider={authProvider}
       dataProvider={dataProvider}
       i18nProvider={i18nProvider}
+      layout={LILayout}  // LI: Custom layout with sync button
     >
       <CustomRoutes>
         <Route path="/import_users" element={<ImportFeature />} />

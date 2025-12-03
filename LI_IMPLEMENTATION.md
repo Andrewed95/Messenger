@@ -842,6 +842,101 @@ LI uses **shared MinIO** for media access:
 
 ---
 
+## Component 10: Sync Button (synapse-admin-li + synapse-li REST API)
+
+**Location**:
+- synapse-li: `/home/user/Messenger/synapse-li/synapse/rest/admin/li_sync.py`
+- synapse-admin-li: `/home/user/Messenger/synapse-admin-li/src/components/LISyncButton.tsx`
+- synapse-admin-li: `/home/user/Messenger/synapse-admin-li/src/components/LILayout.tsx`
+
+Provides manual sync trigger functionality from synapse-admin-li UI.
+
+Per CLAUDE.md section 3.3:
+- Manual sync trigger available from synapse-admin-li
+- At most one sync process runs at any time (file lock)
+
+**Files Implemented**:
+
+### Backend (synapse-li)
+
+1. **`synapse/rest/admin/li_sync.py`** - Sync REST API
+   - `LISyncStatusRestServlet`: GET `/_synapse/admin/v1/li/sync/status`
+     - Returns: `{is_running, last_sync_at, last_sync_status, last_dump_size_mb, last_duration_seconds, last_error, total_syncs, failed_syncs}`
+   - `LISyncTriggerRestServlet`: POST `/_synapse/admin/v1/li/sync/trigger`
+     - Returns 202 Accepted: `{started: true, message: "Sync started"}`
+     - Returns 409 Conflict: `{started: false, is_running: true, message: "Sync already in progress"}`
+     - Returns 500 Error: `{started: false, error: "...", stack_trace: "..."}`
+   - Uses threading for background sync execution
+   - Integrates with existing sync lock mechanism
+   - Requires admin authentication
+
+2. **`synapse/rest/admin/__init__.py`** - Modified (minimal changes)
+   - Added import for `LISyncStatusRestServlet`, `LISyncTriggerRestServlet`
+   - Added registration in `register_servlets()` function
+
+### Frontend (synapse-admin-li)
+
+1. **`src/components/LISyncButton.tsx`** - Sync Button Component
+   - Icon button in AppBar next to user menu
+   - States:
+     - Idle: Shows sync icon, tooltip "Sync"
+     - Loading: Shows spinner while triggering
+     - Running: Spinning sync icon, tooltip "Syncing...", disabled
+   - Behavior:
+     - Click triggers POST to `/_synapse/admin/v1/li/sync/trigger`
+     - Polls status endpoint while sync is running (every 60s)
+     - Shows notification on completion (success/failure)
+     - Auto-detects running sync on mount
+   - Uses react-admin's `useNotify` for notifications
+
+2. **`src/components/LILayout.tsx`** - Custom Layout
+   - Extends react-admin's default Layout
+   - Custom AppBar with LISyncButton
+   - Minimal wrapper to add LI functionality
+
+3. **`src/App.tsx`** - Modified (minimal changes)
+   - Added import for `LILayout`
+   - Added `layout={LILayout}` prop to Admin component
+
+**User Flow**:
+
+1. LI admin logs into synapse-admin-li
+2. Sync button appears in top-right AppBar (next to user menu)
+3. Hovering shows tooltip "Sync"
+4. Click triggers sync:
+   - If no sync running: starts sync, shows "Database sync started" notification
+   - If sync running: shows "Sync is already in progress" warning
+   - If error: shows error notification with details
+5. During sync:
+   - Button shows spinning icon
+   - Tooltip shows "Syncing..."
+   - Button is disabled
+   - Status polled automatically
+6. On completion:
+   - Success: Shows "Database sync completed successfully (Xs, Y.ZMB)" notification
+   - Failure: Shows "Database sync failed: <error>" notification
+7. Button returns to idle state
+
+**Error Handling**:
+
+- Network errors: Caught and displayed in notification
+- Server errors: Stack trace logged to console, user-friendly message in notification
+- Concurrent sync: Returns 409 Conflict, UI shows appropriate warning
+- Lock held: File lock prevents race conditions
+
+**Environment Variables** (synapse-li):
+
+```bash
+# Sync directory
+LI_SYNC_DIR=/var/lib/synapse-li/sync
+
+# Database connections (same as sync_task.py)
+MAIN_DB_HOST, MAIN_DB_PORT, MAIN_DB_NAME, MAIN_DB_USER, MAIN_DB_PASSWORD
+LI_DB_HOST, LI_DB_PORT, LI_DB_NAME, LI_DB_USER, LI_DB_PASSWORD
+```
+
+---
+
 ## Repository Structure
 
 ```
@@ -922,11 +1017,17 @@ LI uses **shared MinIO** for media access:
 │
 ├── synapse-admin-li/                       # Hidden instance - Admin panel
 │   └── src/
+│       ├── components/
+│       │   ├── LISyncButton.tsx            # Sync button component (Component 10)
+│       │   └── LILayout.tsx                # Custom layout with sync button
 │       ├── pages/
 │       │   └── DecryptionPage.tsx          # RSA decryption tool
-│       └── App.tsx                         # Added /decryption route
+│       └── App.tsx                         # Added /decryption route, LILayout
 │
 ├── synapse-li/                             # Hidden instance - Synapse replica
+│   ├── synapse/rest/admin/
+│   │   ├── __init__.py                     # Added li_sync registration
+│   │   └── li_sync.py                      # Sync REST API (Component 10)
 │   └── sync/
 │       ├── __init__.py                     # Package init
 │       ├── checkpoint.py                   # Sync progress tracking
