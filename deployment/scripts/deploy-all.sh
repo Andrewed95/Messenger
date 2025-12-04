@@ -532,7 +532,9 @@ deploy_phase2() {
     apply_manifest "$DEPLOYMENT_DIR/main-instance/02-workers/generic-worker-deployment.yaml"
     apply_manifest "$DEPLOYMENT_DIR/main-instance/02-workers/media-repository-statefulset.yaml"
     apply_manifest "$DEPLOYMENT_DIR/main-instance/02-workers/event-persister-deployment.yaml"
-    apply_manifest "$DEPLOYMENT_DIR/main-instance/02-workers/federation-sender-deployment.yaml"
+    # NOTE: federation-sender NOT deployed by default (federation disabled per CLAUDE.md section 12)
+    # Uncomment the line below when federation is enabled:
+    # apply_manifest "$DEPLOYMENT_DIR/main-instance/02-workers/federation-sender-deployment.yaml"
 
     # Deploy stream writers
     log_info "Deploying stream writers..."
@@ -541,8 +543,9 @@ deploy_phase2() {
     apply_manifest "$DEPLOYMENT_DIR/main-instance/02-workers/receipts-writer-deployment.yaml"
     apply_manifest "$DEPLOYMENT_DIR/main-instance/02-workers/presence-writer-deployment.yaml"
 
-    # Check for minimum workers ready (total: 22 workers expected at default replicas)
-    # synchrotron:4 + generic:2 + media:2 + event-persister:4 + fed-sender:2 + stream-writers:8 = 22
+    # Check for minimum workers ready (total: 20 workers expected at default replicas)
+    # synchrotron:4 + generic:2 + media:2 + event-persister:4 + stream-writers:8 = 20
+    # (federation-sender not deployed by default - add 2 if enabled)
     # Use 10 as minimum threshold to allow for startup delays
     check_pod_status "app.kubernetes.io/type=worker" "matrix" 10
 

@@ -1,3 +1,17 @@
+# ============================================================================
+# OPTIONAL: Federation Sender Workers
+# ============================================================================
+# These workers are ONLY needed when federation is ENABLED.
+# Federation is DISABLED by default per CLAUDE.md section 12.
+#
+# DO NOT deploy this file unless you have:
+# 1. Enabled federation in homeserver.yaml (send_federation: true)
+# 2. Configured federation_domain_whitelist
+# 3. Set up TLS on port 8448
+#
+# See: deployment/docs/CONFIGURATION-REFERENCE.md for federation setup
+# ============================================================================
+#
 # Federation Sender Worker Deployment
 # Handles outbound federation traffic to other Matrix servers
 # Runs federation_sender process type

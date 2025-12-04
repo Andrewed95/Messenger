@@ -39,7 +39,7 @@ Complete production deployment of Matrix Synapse homeserver with worker architec
     │   │ Generic (2-16)       │       │
     │   │ Media (2-8)          │       │
     │   │ Event Persist (2-8)  │       │
-    │   │ Fed Sender (2-8)     │       │
+    │   │ Fed Sender (OPT)     │       │  ← Optional (federation disabled by default)
     │   └──────────────────────┘       │
     │                                  │
     └──────────────────────────────────┘
@@ -59,7 +59,7 @@ main-instance/
 ├── 02-workers/          # Synapse worker processes
 │   ├── generic-worker-deployment.yaml      # General client endpoints
 │   ├── event-persister-deployment.yaml     # Database writes
-│   ├── federation-sender-deployment.yaml   # Outbound federation
+│   ├── federation-sender-deployment.yaml   # Outbound federation (OPTIONAL - only if federation enabled)
 │   ├── media-repository-statefulset.yaml   # Media handling
 │   ├── synchrotron-deployment.yaml         # /sync endpoints
 │   └── README.md                           # Worker documentation
@@ -95,12 +95,12 @@ main-instance/
 - **Ports**: 8008 (HTTP), 9093 (replication), 9090 (metrics)
 
 ### 2. Synapse Workers (02-workers/)
-Nine worker types for horizontal scaling:
+Eight worker types for horizontal scaling (plus 1 optional):
 - **Synchrotron** (4-16 replicas): /sync long-polling connections
 - **Generic Worker** (2-16 replicas): General client API requests
 - **Media Repository** (2-8 replicas): Media upload/download/thumbnailing
 - **Event Persister** (2-8 replicas): Database write distribution
-- **Federation Sender** (2-8 replicas): Outbound federation traffic
+- **Federation Sender** (2-8 replicas): OPTIONAL - Outbound federation (only if federation enabled)
 
 ### 3. Element Web (02-element-web/)
 - **Purpose**: Official Matrix web client
@@ -145,10 +145,11 @@ kubectl wait --for=condition=ready pod/synapse-main-0 -n matrix --timeout=300s
 # 3. Deploy workers (in order)
 cd ../02-workers
 kubectl apply -f event-persister-deployment.yaml
-kubectl apply -f federation-sender-deployment.yaml
 kubectl apply -f media-repository-deployment.yaml
 kubectl apply -f synchrotron-deployment.yaml
 kubectl apply -f generic-worker-deployment.yaml
+# OPTIONAL: Deploy federation-sender ONLY if federation is enabled
+# kubectl apply -f federation-sender-deployment.yaml
 
 # Wait for workers to be ready
 kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=synapse -n matrix --timeout=300s

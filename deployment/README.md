@@ -524,6 +524,10 @@ kubectl wait --for=condition=Ready cluster/matrix-postgresql-li -n matrix --time
 **Deploy Redis Sentinel:**
 ```bash
 # Run from your management node in the deployment directory:
+# First, deploy the Redis password secret
+kubectl apply -f infrastructure/02-redis/redis-secret.yaml
+
+# Then deploy the Redis StatefulSet
 kubectl apply -f infrastructure/02-redis/redis-statefulset.yaml
 
 # Wait for Redis to be ready
@@ -600,7 +604,8 @@ kubectl apply -f main-instance/02-workers/synchrotron-deployment.yaml
 kubectl apply -f main-instance/02-workers/generic-worker-deployment.yaml
 kubectl apply -f main-instance/02-workers/media-repository-statefulset.yaml
 kubectl apply -f main-instance/02-workers/event-persister-deployment.yaml
-kubectl apply -f main-instance/02-workers/federation-sender-deployment.yaml
+# NOTE: federation-sender is NOT deployed by default (federation disabled per CLAUDE.md section 12)
+# Deploy federation-sender-deployment.yaml ONLY if you enable federation later
 kubectl apply -f main-instance/02-workers/typing-writer-deployment.yaml
 kubectl apply -f main-instance/02-workers/todevice-writer-deployment.yaml
 kubectl apply -f main-instance/02-workers/receipts-writer-deployment.yaml
@@ -1022,7 +1027,7 @@ Replace `example.com` with your actual domain in:
 - **Monitoring Server**: Prometheus, Grafana, Loki, Promtail
 
 **Component Breakdown:**
-- **Synapse**: 1 main + 8 workers (2 sync, 2 generic, 2 event-persister, 2 federation)
+- **Synapse**: 1 main + 6 workers (2 sync, 2 generic, 2 event-persister) + 4 stream writers
 - **PostgreSQL**: 3 instances (main) + 2 instances (LI)
 - **Redis**: 3 instances (Sentinel HA)
 - **MinIO**: 4 nodes (EC:4 erasure coding, 1TB usable)
@@ -1063,7 +1068,8 @@ Replace `example.com` with your actual domain in:
 - **Monitoring Server**: Prometheus, Grafana, Loki, Promtail
 
 **Component Breakdown:**
-- **Synapse**: 1 main + 38 workers (18 sync, 8 generic, 4 event-persister, 8 federation)
+- **Synapse**: 1 main + 30 workers (18 sync, 8 generic, 4 event-persister) + 8 stream writers
+  - (+8 federation-sender workers if federation enabled)
 - **PostgreSQL**: 5 instances (main) + 2 instances (LI)
 - **Redis**: 6 instances (3 for Synapse, 3 for LiveKit)
 - **MinIO**: 12 nodes (3 pools × 4 nodes, EC:4, ~12TB usable)

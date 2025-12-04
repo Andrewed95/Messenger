@@ -2,6 +2,8 @@
 
 This directory contains Kubernetes manifests for horizontally scalable Synapse worker processes. Workers distribute load across multiple pods for production Matrix deployments supporting 100-20,000 concurrent users.
 
+> **Note on Federation**: Federation is **disabled by default** per CLAUDE.md section 12. The `federation-sender-deployment.yaml` is NOT deployed by default. Only deploy it if you enable federation. See "Federation Workers (Optional)" section below.
+
 ## Worker Types
 
 Nine worker types are configured:
@@ -23,13 +25,14 @@ Nine worker types are configured:
 **Use Case**: Offload event writing from main process
 **CRITICAL**: Changing replica count requires restarting ALL Synapse processes
 
-### 3. Federation Sender (`federation-sender-deployment.yaml`)
+### 3. Federation Sender (`federation-sender-deployment.yaml`) - OPTIONAL
 **Purpose**: Outbound federation traffic to remote Matrix servers
 **Endpoints**: Internal only (no HTTP endpoints)
 **Scaling**: 2-8 replicas (manual)
 **Resources**: 512Mi-1Gi memory, 250-500m CPU per pod
 
 **Use Case**: Handle federation traffic distribution
+**IMPORTANT**: Federation is disabled by default. Only deploy this worker if federation is enabled.
 
 ### 4. Media Repository (`media-repository-deployment.yaml`)
 **Purpose**: Media upload/download handling
@@ -107,12 +110,14 @@ Nine worker types are configured:
 │  (2-16)    │ │  (2-8)   │ │   (4-16)  │ │
 └────────────┘ └──────────┘ └───────────┘ │
                                           │
-┌──────────────┐ ┌───────────────────────┘
-│    Event     │ │  Federation
-│  Persisters  │ │   Senders
-│   (2-8)      │ │   (2-8)
+┌──────────────┐ ┌───────────────────────┐
+│    Event     │ │  Federation           │
+│  Persisters  │ │   Senders (OPTIONAL)  │
+│   (2-8)      │ │   (2-8)               │
 └──────────────┘ └───────────────────────┘
 ```
+
+> **Note**: Federation Senders are OPTIONAL - only deployed when federation is enabled.
 
 ## Deployment Order
 
@@ -125,10 +130,12 @@ kubectl logs -n matrix synapse-main-0 | grep "Synapse now listening"
 
 # 2. Deploy workers in order
 kubectl apply -f event-persister-deployment.yaml      # Deploy first (write workers)
-kubectl apply -f federation-sender-deployment.yaml    # Federation
 kubectl apply -f media-repository-deployment.yaml     # Media handling
 kubectl apply -f synchrotron-deployment.yaml          # Sync endpoints
 kubectl apply -f generic-worker-deployment.yaml       # General endpoints (last)
+
+# OPTIONAL: Deploy federation-sender ONLY if federation is enabled
+# kubectl apply -f federation-sender-deployment.yaml
 
 # 3. Verify workers are running
 kubectl get deployments -n matrix | grep synapse
@@ -243,40 +250,42 @@ HAProxy configuration will be in `../03-haproxy/`.
 
 ### By User Count
 
+> **Note**: Federation-sender is NOT deployed by default. The replica counts below only apply if federation is enabled.
+
 **100-1,000 CCU**:
 ```yaml
 generic-worker: 2 replicas
 event-persister: 2 replicas
-federation-sender: 1 replica
 media-repository: 2 replicas
 synchrotron: 4 replicas
+# federation-sender: 1 replica (OPTIONAL - only if federation enabled)
 ```
 
 **1,000-5,000 CCU**:
 ```yaml
 generic-worker: 4 replicas
 event-persister: 4 replicas
-federation-sender: 2 replicas
 media-repository: 4 replicas
 synchrotron: 8 replicas
+# federation-sender: 2 replicas (OPTIONAL - only if federation enabled)
 ```
 
 **5,000-10,000 CCU**:
 ```yaml
 generic-worker: 8 replicas
 event-persister: 6 replicas
-federation-sender: 4 replicas
 media-repository: 6 replicas
 synchrotron: 12 replicas
+# federation-sender: 4 replicas (OPTIONAL - only if federation enabled)
 ```
 
 **10,000-20,000 CCU**:
 ```yaml
 generic-worker: 12 replicas
 event-persister: 8 replicas
-federation-sender: 6 replicas
 media-repository: 8 replicas
 synchrotron: 16 replicas
+# federation-sender: 6 replicas (OPTIONAL - only if federation enabled)
 ```
 
 ### Horizontal Pod Autoscaling (HPA)
@@ -287,7 +296,8 @@ Three worker types have HPA configured:
 2. **media-repository**: 2-8 replicas, CPU 70%, Memory 80%
 3. **synchrotron**: 4-16 replicas, CPU 60%, Memory 70% (more aggressive)
 
-Event persisters and federation senders use manual scaling due to their stateful nature.
+Event persisters use manual scaling due to their stateful nature.
+Federation senders (if enabled) also use manual scaling.
 
 ## Monitoring
 
@@ -366,8 +376,9 @@ kubectl rollout restart statefulset -n matrix synapse-main
 kubectl rollout restart deployment -n matrix synapse-generic-worker
 kubectl rollout restart deployment -n matrix synapse-synchrotron
 kubectl rollout restart deployment -n matrix synapse-media-repository
-kubectl rollout restart deployment -n matrix synapse-federation-sender
 kubectl rollout restart deployment -n matrix synapse-event-persister
+# Only if federation is enabled:
+# kubectl rollout restart deployment -n matrix synapse-federation-sender
 ```
 
 ## Performance Tuning

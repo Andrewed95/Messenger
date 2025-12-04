@@ -77,16 +77,16 @@ Here's your path from zero to a running production Matrix homeserver:
         ↓
 💬 PHASE 2: MAIN INSTANCE DEPLOYMENT
    ├─ Synapse main process
-   ├─ Synapse workers (9 types for horizontal scaling)
+   ├─ Synapse workers (8 types + 1 optional)
    │   ├─ synchrotron (sync requests)
    │   ├─ generic-worker (client API)
    │   ├─ media-repository (media handling)
    │   ├─ event-persister (database writes)
-   │   ├─ federation-sender (outbound federation)
    │   ├─ typing-writer (typing indicators)
    │   ├─ todevice-writer (E2EE key exchange)
    │   ├─ receipts-writer (read receipts)
-   │   └─ presence-writer (online status)
+   │   ├─ presence-writer (online status)
+   │   └─ federation-sender (OPTIONAL - only if federation enabled)
    ├─ HAProxy (load balancer)
    ├─ Element Web (chat interface)
    ├─ coturn (NAT traversal for peer-to-peer calls)
@@ -609,12 +609,12 @@ deployment/
 │   │   ├── generic-worker-deployment.yaml      → General APIs (HPA)
 │   │   ├── media-repository-statefulset.yaml   → Media handling
 │   │   ├── event-persister-deployment.yaml     → DB writes (StatefulSet)
-│   │   ├── federation-sender-deployment.yaml   → Outbound federation (StatefulSet)
 │   │   ├── typing-writer-deployment.yaml       → Typing indicators (StatefulSet)
 │   │   ├── todevice-writer-deployment.yaml     → E2EE key exchange (StatefulSet)
 │   │   ├── receipts-writer-deployment.yaml     → Read receipts (StatefulSet)
-│   │   └── presence-writer-deployment.yaml     → Online status (StatefulSet)
-│   │   Purpose: 9 worker types for horizontal scaling
+│   │   ├── presence-writer-deployment.yaml     → Online status (StatefulSet)
+│   │   └── federation-sender-deployment.yaml   → OPTIONAL: Outbound federation (only if enabled)
+│   │   Purpose: 8 worker types + 1 optional (federation-sender)
 │   │   Note: synchrotron and generic-worker have HPA; others are StatefulSets
 │   │   Configuration: Inherits from main configmap
 │   │

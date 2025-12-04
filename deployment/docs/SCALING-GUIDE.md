@@ -172,12 +172,14 @@ Synapse's worker architecture has two categories:
 | **synchrotron** | ✅ YES | Deployment | Stateless /sync handlers. No instance_map reference. |
 | **generic-worker** | ✅ YES | Deployment | Stateless client API handlers. No instance_map reference. |
 | **event-persister** | ❌ NO | StatefulSet | Listed in `stream_writers.events`. Each instance name hardcoded. |
-| **federation-sender** | ❌ NO | StatefulSet | Listed in `federation_sender_instances`. Shards federation by destination. |
 | **media-repository** | ❌ NO | StatefulSet | Referenced in `media_instance_running_background_jobs`. Background jobs need stable identity. |
 | **typing-writer** | ❌ NO | StatefulSet | Listed in `stream_writers.typing`. |
 | **todevice-writer** | ❌ NO | StatefulSet | Listed in `stream_writers.to_device`. |
 | **receipts-writer** | ❌ NO | StatefulSet | Listed in `stream_writers.receipts`. |
 | **presence-writer** | ❌ NO | StatefulSet | Listed in `stream_writers.presence`. |
+| **federation-sender** | ❌ NO | StatefulSet | OPTIONAL (only if federation enabled). Listed in `federation_sender_instances`. |
+
+> **Note**: federation-sender is NOT deployed by default. Federation is disabled per CLAUDE.md section 12.
 
 #### Example: Why event-persister Cannot Use HPA
 
@@ -294,7 +296,8 @@ spec:
 
 #### Scaling Non-HPA Workers (Manual Procedure)
 
-For workers that cannot use HPA (event-persister, federation-sender, etc.):
+For workers that cannot use HPA (event-persister, stream writers, etc.):
+> **Note**: federation-sender is optional and only deployed if federation is enabled.
 
 ```bash
 # WHERE: kubectl-configured workstation

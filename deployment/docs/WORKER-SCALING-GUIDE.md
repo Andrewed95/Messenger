@@ -23,8 +23,8 @@ Synapse uses a **worker architecture** to distribute load across multiple proces
 2. Are you experiencing slow message delivery?
    └─> Scale event-persister workers (handles event writes)
 
-3. Are you experiencing federation delays?
-   └─> Scale federation-sender workers (handles outbound federation)
+3. Are you experiencing federation delays? (only if federation is enabled)
+   └─> Scale federation-sender workers (OPTIONAL - only deployed if federation enabled)
 
 4. Are you experiencing slow media uploads/downloads?
    └─> Scale media-repository workers (handles media operations)
@@ -174,7 +174,9 @@ kubectl rollout status statefulset synapse-main -n matrix
 
 ---
 
-### Federation Sender Workers (StatefulSet)
+### Federation Sender Workers (StatefulSet) - OPTIONAL
+
+> **IMPORTANT**: Federation is DISABLED by default per CLAUDE.md section 12. This worker is NOT deployed by default. Only deploy and scale if you have enabled federation.
 
 **Purpose**: Send events to other Matrix servers (outbound federation)
 
@@ -182,13 +184,13 @@ kubectl rollout status statefulset synapse-main -n matrix
 
 **Reason**: Listed in `federation_sender_instances` in configmap.yaml
 
-**Replica Formula**:
+**Replica Formula** (only if federation enabled):
 ```
 replicas = max(2, ceil(federated_servers / 50))
 ```
 
 **Examples**:
-- No federation: 0 replicas (federation disabled)
+- Federation disabled (default): 0 replicas (NOT deployed)
 - 1-50 servers: 2 replicas
 - 100 servers: 2 replicas
 - 200 servers: 4 replicas
@@ -367,7 +369,9 @@ kubectl exec -n matrix matrix-postgresql-0 -- psql -U synapse -d matrix -c "SELE
 
 ---
 
-### Federation Queue Buildup
+### Federation Queue Buildup (only if federation enabled)
+
+> **Note**: This section only applies if you have enabled federation. Federation is disabled by default.
 
 **Symptoms**:
 - Federation send queue growing
