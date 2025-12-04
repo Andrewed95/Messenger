@@ -145,7 +145,7 @@ kubectl wait --for=condition=ready pod/synapse-main-0 -n matrix --timeout=300s
 # 3. Deploy workers (in order)
 cd ../02-workers
 kubectl apply -f event-persister-deployment.yaml
-kubectl apply -f media-repository-deployment.yaml
+kubectl apply -f media-repository-statefulset.yaml
 kubectl apply -f synchrotron-deployment.yaml
 kubectl apply -f generic-worker-deployment.yaml
 # OPTIONAL: Deploy federation-sender ONLY if federation is enabled

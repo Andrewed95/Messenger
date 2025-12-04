@@ -7,7 +7,6 @@ This directory contains Redis with Sentinel configuration for automatic failover
 **Why Redis Sentinel?**
 - Synapse uses Redis for worker HTTP replication
 - LiveKit uses Redis for distributed state management
-- key_vault uses Redis for Django session storage
 - Production systems require automatic failover
 
 ## Architecture
@@ -198,24 +197,6 @@ redis:
   use_tls: false
 ```
 
-### key_vault (Django Sessions)
-
-```python
-# settings.py
-CACHES = {
-    'default': {
-        'BACKEND': 'django.core.cache.backends.redis.RedisCache',
-        'LOCATION': 'redis://redis.matrix.svc.cluster.local:6379/2',
-        'OPTIONS': {
-            'PASSWORD': '<from-secret>',
-        }
-    }
-}
-
-SESSION_ENGINE = 'django.contrib.sessions.backends.cache'
-SESSION_CACHE_ALIAS = 'default'
-```
-
 ### Client Libraries with Sentinel Support
 
 For applications that support Sentinel natively:
@@ -334,7 +315,7 @@ kubectl create secret generic redis-password-new \
 # 3. Perform rolling restart
 kubectl rollout restart statefulset/redis -n matrix
 
-# 4. Update all application configs (Synapse, LiveKit, key_vault)
+# 4. Update all application configs (Synapse, LiveKit)
 ```
 
 ## Troubleshooting

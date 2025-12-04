@@ -34,7 +34,7 @@ Nine worker types are configured:
 **Use Case**: Handle federation traffic distribution
 **IMPORTANT**: Federation is disabled by default. Only deploy this worker if federation is enabled.
 
-### 4. Media Repository (`media-repository-deployment.yaml`)
+### 4. Media Repository (`media-repository-statefulset.yaml`)
 **Purpose**: Media upload/download handling
 **Endpoints**: `/_matrix/media/*`, upload/download endpoints
 **Scaling**: 2-8 replicas (HPA enabled)
@@ -130,7 +130,7 @@ kubectl logs -n matrix synapse-main-0 | grep "Synapse now listening"
 
 # 2. Deploy workers in order
 kubectl apply -f event-persister-deployment.yaml      # Deploy first (write workers)
-kubectl apply -f media-repository-deployment.yaml     # Media handling
+kubectl apply -f media-repository-statefulset.yaml    # Media handling
 kubectl apply -f synchrotron-deployment.yaml          # Sync endpoints
 kubectl apply -f generic-worker-deployment.yaml       # General endpoints (last)
 

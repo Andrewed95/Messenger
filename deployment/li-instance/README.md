@@ -4,6 +4,10 @@
 
 Complete read-only Matrix instance for law enforcement access with E2EE recovery capabilities.
 
+**📖 Implementation Details:** For comprehensive documentation of LI code changes, component implementations, database queries, and testing procedures, see **[LI_IMPLEMENTATION.md](/LI_IMPLEMENTATION.md)** in the repository root.
+
+This README focuses on **deployment and operational procedures** for the LI instance.
+
 ## Overview
 
 The LI instance is a **completely independent, isolated Matrix homeserver** that receives data from the main instance but cannot modify it. The `key_vault` service is located within the LI network (per CLAUDE.md requirements), storing encrypted E2EE recovery keys.
@@ -237,6 +241,8 @@ kubectl apply -f 03-synapse-admin-li/deployment.yaml
 - Low I/O requirements (only stores recovery keys, ~1KB each)
 - Simple deployment (no external database dependency)
 - Data persisted on PVC (1Gi, supports millions of keys)
+
+**Deployment Location**: key_vault runs on the same server as other LI services (synapse-li, element-web-li, synapse-admin-li) for simplicity, per CLAUDE.md section 7.2.
 
 **Access Model** (network isolation is org's responsibility per CLAUDE.md 7.4):
 

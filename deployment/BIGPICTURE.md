@@ -408,6 +408,8 @@ Purpose: Handle all Matrix protocol operations
 - Cannot access E2EE keys (privacy preserved for encrypted rooms)
 - Completely isolated from main production instance
 
+**📖 For implementation details**: See [LI_IMPLEMENTATION.md](/LI_IMPLEMENTATION.md) for code changes, database queries, and testing procedures.
+
 ---
 
 ### 4. **Monitoring Stack** (Phase 4: Observability)

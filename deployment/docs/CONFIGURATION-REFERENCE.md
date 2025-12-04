@@ -1032,7 +1032,7 @@ Server failed
    chat.example.com. → <LOAD_BALANCER_IP>
    ```
 
-2. Wait for DNS propagation (typically 5 minutes, up to 48 hours for external DNS)
+2. Wait for DNS propagation (time varies by DNS provider and caching)
 
 3. Test with:
    ```bash

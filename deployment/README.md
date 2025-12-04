@@ -665,7 +665,8 @@ kubectl exec -n matrix synapse-main-0 -- curl http://localhost:8008/health
 - LI operates **completely independently** from main instance
 - Uses dedicated **nginx-li** reverse proxy (not shared ingress controller)
 - Works even if main instance is down (only sync stops)
-- See `li-instance/README.md` for complete LI architecture details
+- See `li-instance/README.md` for deployment details
+- See `/LI_IMPLEMENTATION.md` for code changes and implementation details
 
 **1. Sync System (built into synapse-li):**
 
@@ -1254,7 +1255,8 @@ kubectl exec -it -n matrix key-vault-0 -- \
 | `docs/HAPROXY-ARCHITECTURE.md` | HAProxy routing technical details | When debugging routing issues |
 | `docs/MATRIX-AUTHENTICATION-SERVICE.md` | Enterprise SSO integration (MAS) | If you need corporate SSO/OIDC authentication |
 | `antivirus/README.md` | ClamAV antivirus system architecture | When deploying or customizing antivirus |
-| `li-instance/README.md` | Complete LI instance technical guide | For understanding LI architecture details |
+| `li-instance/README.md` | LI instance deployment guide | For LI deployment procedures and verification |
+| `/LI_IMPLEMENTATION.md` | LI code changes and implementation | For understanding LI component code and testing |
 | Component `README.md` files | Per-component technical details | When troubleshooting specific components |
 
 ---
