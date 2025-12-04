@@ -124,8 +124,11 @@ spec:
         seccompProfile:
           type: RuntimeDefault
 
-  ## TLS - Auto-generated certificates
-  requestAutoCert: true
+  ## TLS Configuration
+  ## CLAUDE.md 4.3: System operates in trusted intranet after deployment
+  ## Internal cluster traffic uses HTTP for simplicity (PostgreSQL backups, Synapse media)
+  ## External access via Ingress uses TLS (configured separately via cert-manager)
+  requestAutoCert: false
 
   ## Prometheus monitoring
   prometheusOperator:

@@ -470,6 +470,10 @@ Configure organization DNS to return different IPs based on requesting network:
 
 ### TLS Certificates for nginx-li
 
+**⚠️ CRITICAL PREREQUISITE**: These TLS secrets MUST be created BEFORE applying
+`06-nginx-li/deployment.yaml`. The nginx-li pod will fail to start without them
+(`optional: false` is set on all TLS volume mounts).
+
 nginx-li requires TLS certificates for all LI domains. Create these as Kubernetes secrets.
 
 **Required TLS Secrets:**

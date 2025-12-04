@@ -194,17 +194,17 @@ kubectl port-forward -n monitoring svc/prometheus-kube-prometheus-prometheus 909
 
 | Component | Metrics Port | Metrics Path | ServiceMonitor | Notes |
 |-----------|--------------|--------------|----------------|-------|
-| **Synapse Main** | 9090 | `/_synapse/metrics` | ✅ synapse | Main homeserver process |
+| **Synapse Main** | 9090 | `/_synapse/metrics` | ✅ synapse-main | Main homeserver process |
 | **Synapse Workers** | 9090 | `/_synapse/metrics` | ✅ synapse-workers | All 9 worker types |
 | **Synapse LI** | 9090 | `/_synapse/metrics` | ✅ synapse-li | Read-only LI instance |
-| **PostgreSQL Main** | 9187 | `/metrics` | ✅ PodMonitor | CloudNativePG |
-| **PostgreSQL LI** | 9187 | `/metrics` | ✅ PodMonitor | CloudNativePG LI |
-| **Redis** | 9121 | `/metrics` | ✅ redis | Requires redis-exporter |
+| **PostgreSQL Main** | 9187 | `/metrics` | ✅ postgresql-main | CloudNativePG |
+| **PostgreSQL LI** | 9187 | `/metrics` | ✅ postgresql-li | CloudNativePG LI |
+| **Redis** | 9121 | `/metrics` | ⏸️ (disabled) | Requires redis-exporter sidecar |
 | **MinIO** | 9000 | `/minio/v2/metrics/cluster` | ✅ minio | S3 storage |
 | **HAProxy** | 8404 | `/metrics` | ✅ haproxy | Load balancer |
-| **key_vault** | 8000 | `/metrics` | ✅ key-vault | E2EE key storage |
+| **key_vault** | - | - | ⏸️ (disabled) | No metrics (security) |
 | NOTE: Sygnal (push) not included - requires external Apple/Google servers |
-| **Sync System** | 9090 | `/metrics` | ✅ sync-system | LI sync jobs |
+| **Sync System** | - | - | ⏸️ (disabled) | CronJob - no metrics server |
 | **NGINX Ingress** | 10254 | `/metrics` | ✅ nginx-ingress | Ingress controller |
 
 ### Infrastructure Services

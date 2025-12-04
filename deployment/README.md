@@ -470,6 +470,15 @@ nano config.env  # Edit all values for your organization
 ./scripts/deploy-all.sh --dry-run
 ```
 
+**config.env.example contains all configurable parameters:**
+- Domain configuration (Matrix, Element, TURN, LI domains)
+- Scaling parameters (CCU count, replica counts, storage sizes)
+- Resource limits (CPU/memory for each component)
+- Feature flags (federation, LI, monitoring, HPA)
+- Backup configuration (schedule, retention)
+- Secrets (CHANGEME placeholders for keys, passwords)
+- See `config.env.example` for detailed documentation of each variable.
+
 **Features of deploy-all.sh:**
 - ✅ Verifies storage class exists before deployment
 - ✅ Checks for monitoring node label

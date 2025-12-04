@@ -85,7 +85,7 @@ data:
           "pluginVersion": "9.0.0",
           "targets": [
             {
-              "expr": "up{job=\"synapse\", app_kubernetes_io_instance=\"main\"}",
+              "expr": "up{job=\"synapse-main\"}",
               "refId": "A"
             }
           ],
@@ -533,7 +533,7 @@ data:
           "pluginVersion": "9.0.0",
           "targets": [
             {
-              "expr": "up{job=\"synapse\", app_kubernetes_io_instance=\"li\"}",
+              "expr": "up{job=\"synapse-li\"}",
               "refId": "A"
             }
           ],

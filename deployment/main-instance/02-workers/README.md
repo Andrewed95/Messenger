@@ -139,6 +139,37 @@ kubectl logs -n matrix -l app.kubernetes.io/component=generic-worker --tail=50
 kubectl logs -n matrix -l app.kubernetes.io/component=event-persister --tail=50
 ```
 
+### Startup Dependencies
+
+Workers depend on PostgreSQL, Redis, and the main Synapse process. The deployment handles
+these dependencies through:
+
+1. **Deployment Ordering**: The `deploy-all.sh` script deploys infrastructure (PostgreSQL,
+   Redis, MinIO) before main instance components. Follow this order for manual deployments.
+
+2. **Kubernetes Restart Policy**: If a worker starts before dependencies are ready, it will
+   crash and Kubernetes will automatically restart it. This is expected behavior during
+   initial deployment.
+
+3. **Readiness Probes**: Workers have readiness probes that prevent traffic routing until
+   the worker is fully initialized and connected to its dependencies.
+
+**Note**: Workers do not include explicit wait-for-postgres/redis init containers by design.
+The startup mechanism relies on Kubernetes' restart capability and proper deployment ordering.
+If you prefer cleaner startup logs without initial crash loops, you can add wait init containers:
+
+```yaml
+# Example wait-for-postgres init container (optional)
+initContainers:
+  - name: wait-for-postgres
+    image: busybox:1.36
+    command: ['sh', '-c', 'until nc -z matrix-postgresql-rw.matrix.svc.cluster.local 5432; do echo waiting for postgres; sleep 2; done']
+  - name: wait-for-redis
+    image: busybox:1.36
+    command: ['sh', '-c', 'until nc -z redis.matrix.svc.cluster.local 6379; do echo waiting for redis; sleep 2; done']
+  # ... existing generate-worker-config init container
+```
+
 ## Configuring Stream Writers
 
 When event persisters are deployed, you need to update the homeserver.yaml to distribute writes across workers.

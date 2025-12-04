@@ -135,17 +135,28 @@ data:
         option httpchk GET /health HTTP/1.1\r\nHost:\ matrix.example.com
         server main synapse-main-0.synapse-main.matrix.svc.cluster.local:8008 check
 
-    # Backend - Metrics
-    # Aggregates metrics from all Synapse workers for Prometheus scraping
+    # Backend - Metrics (Alternative/Fallback)
+    # ============================================================================
+    # NOTE: ServiceMonitors in monitoring/01-prometheus/ are the PRIMARY method
+    # for Prometheus to scrape Synapse metrics. This backend provides an
+    # alternative aggregation point if needed.
+    #
+    # How server-template works with Kubernetes headless services:
+    # - Headless services (clusterIP: None) return multiple A records
+    # - HAProxy resolves DNS and creates server entries for each IP
+    # - init-addr none: Allows HAProxy to start before DNS is ready
+    # - Template count should match or exceed expected pod count
+    # ============================================================================
     backend synapse_metrics
         balance roundrobin
-        # Main process
+        # Main process (StatefulSet pod-0)
         server main synapse-main-0.synapse-main.matrix.svc.cluster.local:9090 check
-        # Scalable workers (handled by HPA)
+        # Scalable workers (Deployments with HPA - count is max expected)
         server-template generic 16 synapse-generic-worker.matrix.svc.cluster.local:9090 check resolvers k8s init-addr none
         server-template synchrotron 16 synapse-synchrotron.matrix.svc.cluster.local:9090 check resolvers k8s init-addr none
         server-template media 8 synapse-media-repository.matrix.svc.cluster.local:9090 check resolvers k8s init-addr none
-        # Stream writer workers (fixed replicas)
+        # Stream writer workers (StatefulSets with fixed replicas - headless services)
+        # These use headless services; HAProxy resolves to individual pod IPs
         server-template event-persister 4 synapse-event-persister.matrix.svc.cluster.local:9090 check resolvers k8s init-addr none
         server-template federation-sender 2 synapse-federation-sender.matrix.svc.cluster.local:9090 check resolvers k8s init-addr none
         server-template typing-writer 2 synapse-typing-writer.matrix.svc.cluster.local:9090 check resolvers k8s init-addr none
@@ -158,12 +169,23 @@ data:
         http-request return status 200 content-type text/plain string "OK\n"
 
     # DNS Resolver for Kubernetes
-    # IMPORTANT: Verify this IP matches your cluster's DNS service
+    # ============================================================================
+    # IMPORTANT: Update DNS_IP to match your cluster's DNS service!
+    #
     # To find your cluster's DNS IP, run:
-    # kubectl get svc -n kube-system -l k8s-app=kube-dns -o jsonpath='{.items[0].spec.clusterIP}'
-    # Common values: 10.96.0.10 (default), 10.43.0.10 (k3s), 10.0.0.10 (custom)
+    #   kubectl get svc -n kube-system -l k8s-app=kube-dns -o jsonpath='{.items[0].spec.clusterIP}'
+    #
+    # Common values by Kubernetes distribution:
+    #   - kubeadm/standard:  10.96.0.10 (default below)
+    #   - k3s:               10.43.0.10
+    #   - EKS:               10.100.0.10
+    #   - GKE:               varies (check with command above)
+    #   - Custom:            check your CoreDNS/kube-dns service
+    #
+    # If this IP is wrong, HAProxy will fail to resolve service names!
+    # ============================================================================
     resolvers k8s
-        nameserver dns 10.96.0.10:53
+        nameserver dns CHANGEME_KUBE_DNS_IP:53
         accepted_payload_size 8192
         # Reduced from 10s to 1s for faster backend discovery during HPA scaling
         # CRITICAL: Prevents 503 errors when workers scale up/down or pods restart

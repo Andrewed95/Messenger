@@ -58,10 +58,12 @@ prometheus:
         memory: 8Gi
 
     # Storage
+    # CRITICAL: Must match your cluster's storage class (e.g., "standard", "gp2", "fast")
+    # Find available classes: kubectl get storageclass
     storageSpec:
       volumeClaimTemplate:
         spec:
-          storageClassName: ""  # CHANGE_TO_YOUR_STORAGE_CLASS
+          storageClassName: "CHANGEME_STORAGE_CLASS"
           accessModes: ["ReadWriteOnce"]
           resources:
             requests:

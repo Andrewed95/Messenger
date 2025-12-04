@@ -120,6 +120,8 @@ spec:
       cpu: "8"        # Allow CPU bursting
 
   # Backup configuration to MinIO
+  # Uses HTTP for internal cluster traffic (CLAUDE.md 4.3: trusted intranet operation)
+  # MinIO has requestAutoCert: false for internal access; external uses Ingress TLS
   backup:
     barmanObjectStore:
       destinationPath: s3://postgresql-backups/main/

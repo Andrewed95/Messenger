@@ -541,8 +541,8 @@ deploy_phase2() {
     apply_manifest "$DEPLOYMENT_DIR/main-instance/02-workers/receipts-writer-deployment.yaml"
     apply_manifest "$DEPLOYMENT_DIR/main-instance/02-workers/presence-writer-deployment.yaml"
 
-    # Check for minimum workers ready (total: 24 workers expected at default replicas)
-    # synchrotron:4 + generic:4 + media:2 + event-persister:4 + fed-sender:2 + stream-writers:8 = 24
+    # Check for minimum workers ready (total: 22 workers expected at default replicas)
+    # synchrotron:4 + generic:2 + media:2 + event-persister:4 + fed-sender:2 + stream-writers:8 = 22
     # Use 10 as minimum threshold to allow for startup delays
     check_pod_status "app.kubernetes.io/type=worker" "matrix" 10
 
@@ -580,11 +580,6 @@ deploy_phase3() {
     apply_manifest "$DEPLOYMENT_DIR/li-instance/00-redis-li/deployment.yaml"
     check_pod_status "app.kubernetes.io/name=redis,app.kubernetes.io/instance=li" "matrix" 1
 
-    # NOTE: Sync system is built into synapse-li
-    # No separate sync deployment needed
-    # Sync is configured via synapse-li settings and triggered via Synapse Admin LI
-    log_info "Sync system is built into synapse-li - no separate deployment needed"
-
     # Deploy Synapse LI
     log_info "Deploying Synapse LI..."
     apply_manifest "$DEPLOYMENT_DIR/li-instance/01-synapse-li/deployment.yaml"
@@ -597,6 +592,13 @@ deploy_phase3() {
     # Deploy Synapse Admin LI
     log_info "Deploying Synapse Admin LI..."
     apply_manifest "$DEPLOYMENT_DIR/li-instance/03-synapse-admin-li/deployment.yaml"
+
+    # Deploy LI Sync System (CronJob for database synchronization)
+    # Per CLAUDE.md 3.3: Uses pg_dump/pg_restore, configurable interval
+    log_info "Deploying LI sync system CronJob..."
+    apply_manifest "$DEPLOYMENT_DIR/li-instance/04-sync-system/cronjob.yaml"
+    log_detail "Sync system will run on schedule (default: every 6 hours)"
+    log_detail "Manual sync can be triggered via Synapse Admin LI"
 
     # Deploy key_vault
     log_info "Deploying key_vault..."

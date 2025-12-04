@@ -209,9 +209,27 @@ When you provide a command, file, or step:
   - No external API calls, webhooks, or internet dependencies in normal operation.
   - The messenger functions fully for messaging, calls, file sharing, and LI operations.
 
-4.4 **Internet-dependent maintenance is out of scope**
+4.4 **HTTPS mandatory for all external services**
 
-- Both main and LI environments **must** be exposed over **HTTPS**.
+- **All services with domains or subdomains MUST use HTTPS**. HTTP is **NOT acceptable** for any external-facing service.
+- External-facing services include:
+  - Main environment: Matrix Synapse, Element Web, LiveKit, coturn/TURN, Grafana
+  - LI environment: Synapse LI, Element Web LI, Synapse Admin LI, key_vault
+- At **initial deployment** (when internet is available):
+  - Use **Let's Encrypt** via cert-manager to obtain TLS certificates.
+  - All Ingress resources must have TLS configured with cert-manager annotations.
+  - The deployment scripts and manifests configure Let's Encrypt automatically.
+- **Certificate renewal is the organization's responsibility**:
+  - After initial deployment, internet may not be available.
+  - The organization's infrastructure team must handle certificate renewal.
+  - This is explicitly out of scope for this deployment solution.
+- Internal cluster traffic (service-to-service within Kubernetes):
+  - HTTP is acceptable for internal communication (e.g., HAProxy to Synapse workers, Synapse to PostgreSQL/Redis/MinIO).
+  - The internal network is trusted per the intranet operation model (section 4.3).
+  - This does not apply to user-facing endpoints, which MUST always use HTTPS.
+
+4.5 **Internet-dependent maintenance is out of scope**
+
 - The deployment solution covers: **Configure → Deploy → Update** (version upgrades).
 - After deployment, **ongoing maintenance tasks that require internet access are the organization's responsibility**, including:
   - TLS certificate renewal (ACME, Let's Encrypt).
@@ -224,11 +242,11 @@ When you provide a command, file, or step:
 - The organization's infrastructure team handles all ongoing internet-dependent maintenance.
 - **Clarification**: Operational procedures (like air-gapped/secure key decryption for LI) are VALID and should be documented. The restriction is only on internet-dependent maintenance procedures.
 
-4.5 **TLS certificate setup**
+4.6 **TLS certificate setup**
 
 - All services **must** be exposed over **HTTPS** with valid TLS certificates.
 - The deployment supports multiple TLS provisioning methods:
-  - **Let's Encrypt** (via cert-manager): For initial deployment when internet access is available.
+  - **Let's Encrypt** (via cert-manager): Default for initial deployment when internet access is available.
   - **Organization's internal CA**: For fully intranet deployments where the organization manages their own PKI.
   - **Manual certificates**: Organization provides pre-generated certificates.
 - What to include:
@@ -239,9 +257,9 @@ When you provide a command, file, or step:
 - What NOT to include:
   - Certificate renewal procedures (organization's responsibility).
   - Troubleshooting for post-deployment certificate issues.
-- **Important for intranet deployments**: If Let's Encrypt cannot be used (no internet), the organization must provide certificates from their internal CA or generate them manually before deployment.
+- **Important for intranet deployments**: If Let's Encrypt cannot be used (no internet at deployment time), the organization must provide certificates from their internal CA or generate them manually before deployment.
 
-4.6 **Images and registries are out of scope**
+4.7 **Images and registries are out of scope**
 
 - Do **not** describe:
   - How to build Docker images.
@@ -341,18 +359,23 @@ When you provide a command, file, or step:
   - Message history and user data remain accessible (in LI database).
   - Media may be temporarily unavailable if main MinIO is also down.
   - New data will not sync until main recovers.
-- The LI instance must have its **own reverse proxy** (such as NGINX) that:
+- The LI instance must have its **own reverse proxy** (nginx-li) that:
   - Operates independently of the main instance's ingress/proxy.
-  - Handles TLS termination for all LI services.
+  - **Handles HTTPS/TLS termination for all LI services** (see section 4.4).
   - Routes requests to `synapse-li`, `element-web-li`, `synapse-admin-li`, and `key_vault`.
+- **All LI services require HTTPS** (per section 4.4):
+  - `synapse-li`: HTTPS via nginx-li (same homeserver domain as main)
+  - `element-web-li`: HTTPS via nginx-li (e.g., `https://chat-li.example.com`)
+  - `synapse-admin-li`: HTTPS via nginx-li (e.g., `https://admin-li.example.com`)
+  - `key_vault`: HTTPS via nginx-li (e.g., `https://keyvault.example.com`)
 
 7.3 **LI domains and DNS configuration**
 
-- LI services require their own domains or subdomains:
-  - `element-web-li`: Different domain (e.g., `chat-li.example.com`)
-  - `synapse-admin-li`: Different domain (e.g., `admin-li.example.com`)
-  - `key_vault`: Different domain (e.g., `keyvault.example.com`)
-  - `synapse-li` homeserver: **Same homeserver URL** as main instance (e.g., `matrix.example.com`)
+- LI services require their own domains or subdomains, **all accessed over HTTPS**:
+  - `element-web-li`: `https://chat-li.example.com` (different domain from main Element)
+  - `synapse-admin-li`: `https://admin-li.example.com` (LI-only admin interface)
+  - `key_vault`: `https://keyvault.example.com` (recovery key storage)
+  - `synapse-li` homeserver: `https://matrix.example.com` (**Same URL** as main instance)
 - The homeserver URL must be **identical** to the main instance because:
   - User IDs reference this server name (`@user:matrix.example.com`).
   - Event signatures and tokens are bound to this server name.
@@ -364,6 +387,10 @@ When you provide a command, file, or step:
     - A dedicated DNS server in the LI network.
     - Organization-managed DNS split-horizon configuration.
   - Without this DNS configuration, Element Web LI and Synapse Admin LI would try to connect to the main Synapse instead of Synapse LI.
+- **TLS certificates for LI domains**:
+  - nginx-li handles TLS termination for all LI services.
+  - Certificates can be obtained via Let's Encrypt at initial deployment (requires internet).
+  - For air-gapped deployments, organization must provide certificates from internal CA.
 
 7.4 **LI access control is organization's responsibility**
 
