@@ -637,9 +637,14 @@ deployment/
 │
 ├── li-instance/                ← PHASE 3: Compliance
 │   │
+│   ├── 00-redis-li/
+│   │   └── deployment.yaml         → Isolated Redis for LI
+│   │   Purpose: LI cache (separate from main, no HA required)
+│   │   Configuration: Redis password
+│   │
 │   ├── 01-synapse-li/
-│   │   └── deployment.yaml         → Read-only Synapse instance
-│   │   Purpose: Forensics access to deleted messages
+│   │   └── deployment.yaml         → Writable Synapse instance
+│   │   Purpose: Forensics access with password reset capability
 │   │   Configuration: LI database/MinIO endpoints
 │   │
 │   ├── 02-element-web-li/
@@ -662,6 +667,11 @@ deployment/
 │   │   Purpose: Store encrypted recovery keys (SQLite)
 │   │   Configuration: API keys, Django secret, RSA encryption key
 │   │   Access: Synapse main (store) + LI admin (retrieve)
+│   │
+│   ├── 06-nginx-li/
+│   │   └── deployment.yaml         → Independent LI reverse proxy
+│   │   Purpose: Route traffic to LI services (works when main is down)
+│   │   Configuration: TLS certificates, upstream services
 │   │
 │   └── README.md               → Complete LI architecture guide
 │       Purpose: Deep dive into LI design and compliance
@@ -701,6 +711,7 @@ deployment/
 ├── values/                     ← Helm Chart Values
 │   │   All files here: Configuration for Helm-installed components
 │   │
+│   ├── images.yaml                  → Container image references
 │   ├── prometheus-stack-values.yaml → Prometheus + Grafana config
 │   ├── loki-values.yaml             → Loki config
 │   ├── cloudnativepg-values.yaml    → PostgreSQL operator
@@ -715,6 +726,7 @@ deployment/
 ├── scripts/                    ← Automation Scripts
 │   ├── deploy-all.sh           → Automated multi-phase deployment
 │   ├── validate-deployment.sh  → Comprehensive health checks
+│   ├── validate-changeme.sh    → Validate all CHANGEME placeholders replaced
 │   └── README.md               → Script documentation
 │
 └── docs/                       ← Reference Documentation
@@ -723,6 +735,9 @@ deployment/
     ├── 00-KUBERNETES-INSTALLATION-DEBIAN-OVH.md → REQUIRED: K8s cluster
     ├── SCALING-GUIDE.md               → REQUIRED: Determine resources
     │
+    ├── PRE-DEPLOYMENT-CHECKLIST.md    → RECOMMENDED: Pre-flight checks
+    ├── SERVICE-CONFIGURATION-GUIDE.md → Optional: Service config details
+    ├── WORKER-SCALING-GUIDE.md        → Optional: Synapse worker tuning
     ├── CONFIGURATION-REFERENCE.md     → Optional: All parameters explained
     ├── OPERATIONS-UPDATE-GUIDE.md     → Optional: Updates and maintenance
     ├── SECRETS-MANAGEMENT.md          → Optional: Advanced secrets (Vault)

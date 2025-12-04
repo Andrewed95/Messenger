@@ -300,7 +300,7 @@ spec:
         # ClamAV Prometheus Exporter (optional - exposes metrics)
         # Based on: https://github.com/r3kzi/clamav-prometheus-exporter
         - name: clamav-exporter
-          image: r3kzi/clamav-prometheus-exporter:latest
+          image: r3kzi/clamav-prometheus-exporter:v1.0.0
           imagePullPolicy: IfNotPresent
 
           env:

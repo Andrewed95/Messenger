@@ -50,7 +50,7 @@ The Matrix Content Scanner is a **Python service** that intercepts media downloa
 ## Features
 
 - ✅ **Virus scanning**: Integrates with ClamAV for malware detection
-- ✅ **Caching**: Avoids re-scanning the same file (1-hour TTL)
+- ✅ **Caching**: Avoids re-scanning the same file (24-hour TTL)
 - ✅ **Horizontal scaling**: 3-10 replicas with HPA
 - ✅ **High availability**: PodDisruptionBudget (min 2 available)
 - ✅ **Metadata removal**: Strips EXIF data from images for privacy
@@ -160,7 +160,7 @@ proxy:
 ```yaml
 result_cache:
   type: memory     # In-memory cache (Redis NOT supported by matrix-content-scanner-python)
-  ttl: 3600        # 1 hour (86400 for 24 hours in production)
+  ttl: 86400       # 24 hours (matches deployed configuration)
   max_size: 10000  # 10,000 entries
 ```
 

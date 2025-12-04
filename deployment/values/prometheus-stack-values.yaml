@@ -226,6 +226,20 @@ grafana:
             path: /var/lib/grafana/dashboards/synapse
 
   # Pre-installed dashboards
+  # ============================================================================
+  # IMPORTANT: Dashboard Download Behavior (gnetId)
+  # ============================================================================
+  # The gnetId values below download dashboards from grafana.com ONLY during
+  # initial Helm install (when internet is available per CLAUDE.md §4.3).
+  # Once downloaded, dashboards persist in Grafana's storage and do NOT require
+  # internet for subsequent operations.
+  #
+  # For FULLY AIR-GAPPED initial deployment (no internet at install time):
+  # 1. Download JSON from https://grafana.com/grafana/dashboards/{gnetId}
+  # 2. Remove gnetId entries below
+  # 3. Import dashboards manually via Grafana UI after deployment
+  # 4. Or use file-based provisioning via ConfigMaps
+  # ============================================================================
   dashboards:
     default:
       # Kubernetes cluster monitoring

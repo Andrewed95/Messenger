@@ -100,9 +100,11 @@ spec:
               # Process shared config (substitute environment variables)
               envsubst < /config-template/homeserver.yaml > /config/homeserver.yaml
               cp /config-template/log.yaml /config/log.yaml
+              cp /config-template/signing.key /config/signing.key
 
               # Set permissions
               chown -R 991:991 /config
+              chmod 600 /config/signing.key
 
               echo "Presence writer configured for ${HOSTNAME}"
           env:
@@ -162,6 +164,9 @@ spec:
               mountPath: /config-template
             - name: config
               mountPath: /config
+            - name: signing-key
+              mountPath: /config-template/signing.key
+              subPath: signing.key
           resources:
             requests:
               memory: "64Mi"
@@ -197,9 +202,6 @@ spec:
           volumeMounts:
             - name: config
               mountPath: /config
-            - name: signing-key
-              mountPath: /config/signing.key
-              subPath: signing.key
             - name: tmp
               mountPath: /tmp
 

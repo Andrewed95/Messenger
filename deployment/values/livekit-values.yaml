@@ -120,10 +120,10 @@ livekit:
         - redis-2.redis-headless.matrix.svc.cluster.local:26379
       # Credentials - must match infrastructure/02-redis/redis-secret.yaml
       # sentinel_username: ""
-      sentinel_password: ""  # CHANGE_TO_YOUR_REDIS_PASSWORD if auth enabled
+      sentinel_password: "CHANGEME_REDIS_PASSWORD"  # Must match redis-password secret
     # Redis auth - must match infrastructure/02-redis/redis-secret.yaml
     # username: ""
-    password: ""  # CHANGE_TO_YOUR_REDIS_PASSWORD if auth enabled
+    password: "CHANGEME_REDIS_PASSWORD"  # Must match redis-password secret
     db: 1  # Use db 1 for LiveKit (Synapse uses db 0)
 
   # Turn servers (coturn)

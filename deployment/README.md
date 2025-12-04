@@ -90,6 +90,7 @@ deployment/
 │   └── 02-scan-workers/         # Content Scanner (media proxy)
 │
 ├── values/                      ← Helm Chart Values
+│   ├── images.yaml                  # Container image references
 │   ├── prometheus-stack-values.yaml
 │   ├── loki-values.yaml
 │   ├── cloudnativepg-values.yaml
@@ -105,6 +106,9 @@ deployment/
     ├── 00-WORKSTATION-SETUP.md           (REQUIRED: Setup management node)
     ├── 00-KUBERNETES-INSTALLATION-DEBIAN-OVH.md  (REQUIRED: Setup K8s cluster)
     ├── SCALING-GUIDE.md                  (REQUIRED: Determine resources)
+    ├── PRE-DEPLOYMENT-CHECKLIST.md       (RECOMMENDED: Pre-flight checks)
+    ├── SERVICE-CONFIGURATION-GUIDE.md    (Optional: Service config details)
+    ├── WORKER-SCALING-GUIDE.md           (Optional: Synapse worker tuning)
     ├── CONFIGURATION-REFERENCE.md        (Optional: Parameter details)
     ├── OPERATIONS-UPDATE-GUIDE.md        (Post-deployment operations)
     ├── SECRETS-MANAGEMENT.md             (Optional: Advanced secrets)
@@ -1226,8 +1230,11 @@ kubectl exec -it -n matrix key-vault-0 -- \
 
 | Document | Purpose | When to Read |
 |----------|---------|--------------|
+| `docs/PRE-DEPLOYMENT-CHECKLIST.md` | Pre-flight validation checklist | Before deployment to verify readiness |
+| `docs/SERVICE-CONFIGURATION-GUIDE.md` | Service-specific configuration | When customizing individual services |
 | `docs/CONFIGURATION-REFERENCE.md` | All configuration parameters explained | When customizing advanced settings |
 | `docs/OPERATIONS-UPDATE-GUIDE.md` | Updates and maintenance procedures | After deployment, for ongoing operations |
+| `docs/WORKER-SCALING-GUIDE.md` | Synapse worker types and HPA tuning | When adjusting worker scaling for performance |
 | `docs/SECRETS-MANAGEMENT.md` | Advanced secret management | If using external secret managers (Vault, etc.) |
 | `docs/HAPROXY-ARCHITECTURE.md` | HAProxy routing technical details | When debugging routing issues |
 | `docs/MATRIX-AUTHENTICATION-SERVICE.md` | Enterprise SSO integration (MAS) | If you need corporate SSO/OIDC authentication |

@@ -113,8 +113,12 @@ data:
 
     # Backend - Content Scanner (antivirus scanning for downloads)
     # Scans media files with ClamAV before serving to clients
+    # Uses URI-based consistent hashing to route same media to same scanner pod
+    # This maximizes cache effectiveness (each pod has in-memory TTL cache)
+    # Per CLAUDE.md §8: "Each file should be scanned only once"
     backend content_scanner
-        balance roundrobin
+        balance uri
+        hash-type consistent
         option httpchk GET /health HTTP/1.1\r\nHost:\ matrix.example.com
         timeout server 300s
         server-template scanner 10 content-scanner.matrix.svc.cluster.local:8080 check resolvers k8s init-addr none
