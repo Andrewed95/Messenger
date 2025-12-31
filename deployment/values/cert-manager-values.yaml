@@ -60,8 +60,6 @@ resources:
 # ============================================================================
 
 webhook:
-  enabled: true
-
   replicaCount: 2
 
   resources:
@@ -77,8 +75,6 @@ webhook:
 # ============================================================================
 
 cainjector:
-  enabled: true
-
   replicaCount: 2
 
   resources:
@@ -94,8 +90,6 @@ cainjector:
 # ============================================================================
 
 startupapicheck:
-  enabled: true
-
   resources:
     requests:
       cpu: 50m
