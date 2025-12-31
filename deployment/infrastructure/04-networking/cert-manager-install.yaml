@@ -74,20 +74,23 @@ metadata:
   name: selfsigned
 spec:
   selfSigned: {}
----
-# Example Certificate for Testing
-# Tests cert-manager is working correctly with Let's Encrypt
-# CHANGEME: Update domain before applying
-apiVersion: cert-manager.io/v1
-kind: Certificate
-metadata:
-  name: test-certificate
-  namespace: matrix
-spec:
-  secretName: test-tls
-  issuerRef:
-    name: letsencrypt-prod
-    kind: ClusterIssuer
-  commonName: test.CHANGE_TO_YOUR_DOMAIN
-  dnsNames:
-    - test.CHANGE_TO_YOUR_DOMAIN
+# ==============================================================================
+# OPTIONAL: Example Certificate for Testing
+# ==============================================================================
+# Uncomment and apply AFTER the matrix namespace is created to test cert-manager.
+# This is NOT required for deployment - certificates are created automatically
+# by Ingress resources with cert-manager annotations.
+#
+# apiVersion: cert-manager.io/v1
+# kind: Certificate
+# metadata:
+#   name: test-certificate
+#   namespace: matrix
+# spec:
+#   secretName: test-tls
+#   issuerRef:
+#     name: letsencrypt-prod
+#     kind: ClusterIssuer
+#   commonName: test.example.com
+#   dnsNames:
+#     - test.example.com
