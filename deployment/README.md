@@ -561,11 +561,13 @@ helm install ingress-nginx ingress-nginx/ingress-nginx \
   --set controller.metrics.serviceMonitor.enabled=false
 
 # cert-manager (TLS automation)
+# NOTE: ServiceMonitor is disabled initially (Prometheus not installed yet)
 helm repo add jetstack https://charts.jetstack.io
 helm install cert-manager jetstack/cert-manager \
   --namespace cert-manager --create-namespace \
   --set installCRDs=true \
-  --values values/cert-manager-values.yaml
+  --values values/cert-manager-values.yaml \
+  --set prometheus.servicemonitor.enabled=false
 
 kubectl apply -f infrastructure/04-networking/cert-manager-install.yaml
 ```
@@ -869,13 +871,20 @@ kubectl port-forward -n monitoring svc/prometheus-grafana 3000:80
 # Navigate to: http://localhost:9090/targets
 ```
 
-**5. Enable ServiceMonitor for NGINX Ingress:**
+**5. Enable ServiceMonitors for NGINX Ingress and cert-manager:**
 
-Now that Prometheus is installed, enable metrics collection for NGINX Ingress:
+Now that Prometheus is installed, enable metrics collection:
 ```bash
+# Enable NGINX Ingress metrics
 helm upgrade ingress-nginx ingress-nginx/ingress-nginx \
   --namespace ingress-nginx \
   --values values/nginx-ingress-values.yaml
+
+# Enable cert-manager metrics
+helm upgrade cert-manager jetstack/cert-manager \
+  --namespace cert-manager \
+  --set installCRDs=true \
+  --values values/cert-manager-values.yaml
 ```
 
 ---

@@ -124,6 +124,10 @@ affinity:
 # ============================================================================
 # PROMETHEUS MONITORING
 # ============================================================================
+# NOTE: ServiceMonitor requires Prometheus Operator CRDs to be installed first.
+# During initial installation, use: --set prometheus.servicemonitor.enabled=false
+# After Prometheus is installed (Phase 4), upgrade with: helm upgrade cert-manager ...
+# without the --set flag to enable ServiceMonitor.
 
 prometheus:
   enabled: true
