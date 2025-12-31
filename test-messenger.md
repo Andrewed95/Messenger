@@ -212,6 +212,16 @@ Before deployment can complete:
 
 ---
 
+## Generated Credentials
+
+Stored in `~/Messenger/deployment/config.env` on management node.
+
+Key values for reference:
+- **Grafana Admin Password**: `AhBGZZ4P9pNilTsc2YKUFZ5i`
+- **Kube-DNS IP**: `10.96.0.10`
+
+---
+
 ## Reference Documentation
 
 All paths relative to `~/Messenger` on management node:
