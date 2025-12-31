@@ -565,7 +565,6 @@ helm install ingress-nginx ingress-nginx/ingress-nginx \
 helm repo add jetstack https://charts.jetstack.io
 helm install cert-manager jetstack/cert-manager \
   --namespace cert-manager --create-namespace \
-  --set installCRDs=true \
   --values values/cert-manager-values.yaml \
   --set prometheus.servicemonitor.enabled=false
 
@@ -883,7 +882,6 @@ helm upgrade ingress-nginx ingress-nginx/ingress-nginx \
 # Enable cert-manager metrics
 helm upgrade cert-manager jetstack/cert-manager \
   --namespace cert-manager \
-  --set installCRDs=true \
   --values values/cert-manager-values.yaml
 ```
 

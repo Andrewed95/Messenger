@@ -35,7 +35,9 @@ global:
 # INSTALL CRDs
 # ============================================================================
 
-installCRDs: true  # Install CustomResourceDefinitions
+# Note: installCRDs is deprecated in cert-manager >= 1.18, use crds.enabled instead
+crds:
+  enabled: true
 
 # ============================================================================
 # REPLICA COUNT
