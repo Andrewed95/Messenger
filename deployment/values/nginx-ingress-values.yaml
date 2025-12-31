@@ -52,8 +52,9 @@ controller:
     # loadBalancerSourceRanges: []
 
     # Annotations for MetalLB (or cloud provider)
+    # NOTE: Pool name must match your IPAddressPool name (check with: kubectl get ipaddresspools -n metallb-system)
     annotations:
-      metallb.universe.tf/address-pool: main-pool
+      metallb.universe.tf/address-pool: default-pool
       # metallb.universe.tf/allow-shared-ip: "true"  # If sharing IP with other services
 
     # External IPs (if not using LoadBalancer)
@@ -154,6 +155,10 @@ controller:
   # ============================================================================
   # METRICS (Prometheus)
   # ============================================================================
+  # NOTE: ServiceMonitor requires Prometheus Operator CRDs to be installed first.
+  # During initial installation, use: --set controller.metrics.serviceMonitor.enabled=false
+  # After Prometheus is installed (Phase 4), upgrade with: helm upgrade ingress-nginx ...
+  # without the --set flag to enable ServiceMonitor.
   metrics:
     enabled: true
 

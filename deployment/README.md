@@ -552,10 +552,13 @@ kubectl wait --for=condition=Ready tenant/matrix-minio -n matrix --timeout=600s
 **Deploy Networking:**
 ```bash
 # NGINX Ingress Controller
+# NOTE: ServiceMonitor is disabled initially (Prometheus not installed yet)
+# After Phase 4 (Monitoring), upgrade without --set to enable ServiceMonitor
 helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
 helm install ingress-nginx ingress-nginx/ingress-nginx \
   --namespace ingress-nginx --create-namespace \
-  --values values/nginx-ingress-values.yaml
+  --values values/nginx-ingress-values.yaml \
+  --set controller.metrics.serviceMonitor.enabled=false
 
 # cert-manager (TLS automation)
 helm repo add jetstack https://charts.jetstack.io
@@ -864,6 +867,15 @@ kubectl port-forward -n monitoring svc/prometheus-grafana 3000:80
 
 # Check targets are being scraped
 # Navigate to: http://localhost:9090/targets
+```
+
+**5. Enable ServiceMonitor for NGINX Ingress:**
+
+Now that Prometheus is installed, enable metrics collection for NGINX Ingress:
+```bash
+helm upgrade ingress-nginx ingress-nginx/ingress-nginx \
+  --namespace ingress-nginx \
+  --values values/nginx-ingress-values.yaml
 ```
 
 ---
